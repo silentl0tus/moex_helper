@@ -220,16 +220,16 @@ def fetch_technical_indicators(tickers):
             if 'candles' in data and data['candles']['data']:
                 df = pd.DataFrame(data['candles']['data'], columns=data['candles']['columns'])
                 if len(df) < 50:
-                    return {"ticker": ticker, "SMA_50": pd.NA, "SMA_200": pd.NA, "RSI": pd.NA, "Price": pd.NA}
+                    return {"ticker": ticker, "SMA_50": None, "SMA_200": None, "RSI": None, "Price": None}
                 close = df['close']
                 sma_50 = close.rolling(50).mean().iloc[-1]
-                sma_200 = close.rolling(200).mean().iloc[-1] if len(df) >= 200 else pd.NA
+                sma_200 = close.rolling(200).mean().iloc[-1] if len(df) >= 200 else None
                 rsi = calculate_rsi(close).iloc[-1]
                 price = close.iloc[-1]
                 return {"ticker": ticker, "SMA_50": sma_50, "SMA_200": sma_200, "RSI": rsi, "Price": price}
         except Exception:
             pass
-        return {"ticker": ticker, "SMA_50": pd.NA, "SMA_200": pd.NA, "RSI": pd.NA, "Price": pd.NA}
+        return {"ticker": ticker, "SMA_50": None, "SMA_200": None, "RSI": None, "Price": None}
 
     with ThreadPoolExecutor(max_workers=10) as ex:
         results = list(ex.map(get_ticker_tech, tickers))
@@ -571,7 +571,7 @@ with st.expander(f"Ликвидные тикеры MOEX ({len(moex_tickers)})"):
                 "turnover_mln": "Оборот сегодня, млн ₽",
             }
         ),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 
@@ -787,7 +787,7 @@ if not raw_fundamental_data.empty:
             
         # Учет свободного денежного потока (FCF Yield) - Cash is King!
         if 'FCF_Yield_%' not in df_fund.columns:
-            df_fund['FCF_Yield_%'] = pd.NA
+            df_fund['FCF_Yield_%'] = None
             
         def get_fcf_multiplier(yield_val):
             if pd.isna(yield_val):
@@ -813,7 +813,7 @@ if not raw_fundamental_data.empty:
                     return live_data[ticker].dropna().iloc[-1]
             except Exception:
                 pass
-            return pd.NA
+            return None
                 
         df_fund['Div_RUB'] = df_fund['Div_RUB'].fillna(0.0)
         # Приводим к float, игнорируя текст (на смарт-лабе могут быть кривые данные)
@@ -901,7 +901,7 @@ if not raw_fundamental_data.empty:
             score = row['Health_Score']
             div = row['Div_Yield_%']
             pe = row['P_E']
-            growth = row.get('Rev_Growth_%', pd.NA)
+            growth = row.get('Rev_Growth_%', None)
             
             # Расчет Payout Ratio (Доля прибыли, идущая на дивиденды)
             # Earnings Yield = 100 / P/E. Значит Payout Ratio = Div_Yield / (100 / P_E) = Div_Yield * P_E / 100
@@ -1088,7 +1088,7 @@ if not raw_fundamental_data.empty:
             
         st.dataframe(
             df_ranked[cols_to_show], 
-            use_container_width=True, 
+            width="stretch", 
             hide_index=True,
             column_config={
                 "Health_Score": st.column_config.NumberColumn(
@@ -1159,6 +1159,6 @@ if not raw_fundamental_data.empty:
         st.subheader("Рекомендуемые веса в портфеле")
         position_df = build_position_weights(df_ranked, rules["equity_target"], max_single=max_single_name, rest_cap=rest_cap)
         position_df["target_value_rub"] = (position_df["weight"] * capital).astype(int)
-        st.dataframe(position_df, use_container_width=True, hide_index=True)
+        st.dataframe(position_df, width="stretch", hide_index=True)
     else:
         st.error("Аварийная остановка: Ни один актив не прошел проверку качества.")

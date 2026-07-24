@@ -181,7 +181,7 @@ with tab_fundamentals:
             
         # Полный вывод "Паспорта оборудования"
         st.subheader("Полный массив считанных данных МСФО (Годовые срезы)")
-        st.dataframe(df_single, use_container_width=True)
+        st.dataframe(df_single, width="stretch")
         
     else:
         st.error(f"Не удалось построить таблицу отчетов для {target_ticker}. Канал пуст.")
