@@ -261,11 +261,46 @@ def fetch_smartlab_fundamentals(ticker_list):
     
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     
+    import random
+    
+    proxy_list = []
+    try:
+        resp = requests.get("https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=5000&country=RU&ssl=all&anonymity=all", timeout=5)
+        if resp.status_code == 200:
+            proxy_list = [p for p in resp.text.strip().split("\r\n") if p]
+    except Exception:
+        pass
+
     for ticker in ticker_list:
         try:
             smartlab_ticker = SMARTLAB_MAP.get(ticker.upper(), ticker.upper())
             url = f"https://smart-lab.ru/q/{smartlab_ticker}/f/y/"
-            response = requests.get(url, headers=headers, timeout=10)
+            
+            response = None
+            try:
+                # Пытаемся напрямую (сработает при локальном запуске)
+                response = requests.get(url, headers=headers, timeout=5)
+                if response.status_code != 200:
+                    response = None
+            except Exception:
+                response = None
+                
+            # Если не вышло, пробуем до 3 случайных российских прокси (поможет для Streamlit Cloud)
+            if not response and proxy_list:
+                random.shuffle(proxy_list)
+                for proxy in proxy_list[:3]:
+                    try:
+                        proxies = {"http": f"http://{proxy}", "https": f"http://{proxy}"}
+                        response = requests.get(url, headers=headers, proxies=proxies, timeout=5)
+                        if response.status_code == 200:
+                            break
+                        else:
+                            response = None
+                    except Exception:
+                        response = None
+                        
+            if not response:
+                continue
             
             tables = pd.read_html(StringIO(response.text))
             if not tables:
