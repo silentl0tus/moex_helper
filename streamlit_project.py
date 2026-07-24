@@ -220,16 +220,16 @@ def fetch_technical_indicators(tickers):
             if 'candles' in data and data['candles']['data']:
                 df = pd.DataFrame(data['candles']['data'], columns=data['candles']['columns'])
                 if len(df) < 50:
-                    return {"ticker": ticker, "SMA_50": None, "SMA_200": None, "RSI": None, "Price": None}
+                    return {"ticker": ticker, "SMA_50": float('nan'), "SMA_200": float('nan'), "RSI": float('nan'), "Price": float('nan')}
                 close = df['close']
                 sma_50 = close.rolling(50).mean().iloc[-1]
-                sma_200 = close.rolling(200).mean().iloc[-1] if len(df) >= 200 else None
+                sma_200 = close.rolling(200).mean().iloc[-1] if len(df) >= 200 else float('nan')
                 rsi = calculate_rsi(close).iloc[-1]
                 price = close.iloc[-1]
                 return {"ticker": ticker, "SMA_50": sma_50, "SMA_200": sma_200, "RSI": rsi, "Price": price}
         except Exception:
             pass
-        return {"ticker": ticker, "SMA_50": None, "SMA_200": None, "RSI": None, "Price": None}
+        return {"ticker": ticker, "SMA_50": float('nan'), "SMA_200": float('nan'), "RSI": float('nan'), "Price": float('nan')}
 
     with ThreadPoolExecutor(max_workers=10) as ex:
         results = list(ex.map(get_ticker_tech, tickers))
@@ -787,7 +787,7 @@ if not raw_fundamental_data.empty:
             
         # Учет свободного денежного потока (FCF Yield) - Cash is King!
         if 'FCF_Yield_%' not in df_fund.columns:
-            df_fund['FCF_Yield_%'] = None
+            df_fund['FCF_Yield_%'] = float('nan')
             
         def get_fcf_multiplier(yield_val):
             if pd.isna(yield_val):
@@ -813,7 +813,7 @@ if not raw_fundamental_data.empty:
                     return live_data[ticker].dropna().iloc[-1]
             except Exception:
                 pass
-            return None
+            return float('nan')
                 
         df_fund['Div_RUB'] = df_fund['Div_RUB'].fillna(0.0)
         # Приводим к float, игнорируя текст (на смарт-лабе могут быть кривые данные)
@@ -901,7 +901,7 @@ if not raw_fundamental_data.empty:
             score = row['Health_Score']
             div = row['Div_Yield_%']
             pe = row['P_E']
-            growth = row.get('Rev_Growth_%', None)
+            growth = row.get('Rev_Growth_%', float('nan'))
             
             # Расчет Payout Ratio (Доля прибыли, идущая на дивиденды)
             # Earnings Yield = 100 / P/E. Значит Payout Ratio = Div_Yield / (100 / P_E) = Div_Yield * P_E / 100
