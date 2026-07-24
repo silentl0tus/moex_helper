@@ -183,19 +183,24 @@ def fetch_market_context():
     except Exception:
         context["INFLATION_REAL"] = 12.0
         
-    # Парсинг котировок металлов с Trading Economics (Золото, Сталь)
+    # Парсинг котировок сырья через yfinance (чтобы избежать блокировок Cloudflare)
     try:
-        import pandas as pd
-        tables = pd.read_html("https://tradingeconomics.com/commodities", storage_options={'User-Agent': 'Mozilla/5.0'})
-        for t in tables:
-            if 'Metals' in t.columns:
-                for _, row in t.iterrows():
-                    metal_name = str(row['Metals']).lower()
-                    if 'gold' in metal_name:
-                        context["GOLD"] = float(row['Price'])
-                    elif 'steel' in metal_name:
-                        context["STEEL"] = float(row['Price'])
-                break
+        import yfinance as yf
+        # Золото (COMEX Gold Futures)
+        gold_ticker = yf.Ticker("GC=F")
+        gold_df = gold_ticker.history(period="1d")
+        if not gold_df.empty:
+            context["GOLD"] = float(gold_df['Close'].iloc[-1])
+            
+        # Для стали на yfinance нет хорошего тикера в юанях, 
+        # но мы можем взять HRC (Hot-Rolled Coil US) и конвертнуть в CNY для примерного тренда
+        # или использовать LME Steel Rebar
+        steel_ticker = yf.Ticker("HRC=F")
+        steel_df = steel_ticker.history(period="1d")
+        if not steel_df.empty:
+            # HRC торгуется в USD за шорт-тонну (~907 кг). Переводим в тонны и умножаем на курс USD/CNY (~7.2)
+            steel_usd_per_ton = float(steel_df['Close'].iloc[-1]) * 1.1023
+            context["STEEL"] = steel_usd_per_ton * 7.2
     except Exception:
         pass
         
@@ -375,8 +380,31 @@ def fetch_smartlab_fundamentals(ticker_list):
             pass
             
     df = pd.DataFrame(fundamental_data)
+    from pathlib import Path
+    cache_path = Path(__file__).parent / "fundamentals_cache.csv"
+    
     if df.empty:
+        # Облако Streamlit заблокировано. Пробуем загрузить данные из локального кэша
+        if cache_path.exists():
+            try:
+                cached_df = pd.read_csv(cache_path)
+                # Отдаем только те тикеры, которые запросил пользователь
+                return cached_df[cached_df['ticker'].isin([t.upper() for t in ticker_list])]
+            except Exception:
+                pass
         return pd.DataFrame(columns=["ticker", "P_E", "ROE_%", "Debt_EBITDA", "Rev_Growth_%", "P_BV", "FCF_Yield_%", "Div_RUB"])
+    else:
+        # Если удалось успешно спарсить (например, локально), обновляем кэш
+        if cache_path.exists():
+            try:
+                old_cache = pd.read_csv(cache_path)
+                merged = pd.concat([df, old_cache]).drop_duplicates(subset=['ticker'], keep='first')
+                merged.to_csv(cache_path, index=False)
+            except Exception:
+                df.to_csv(cache_path, index=False)
+        else:
+            df.to_csv(cache_path, index=False)
+            
     return df
 
 # ==========================================
