@@ -192,15 +192,11 @@ def fetch_market_context():
         if not gold_df.empty:
             context["GOLD"] = float(gold_df['Close'].iloc[-1])
             
-        # Для стали на yfinance нет хорошего тикера в юанях, 
-        # но мы можем взять HRC (Hot-Rolled Coil US) и конвертнуть в CNY для примерного тренда
-        # или использовать LME Steel Rebar
+        # Используем HRC (Hot-Rolled Coil US) в долларах США
         steel_ticker = yf.Ticker("HRC=F")
         steel_df = steel_ticker.history(period="1d")
         if not steel_df.empty:
-            # HRC торгуется в USD за шорт-тонну (~907 кг). Переводим в тонны и умножаем на курс USD/CNY (~7.2)
-            steel_usd_per_ton = float(steel_df['Close'].iloc[-1]) * 1.1023
-            context["STEEL"] = steel_usd_per_ton * 7.2
+            context["STEEL"] = float(steel_df['Close'].iloc[-1])
     except Exception:
         pass
         
@@ -654,7 +650,7 @@ if not live_data.empty:
     cols[5].metric("Золото", f"${gold_price:,.0f}" if gold_price else "Н/Д")
     
     steel_price = market_context.get("STEEL")
-    cols[6].metric("Сталь(CNY)", f"¥{steel_price:,.0f}" if steel_price else "Н/Д")
+    cols[6].metric("Сталь(HRC,$)", f"${steel_price:,.0f}" if steel_price else "Н/Д")
     
     cols[7].metric("Кэш", f"{rules['cash_target'] * 100:.0f}%")
     cols[8].metric("Облигации", f"{rules['bond_target'] * 100:.0f}%")
@@ -827,9 +823,10 @@ if not raw_fundamental_data.empty:
             # Учет макро-контекста: Сталевары
         steel_price = market_context.get("STEEL")
         if steel_price:
-            if steel_price < 3200:
+            # Цикл стали для US HRC: дно обычно ниже $700, пик выше $1000
+            if steel_price < 700:
                 steel_multiplier = 0.85 # Штраф: цикл стали на дне
-            elif steel_price > 3800:
+            elif steel_price > 1000:
                 steel_multiplier = 1.15 # Премия: пик цикла
             else:
                 steel_multiplier = 1.0
