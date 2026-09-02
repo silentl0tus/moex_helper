@@ -472,15 +472,15 @@ with st.sidebar:
         
     st.markdown("---")
     
-    st.header("Инвестиционные Часы 🕰️")
-    macro_phases = [
-        "Рефляция (Снижение ставки, спад)",
-        "Восстановление (Низкая ставка, рост)",
-        "Перегрев (Рост ставки, пик)",
-        "Стагфляция (Высокая ставка, спад)"
-    ]
-    # Ставим Рефляцию по умолчанию, согласно вашему макро-сценарию
-    selected_phase = st.selectbox("Текущая фаза экономики:", macro_phases, index=0)
+    with st.expander("🌍 Макроэкономика и Часы", expanded=True):
+        macro_phases = [
+            "Рефляция (Снижение ставки, спад)",
+            "Восстановление (Низкая ставка, рост)",
+            "Перегрев (Рост ставки, пик)",
+            "Стагфляция (Высокая ставка, спад)"
+        ]
+        # Ставим Рефляцию по умолчанию, согласно вашему макро-сценарию
+        selected_phase = st.selectbox("Текущая фаза экономики:", macro_phases, index=0)
     
     st.markdown("---")
     st.header("Выбор активов")
@@ -504,18 +504,16 @@ with st.sidebar:
         key="ms_tickers"
     )
     
-    st.markdown("---")
-    st.subheader("Фильтры отбраковки")
-    capital = st.number_input("Размер капитала, ₽", min_value=100000, value=4200000, step=100000)
-    n_assets = st.slider("Число активов в портфеле", min_value=3, max_value=20, value=10, step=1,
-                         help="Сколько лучших акций по Health Score войдёт в итоговый портфель.")
-    max_single_name = st.slider("Макс. доля одной акции", 0.05, 0.15, 0.12, 0.01)
-    rest_cap = st.slider("Макс. доля остальных акций", 0.03, 0.05, 0.05, 0.01)
+    with st.expander("⚖️ Риск-менеджмент портфеля", expanded=False):
+        capital = st.number_input("Размер капитала, ₽", min_value=100000, value=4200000, step=100000)
+        n_assets = st.slider("Число активов в портфеле", min_value=3, max_value=20, value=10, step=1,
+                             help="Сколько лучших акций по Health Score войдёт в итоговый портфель.")
+        max_single_name = st.slider("Макс. доля одной акции", 0.05, 0.15, 0.12, 0.01)
+        rest_cap = st.slider("Макс. доля остальных акций", 0.03, 0.05, 0.05, 0.01)
 
-    st.markdown("---")
-    st.subheader("Фильтры отбраковки")
-    min_roe_filter = st.slider("Мин. ROE (%)", -50.0, 30.0, 5.0, 1.0, help="Компании с ROE ниже этого значения будут удалены.")
-    max_debt_filter = st.slider("Макс. Долг/EBITDA", 0.0, 20.0, 4.0, 0.5, help="Компании с Долг/EBITDA выше этого значения будут удалены.")
+    with st.expander("⚙️ Настройки отбраковки", expanded=False):
+        min_roe_filter = st.slider("Мин. ROE (%)", -50.0, 30.0, 5.0, 1.0, help="Компании с ROE ниже этого значения будут удалены.")
+        max_debt_filter = st.slider("Макс. Долг/EBITDA", 0.0, 20.0, 4.0, 0.5, help="Компании с Долг/EBITDA выше этого значения будут удалены.")
 
 with st.spinner("Считываю сигналы систем..."):
     live_data = fetch_live_prices(selected_tickers)
@@ -528,138 +526,149 @@ index_level = market_context.get("IMOEX")
 usd_rate = market_context.get("USD000UTSTOM")
 rules = build_portfolio_rules(index_level, usd_rate)
 
-with st.expander(f"Ликвидные тикеры MOEX ({len(moex_tickers)})"):
-    st.dataframe(
-        moex_universe[["ticker", "list_level", "turnover_mln"]].rename(
-            columns={
-                "ticker": "Тикер",
-                "list_level": "Эшелон",
-                "turnover_mln": "Оборот сегодня, млн ₽",
-            }
-        ),
-        width="stretch",
-        hide_index=True,
-    )
-
-if not live_data.empty:
-    cols = st.columns(9)
-    cols[0].metric("IMOEX", f"{index_level:,.0f}" if index_level else "Н/Д")
-    cols[1].metric("USD/RUB", f"{usd_rate:.2f}" if usd_rate else "Н/Д")
-    urals_price = market_context.get("URALS")
-    cols[2].metric("Urals", f"${urals_price:.2f}" if urals_price else "Н/Д")
-    key_rate = market_context.get("KEY_RATE")
-    cols[3].metric("Ставка", f"{key_rate}%" if key_rate else "Н/Д")
-    
-    inflation_real = market_context.get("INFLATION_REAL")
-    cols[4].metric("Инфляция(Р)", f"{inflation_real}%" if inflation_real else "Н/Д")
-    
-    gold_price = market_context.get("GOLD")
-    cols[5].metric("Золото", f"${gold_price:,.0f}" if gold_price else "Н/Д")
-    
-    steel_price = market_context.get("STEEL")
-    cols[6].metric("Сталь(HRC,$)", f"${steel_price:,.0f}" if steel_price else "Н/Д")
-    
-    cols[7].metric("Кэш", f"{rules['cash_target'] * 100:.0f}%")
-    cols[8].metric("Облигации", f"{rules['bond_target'] * 100:.0f}%")
-    
-    st.markdown("---")
-    if selected_phase.startswith("Рефляция"):
-        st.info("🕰️ **Часы: Рефляция.** Ставки падают, экономика на спаде. Акции еще слабы, лидируют длинные облигации (ОФЗ) и защитные сектора (Телеком, Ритейл). Сырьевики под давлением.")
-    elif selected_phase.startswith("Восстановление"):
-        st.success("🕰️ **Часы: Восстановление.** Деньги дешевеют, экономика разгоняется. Идеальное время для акций Роста (IT) и Банков. Облигации продаем.")
-    elif selected_phase.startswith("Перегрев"):
-        st.warning("🕰️ **Часы: Перегрев.** Инфляция разгоняется, ЦБ повышает ставки. Лидирует сырье (Нефть, Металлы). Рост и IT страдают от стоимости денег.")
-    elif selected_phase.startswith("Стагфляция"):
-        st.error("🕰️ **Часы: Стагфляция.** Экономика падает, инфляция высокая. Спасает только Кэш (LQDT) и Золото. Бегите из акций роста и банков.")
-    
-    st.info(f"{rules['regime']} | Облигации: {rules['bond_currency']}")
-    chart_data = normalize_returns(live_data)
-    loaded_tickers = chart_data.columns[chart_data.notna().any()].tolist()
-    st.caption(
-        f"На графике: {len(loaded_tickers)} из {len(selected_tickers)} выбранных тикеров "
-        f"(доходность от первой доступной котировки, %)"
-    )
-    st.line_chart(chart_data)
-elif selected_tickers:
-    st.warning(
-        f"Котировки не загружены для выбранных тикеров ({len(selected_tickers)} шт.). "
-        "Проверьте предупреждения в sidebar."
-    )
-else:
-    st.info("Выберите хотя бы один тикер в sidebar, чтобы построить график.")
 
 st.markdown("---")
-st.subheader("Фундаментальные мультипликаторы и Отбраковка")
+d_col1, d_col2, d_col3 = st.columns(3)
+d_col1.metric("Текущая фаза цикла", selected_phase.split(" ")[0])
+d_col2.metric("Ключевая ставка ЦБ", f"{market_context.get('KEY_RATE', 'Н/Д')}%")
+d_col3.metric("Индекс МосБиржи", f"{index_level:,.0f}" if index_level else "Н/Д")
+st.markdown("---")
 
-with st.expander("ℹ️ Как рассчитывается Health Score (Алгоритм оценки)?"):
-    st.markdown("""
-    **Health Score** — это комплексный математический рейтинг, который показывает "здоровье" и инвестиционную привлекательность компании.
-    Рейтинг начинается с базовой единицы (**1.0**) и умножается на ряд коэффициентов:
-    
-    1. **Рентабельность и Рост (Growth):**
-       - `ROE > 15%` ➡️ бонус **+0.2** (Эффективный бизнес)
-       - `ROE < 0%` ➡️ штраф **-0.5** (Убыточный бизнес)
-       - `P/E < 8` ➡️ бонус **+0.2** (Недооценка)
-       - `P/E > 15` ➡️ штраф **-0.3** (Переоценка)
-       - `Рост Выручки > 10%` ➡️ бонус **+0.1**
-       - `Рост Выручки < 0%` ➡️ штраф **-0.2** (Стагнация)
-       
-    2. **Дивидендная Безопасность (Dividends):**
-       - Див. доходность `> 8%` ➡️ бонус **+0.3**
-       - `FCF Yield > Div Yield` ➡️ бонус **+0.1** (Дивиденды выплачиваются из свободного кэша, а не в долг)
-       
-    3. **Долговая нагрузка и Риски (Risk):**
-       - `Debt/EBITDA > 3` ➡️ штраф **-0.4** (Риск банкротства при жесткой ДКП ЦБ)
-       - Токсичные тикеры (ЧС) ➡️ штраф **-0.3** (Проблемы с листингом или корп. управлением)
-       - `P/BV < 0.5` ➡️ бонус **+0.1** (Торгуется ниже балансовой стоимости)
-       
-    4. **Инфляционный радар (Inflation):**
-       - Если реальная див. доходность и реальный ROE отрицательные (ниже инфляции на 4%+) ➡️ жесткий штраф **-0.5**.
-         *(Такие акции получают статус **"Сжигатель капитала ⚠️"** — бизнес приносит доходность сильно ниже инфляции, вы теряете реальную покупательную способность).*
-       - Если реальная див. доходность обгоняет инфляцию ➡️ бонус **+0.1** (Статус **"Защитник капитала 🛡️"**).
-       
-    5. **Технический Анализ (Trend):**
-       - Цена ниже `SMA-50` и `SMA-200` ➡️ штраф **-0.2**.
-         *(Статус **"Падающий нож 🔪"** — попытка купить дно на падающем тренде может привести к двойному убытку).*
-       - Цена выше `SMA-50`, но ниже `SMA-200` ➡️ бонус **+0.2** (Статус **"Восходящий тренд 🚀"**).
-       - Перепроданность (`RSI < 30`) ➡️ бонус **+0.1**.
-       
-    6. **Настроения SmartLab (Sentiment):**
-       - Сильный позитив (`Score > 30`) ➡️ бонус **+0.1**
-       - Глубокий негатив (`Score < -10`) ➡️ штраф **-0.1**
-       
-    7. **Макро-Фаза (Macro Clock):**
-       - Дополнительные ротационные бонусы `+0.2` и штрафы `-0.1` в зависимости от стадии Инвестиционных Часов (Рефляция, Перегрев и т.д.).
-       
-    *Акции с итоговым счетом **ниже 1.0** помечаются как "слабые" (Кандидаты на продажу). Лидеры рынка уходят выше 1.5.*
-    """)
+tab1, tab2, tab3, tab4 = st.tabs(["🏆 Рейтинг и Аналитика", "💼 Мой Портфель", "🗺️ Карта рынка", "⚖️ Ребалансировка"])
 
-if not raw_fundamental_data.empty:
-    df_fund = raw_fundamental_data[raw_fundamental_data["ticker"].isin([t.upper() for t in selected_tickers])].copy()
+with tab1:
+    with st.expander(f"Ликвидные тикеры MOEX ({len(moex_tickers)})"):
+        st.dataframe(
+            moex_universe[["ticker", "list_level", "turnover_mln"]].rename(
+                columns={
+                    "ticker": "Тикер",
+                    "list_level": "Эшелон",
+                    "turnover_mln": "Оборот сегодня, млн ₽",
+                }
+            ),
+            width="stretch",
+            hide_index=True,
+        )
 
-    # ВРЕЗКА: Аварийный клапан защиты (теперь берем из сайдбара)
-    MIN_ROE = min_roe_filter
-    MAX_DEBT_EBITDA = max_debt_filter
+    if not live_data.empty:
+        cols = st.columns(9)
+        cols[0].metric("IMOEX", f"{index_level:,.0f}" if index_level else "Н/Д")
+        cols[1].metric("USD/RUB", f"{usd_rate:.2f}" if usd_rate else "Н/Д")
+        urals_price = market_context.get("URALS")
+        cols[2].metric("Urals", f"${urals_price:.2f}" if urals_price else "Н/Д")
+        key_rate = market_context.get("KEY_RATE")
+        cols[3].metric("Ставка", f"{key_rate}%" if key_rate else "Н/Д")
     
-    df_fund["ROE_%"] = df_fund["ROE_%"].fillna(0)
-    df_fund["Debt_EBITDA"] = df_fund["Debt_EBITDA"].fillna(999)
+        inflation_real = market_context.get("INFLATION_REAL")
+        cols[4].metric("Инфляция(Р)", f"{inflation_real}%" if inflation_real else "Н/Д")
+    
+        gold_price = market_context.get("GOLD")
+        cols[5].metric("Золото", f"${gold_price:,.0f}" if gold_price else "Н/Д")
+    
+        steel_price = market_context.get("STEEL")
+        cols[6].metric("Сталь(HRC,$)", f"${steel_price:,.0f}" if steel_price else "Н/Д")
+    
+        cols[7].metric("Кэш", f"{rules['cash_target'] * 100:.0f}%")
+        cols[8].metric("Облигации", f"{rules['bond_target'] * 100:.0f}%")
+    
+        st.markdown("---")
+        if selected_phase.startswith("Рефляция"):
+            st.info("🕰️ **Часы: Рефляция.** Ставки падают, экономика на спаде. Акции еще слабы, лидируют длинные облигации (ОФЗ) и защитные сектора (Телеком, Ритейл). Сырьевики под давлением.")
+        elif selected_phase.startswith("Восстановление"):
+            st.success("🕰️ **Часы: Восстановление.** Деньги дешевеют, экономика разгоняется. Идеальное время для акций Роста (IT) и Банков. Облигации продаем.")
+        elif selected_phase.startswith("Перегрев"):
+            st.warning("🕰️ **Часы: Перегрев.** Инфляция разгоняется, ЦБ повышает ставки. Лидирует сырье (Нефть, Металлы). Рост и IT страдают от стоимости денег.")
+        elif selected_phase.startswith("Стагфляция"):
+            st.error("🕰️ **Часы: Стагфляция.** Экономика падает, инфляция высокая. Спасает только Кэш (LQDT) и Золото. Бегите из акций роста и банков.")
+    
+        st.info(f"{rules['regime']} | Облигации: {rules['bond_currency']}")
+        chart_data = normalize_returns(live_data)
+        loaded_tickers = chart_data.columns[chart_data.notna().any()].tolist()
+        st.caption(
+            f"На графике: {len(loaded_tickers)} из {len(selected_tickers)} выбранных тикеров "
+            f"(доходность от первой доступной котировки, %)"
+        )
+        st.line_chart(chart_data)
+    elif selected_tickers:
+        st.warning(
+            f"Котировки не загружены для выбранных тикеров ({len(selected_tickers)} шт.). "
+            "Проверьте предупреждения в sidebar."
+        )
+    else:
+        st.info("Выберите хотя бы один тикер в sidebar, чтобы построить график.")
 
-    is_portfolio = df_fund['ticker'].isin(portfolio_tickers_list)
-    is_it = df_fund['ticker'].isin(IT_TICKERS)
-    is_toxic = df_fund['ticker'].isin(TOXIC_TICKERS)
+    st.markdown("---")
+    st.subheader("Фундаментальные мультипликаторы и Отбраковка")
+
+    with st.expander("ℹ️ Как рассчитывается Health Score (Алгоритм оценки)?"):
+        st.markdown("""
+        **Health Score** — это комплексный математический рейтинг, который показывает "здоровье" и инвестиционную привлекательность компании.
+        Рейтинг начинается с базовой единицы (**1.0**) и умножается на ряд коэффициентов:
     
-    # Для IT-компаний игнорируем фильтр по ROE, так как он может быть искажен
-    management_filter = (((df_fund['ROE_%'] >= MIN_ROE) & (df_fund['Debt_EBITDA'] <= MAX_DEBT_EBITDA)) | is_portfolio | is_it) & (~is_toxic)
+        1. **Рентабельность и Рост (Growth):**
+           - `ROE > 15%` ➡️ бонус **+0.2** (Эффективный бизнес)
+           - `ROE < 0%` ➡️ штраф **-0.5** (Убыточный бизнес)
+           - `P/E < 8` ➡️ бонус **+0.2** (Недооценка)
+           - `P/E > 15` ➡️ штраф **-0.3** (Переоценка)
+           - `Рост Выручки > 10%` ➡️ бонус **+0.1**
+           - `Рост Выручки < 0%` ➡️ штраф **-0.2** (Стагнация)
+       
+        2. **Дивидендная Безопасность (Dividends):**
+           - Див. доходность `> 8%` ➡️ бонус **+0.3**
+           - `FCF Yield > Div Yield` ➡️ бонус **+0.1** (Дивиденды выплачиваются из свободного кэша, а не в долг)
+       
+        3. **Долговая нагрузка и Риски (Risk):**
+           - `Debt/EBITDA > 3` ➡️ штраф **-0.4** (Риск банкротства при жесткой ДКП ЦБ)
+           - Токсичные тикеры (ЧС) ➡️ штраф **-0.3** (Проблемы с листингом или корп. управлением)
+           - `P/BV < 0.5` ➡️ бонус **+0.1** (Торгуется ниже балансовой стоимости)
+       
+        4. **Инфляционный радар (Inflation):**
+           - Если реальная див. доходность и реальный ROE отрицательные (ниже инфляции на 4%+) ➡️ жесткий штраф **-0.5**.
+             *(Такие акции получают статус **"Сжигатель капитала ⚠️"** — бизнес приносит доходность сильно ниже инфляции, вы теряете реальную покупательную способность).*
+           - Если реальная див. доходность обгоняет инфляцию ➡️ бонус **+0.1** (Статус **"Защитник капитала 🛡️"**).
+       
+        5. **Технический Анализ (Trend):**
+           - Цена ниже `SMA-50` и `SMA-200` ➡️ штраф **-0.2**.
+             *(Статус **"Падающий нож 🔪"** — попытка купить дно на падающем тренде может привести к двойному убытку).*
+           - Цена выше `SMA-50`, но ниже `SMA-200` ➡️ бонус **+0.2** (Статус **"Восходящий тренд 🚀"**).
+           - Перепроданность (`RSI < 30`) ➡️ бонус **+0.1**.
+       
+        6. **Настроения SmartLab (Sentiment):**
+           - Сильный позитив (`Score > 30`) ➡️ бонус **+0.1**
+           - Глубокий негатив (`Score < -10`) ➡️ штраф **-0.1**
+       
+        7. **Макро-Фаза (Macro Clock):**
+           - Дополнительные ротационные бонусы `+0.2` и штрафы `-0.1` в зависимости от стадии Инвестиционных Часов (Рефляция, Перегрев и т.д.).
+       
+        *Акции с итоговым счетом **ниже 1.0** помечаются как "слабые" (Кандидаты на продажу). Лидеры рынка уходят выше 1.5.*
+        """)
+
+    if not raw_fundamental_data.empty:
+        df_fund = raw_fundamental_data[raw_fundamental_data["ticker"].isin([t.upper() for t in selected_tickers])].copy()
+
+        # ВРЕЗКА: Аварийный клапан защиты (теперь берем из сайдбара)
+        MIN_ROE = min_roe_filter
+        MAX_DEBT_EBITDA = max_debt_filter
     
-    dropped_tickers = set(df_fund['ticker']) - set(df_fund[management_filter]['ticker'])
-    if dropped_tickers:
-        toxic_dropped = set(df_fund[is_toxic]['ticker'])
-        if toxic_dropped:
-            st.error(f"🛑 Карантин: токсичные или предбанкротные компании заблокированы: {', '.join(toxic_dropped)}")
-            dropped_tickers = dropped_tickers - toxic_dropped
+        df_fund["ROE_%"] = df_fund["ROE_%"].fillna(0)
+        df_fund["Debt_EBITDA"] = df_fund["Debt_EBITDA"].fillna(999)
+
+        is_portfolio = df_fund['ticker'].isin(portfolio_tickers_list)
+        is_it = df_fund['ticker'].isin(IT_TICKERS)
+        is_toxic = df_fund['ticker'].isin(TOXIC_TICKERS)
+    
+        # Для IT-компаний игнорируем фильтр по ROE, так как он может быть искажен
+        management_filter = (((df_fund['ROE_%'] >= MIN_ROE) & (df_fund['Debt_EBITDA'] <= MAX_DEBT_EBITDA)) | is_portfolio | is_it) & (~is_toxic)
+    
+        dropped_tickers = set(df_fund['ticker']) - set(df_fund[management_filter]['ticker'])
         if dropped_tickers:
-            st.warning(f"⚠️ Сработала защита: компании с плохим управлением удалены: {', '.join(dropped_tickers)}")
-    df_fund = df_fund[management_filter].copy()
+            toxic_dropped = set(df_fund[is_toxic]['ticker'])
+            if toxic_dropped:
+                st.error(f"🛑 Карантин: токсичные или предбанкротные компании заблокированы: {', '.join(toxic_dropped)}")
+                dropped_tickers = dropped_tickers - toxic_dropped
+            if dropped_tickers:
+                st.warning(f"⚠️ Сработала защита: компании с плохим управлением удалены: {', '.join(dropped_tickers)}")
+        df_fund = df_fund[management_filter].copy()
 
     if not df_fund.empty:
         # Нормализуем ROE для расчета Health Score, чтобы аномалии (500% или -1000%) не ломали вес в портфеле
@@ -989,130 +998,128 @@ if not raw_fundamental_data.empty:
             
         df_ranked['RSI'] = df_ranked['RSI'].apply(format_rsi)
 
-        # 💼 АУДИТ ПОРТФЕЛЯ
-        if my_portfolio:
-            st.markdown("---")
-            st.subheader("💼 Аудит моего портфеля")
+        with tab1:
+            st.bar_chart(data=df_ranked, x="ticker", y="Health_Score")
+        
+            st.page_link("pages/2_💬_Сентимент_и_Пульс.py", label="Открыть детальную ленту сообщений и сентимента (Smart-Lab)", icon="💬")
+        
+            cols_to_show = ["ticker", "Health_Score", "Тренд", "RSI", "Сентимент", "Div_Yield_%", "Rev_Growth_%", "ROE_%", "P_E", "P_BV", "Debt_EBITDA"]
+            if my_portfolio:
+                cols_to_show.insert(2, "Доля в портфеле (%)")
+                cols_to_show.insert(3, "PnL (%)")
             
-            def get_port_count(ticker): return my_portfolio.get(ticker, {}).get('count', 0)
-            def get_port_invested(ticker): return my_portfolio.get(ticker, {}).get('invested', 0)
+            st.dataframe(
+                df_ranked[cols_to_show], 
+                width="stretch", 
+                hide_index=True,
+                column_config={
+                    "Health_Score": st.column_config.NumberColumn(
+                        "Health_Score",
+                        help="Комплексный рейтинг здоровья бизнеса. База = 1.0. Умножается на коэффициенты за рентабельность, долг, дивиденды и тренд. Ниже 1.0 — кандидаты на продажу."
+                    ),
+                    "Тренд": st.column_config.TextColumn(
+                        "Тренд",
+                        help="🔪 Падающий нож (цена ниже SMA-50 и SMA-200).\n🚀 Восходящий тренд (пробой SMA-50).\nБоковик (нейтрально)."
+                    ),
+                    "Сентимент": st.column_config.TextColumn(
+                        "Сентимент",
+                        help="Настроения на SmartLab.\n🟢 Позитив (дает бонус)\n🔴 Негатив (штраф)"
+                    ),
+                    "Div_Yield_%": st.column_config.NumberColumn(
+                        "Div_Yield_%",
+                        help="⚠️ Сжигатель капитала: если дивиденды и реальный ROE отрицательные (ниже инфляции), компания жестко штрафуется."
+                    ),
+                    "Debt_EBITDA": st.column_config.NumberColumn(
+                        "Debt_EBITDA",
+                        help="Долговая нагрузка. Значение выше 3.0 — красный флаг риска банкротства."
+                    )
+                }
+            )
+            
+        with tab2:
+            # 💼 АУДИТ ПОРТФЕЛЯ
+            if my_portfolio:
+            
+                def get_port_count(ticker): return my_portfolio.get(ticker, {}).get('count', 0)
+                def get_port_invested(ticker): return my_portfolio.get(ticker, {}).get('invested', 0)
                 
-            df_ranked['Лоты'] = df_ranked['ticker'].apply(get_port_count)
-            df_ranked['Вложено'] = df_ranked['ticker'].apply(get_port_invested)
-            df_ranked['Текущая Стоимость'] = df_ranked['Лоты'] * df_ranked['Price']
+                df_ranked['Лоты'] = df_ranked['ticker'].apply(get_port_count)
+                df_ranked['Вложено'] = df_ranked['ticker'].apply(get_port_invested)
+                df_ranked['Текущая Стоимость'] = df_ranked['Лоты'] * df_ranked['Price']
             
-            port_mask = df_ranked['Лоты'] > 0
-            df_port = df_ranked[port_mask].copy()
+                port_mask = df_ranked['Лоты'] > 0
+                df_port = df_ranked[port_mask].copy()
             
-            total_val = df_port['Текущая Стоимость'].sum()
-            total_inv = df_port['Вложено'].sum()
-            pnl_rub = total_val - total_inv
-            pnl_pct = (pnl_rub / total_inv * 100) if total_inv > 0 else 0
+                total_val = df_port['Текущая Стоимость'].sum()
+                total_inv = df_port['Вложено'].sum()
+                pnl_rub = total_val - total_inv
+                pnl_pct = (pnl_rub / total_inv * 100) if total_inv > 0 else 0
             
-            port_health = (df_port['Health_Score'] * df_port['Текущая Стоимость']).sum() / total_val if total_val > 0 else 0
+                port_health = (df_port['Health_Score'] * df_port['Текущая Стоимость']).sum() / total_val if total_val > 0 else 0
                 
-            pc1, pc2, pc3 = st.columns(3)
-            pc1.metric("Стоимость акций (MOEX)", f"{total_val:,.0f} ₽")
-            pc2.metric("Бумажный PnL", f"{pnl_rub:,.0f} ₽", f"{pnl_pct:.1f}%")
-            pc3.metric("Индекс Здоровья (Beta)", f"{port_health:.2f}x", "Сильнее рынка" if port_health > 1.0 else "Слабее рынка")
+                pc1, pc2, pc3 = st.columns(3)
+                pc1.metric("Стоимость акций (MOEX)", f"{total_val:,.0f} ₽")
+                pc2.metric("Бумажный PnL", f"{pnl_rub:,.0f} ₽", f"{pnl_pct:.1f}%")
+                pc3.metric("Индекс Здоровья (Beta)", f"{port_health:.2f}x", "Сильнее рынка" if port_health > 1.0 else "Слабее рынка")
                        
-            st.markdown("#### 🤖 Рекомендации Робо-Эдвайзера")
-            sells = df_port[df_port['Health_Score'] < 1.0]['ticker'].tolist()
-            if sells:
-                st.error(f"**🔴 ПРОДАВАТЬ (Кандидаты на вылет):** {', '.join(sells)}. Эти бумаги фундаментально слабы и тянут портфель на дно.")
-            else:
-                st.success("**🟢 Портфель очищен от мусора.** Кандидатов на срочную продажу нет.")
+                st.markdown("#### 🤖 Рекомендации Робо-Эдвайзера")
+                sells = df_port[df_port['Health_Score'] < 1.0]['ticker'].tolist()
+                if sells:
+                    st.error(f"**🔴 ПРОДАВАТЬ (Кандидаты на вылет):** {', '.join(sells)}. Эти бумаги фундаментально слабы и тянут портфель на дно.")
+                else:
+                    st.success("**🟢 Портфель очищен от мусора.** Кандидатов на срочную продажу нет.")
                 
-            buys = df_ranked[(~df_ranked['ticker'].isin(portfolio_tickers_list)) & (~df_ranked['ticker'].isin(TOXIC_TICKERS))].head(3)['ticker'].tolist()
-            st.info(f"**🔵 ЦЕЛЕВЫЕ ПОКУПКИ (Кандидаты на добавление):** {', '.join(buys)}. Бумаги с высшим баллом, которых у вас еще нет.")
+                buys = df_ranked[(~df_ranked['ticker'].isin(portfolio_tickers_list)) & (~df_ranked['ticker'].isin(TOXIC_TICKERS))].head(3)['ticker'].tolist()
+                st.info(f"**🔵 ЦЕЛЕВЫЕ ПОКУПКИ (Кандидаты на добавление):** {', '.join(buys)}. Бумаги с высшим баллом, которых у вас еще нет.")
             
-            df_ranked['Доля в портфеле (%)'] = (df_ranked['Текущая Стоимость'] / total_val * 100).fillna(0).round(1)
-            df_ranked['PnL (%)'] = ((df_ranked['Текущая Стоимость'] - df_ranked['Вложено']) / df_ranked['Вложено'] * 100).fillna(0).round(1)
+                df_ranked['Доля в портфеле (%)'] = (df_ranked['Текущая Стоимость'] / total_val * 100).fillna(0).round(1)
+                df_ranked['PnL (%)'] = ((df_ranked['Текущая Стоимость'] - df_ranked['Вложено']) / df_ranked['Вложено'] * 100).fillna(0).round(1)
             
-        st.bar_chart(data=df_ranked, x="ticker", y="Health_Score")
+        with tab3:
+            st.caption("По оси X — **Оценка (P/E)**: левее = дешевле. По оси Y — **Эффективность (ROE)**: выше = лучше. Размер точки пропорционален общему **Health Score**. Ваш портфель выделен отдельным цветом.")
         
-        st.page_link("pages/2_💬_Сентимент_и_Пульс.py", label="Открыть детальную ленту сообщений и сентимента (Smart-Lab)", icon="💬")
+            map_df = df_ranked.copy()
+            map_df['Категория'] = map_df['ticker'].apply(lambda t: "Мой портфель" if t in PORTFOLIO_TICKERS else "Кандидаты с рынка")
+            # Ограничиваем выбросы P/E для наглядности карты
+            map_df['P/E (масштабированный)'] = map_df['P_E'].clip(lower=-40, upper=40)
+            # Размер точки (только положительные значения)
+            map_df['Здоровье'] = map_df['Health_Score'].clip(lower=0.1) * 10 
         
-        cols_to_show = ["ticker", "Health_Score", "Тренд", "RSI", "Сентимент", "Div_Yield_%", "Rev_Growth_%", "ROE_%", "P_E", "P_BV", "Debt_EBITDA"]
-        if my_portfolio:
-            cols_to_show.insert(2, "Доля в портфеле (%)")
-            cols_to_show.insert(3, "PnL (%)")
-            
-        st.dataframe(
-            df_ranked[cols_to_show], 
-            width="stretch", 
-            hide_index=True,
-            column_config={
-                "Health_Score": st.column_config.NumberColumn(
-                    "Health_Score",
-                    help="Комплексный рейтинг здоровья бизнеса. База = 1.0. Умножается на коэффициенты за рентабельность, долг, дивиденды и тренд. Ниже 1.0 — кандидаты на продажу."
-                ),
-                "Тренд": st.column_config.TextColumn(
-                    "Тренд",
-                    help="🔪 Падающий нож (цена ниже SMA-50 и SMA-200).\n🚀 Восходящий тренд (пробой SMA-50).\nБоковик (нейтрально)."
-                ),
-                "Сентимент": st.column_config.TextColumn(
-                    "Сентимент",
-                    help="Настроения на SmartLab.\n🟢 Позитив (дает бонус)\n🔴 Негатив (штраф)"
-                ),
-                "Div_Yield_%": st.column_config.NumberColumn(
-                    "Div_Yield_%",
-                    help="⚠️ Сжигатель капитала: если дивиденды и реальный ROE отрицательные (ниже инфляции), компания жестко штрафуется."
-                ),
-                "Debt_EBITDA": st.column_config.NumberColumn(
-                    "Debt_EBITDA",
-                    help="Долговая нагрузка. Значение выше 3.0 — красный флаг риска банкротства."
-                )
-            }
-        )
-            
-        st.markdown("---")
-        st.subheader("🗺️ Карта активов: Сравнение и балансировка")
-        st.caption("По оси X — **Оценка (P/E)**: левее = дешевле. По оси Y — **Эффективность (ROE)**: выше = лучше. Размер точки пропорционален общему **Health Score**. Ваш портфель выделен отдельным цветом.")
+            # Жестко задаем контрастные цвета: яркий красный для вашего портфеля, приглушенный синий для остальных
+            domain = ['Мой портфель', 'Кандидаты с рынка']
+            range_ = ['#FF3366', '#1E88E5'] 
         
-        map_df = df_ranked.copy()
-        map_df['Категория'] = map_df['ticker'].apply(lambda t: "Мой портфель" if t in PORTFOLIO_TICKERS else "Кандидаты с рынка")
-        # Ограничиваем выбросы P/E для наглядности карты
-        map_df['P/E (масштабированный)'] = map_df['P_E'].clip(lower=-40, upper=40)
-        # Размер точки (только положительные значения)
-        map_df['Здоровье'] = map_df['Health_Score'].clip(lower=0.1) * 10 
+            base = alt.Chart(map_df).encode(
+                x=alt.X('P/E (масштабированный):Q', title='P/E (Оценка)'),
+                y=alt.Y('ROE_%:Q', title='ROE (Эффективность)'),
+                color=alt.Color('Категория:N', scale=alt.Scale(domain=domain, range=range_)),
+                tooltip=['ticker', 'Health_Score', 'P_E', 'ROE_%', 'Категория']
+            )
         
-        # Жестко задаем контрастные цвета: яркий красный для вашего портфеля, приглушенный синий для остальных
-        domain = ['Мой портфель', 'Кандидаты с рынка']
-        range_ = ['#FF3366', '#1E88E5'] 
+            points = base.mark_circle().encode(
+                size=alt.Size('Здоровье:Q', legend=None)
+            )
         
-        base = alt.Chart(map_df).encode(
-            x=alt.X('P/E (масштабированный):Q', title='P/E (Оценка)'),
-            y=alt.Y('ROE_%:Q', title='ROE (Эффективность)'),
-            color=alt.Color('Категория:N', scale=alt.Scale(domain=domain, range=range_)),
-            tooltip=['ticker', 'Health_Score', 'P_E', 'ROE_%', 'Категория']
-        )
+            text = base.mark_text(
+                align='left',
+                baseline='middle',
+                dx=9,
+                fontSize=11,
+                fontWeight='bold'
+            ).encode(
+                text='ticker:N'
+            )
         
-        points = base.mark_circle().encode(
-            size=alt.Size('Здоровье:Q', legend=None)
-        )
-        
-        text = base.mark_text(
-            align='left',
-            baseline='middle',
-            dx=9,
-            fontSize=11,
-            fontWeight='bold'
-        ).encode(
-            text='ticker:N'
-        )
-        
-        chart = (points + text).interactive()
-        st.altair_chart(chart, use_container_width=True)
+            chart = (points + text).interactive()
+            st.altair_chart(chart, use_container_width=True)
 
-        st.markdown("---")
-        st.subheader("Рекомендуемые веса в портфеле")
-        position_df = build_position_weights(
-            df_ranked, rules["equity_target"],
-            max_single=max_single_name, rest_cap=rest_cap, n_assets=n_assets
-        )
-        position_df["target_value_rub"] = (position_df["weight"] * capital).astype(int)
-        st.caption(f"Топ-{n_assets} активов по Health Score | Акционерная доля: {rules['equity_target']*100:.0f}% от капитала")
-        st.dataframe(position_df, width="stretch", hide_index=True)
+        with tab4:
+            position_df = build_position_weights(
+                df_ranked, rules["equity_target"],
+                max_single=max_single_name, rest_cap=rest_cap, n_assets=n_assets
+            )
+            position_df["target_value_rub"] = (position_df["weight"] * capital).astype(int)
+            st.caption(f"Топ-{n_assets} активов по Health Score | Акционерная доля: {rules['equity_target']*100:.0f}% от капитала")
+            st.dataframe(position_df, width="stretch", hide_index=True)
     else:
         st.error("Аварийная остановка: Ни один актив не прошел проверку качества.")
