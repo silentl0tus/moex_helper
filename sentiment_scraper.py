@@ -25,6 +25,12 @@ TICKERS_TO_SCAN = [
     "FLOT", "ALRS", "BANE", "BANEP", "RNFT", "SOFL", "VKCO", "MAGN", "PIKK"
 ]
 
+ANALYTICS_WORDS = [
+    "отчет", "выручка", "прибыль", "дивиденд", "дивы", "ставка", "цб", "таргет",
+    "байбек", "купон", "маржа", "ebitda", "долг", "сопротивлени", "поддержк",
+    "уровен", "капитализаци", "мультипликатор", "прогноз", "мсфо", "рсбу"
+]
+
 OUTPUT_FILE = Path(__file__).parent / "sentiment.json"
 
 def clean_html(raw_html):
@@ -81,6 +87,96 @@ def fetch_forum_sentiment(ticker):
     except Exception as e:
         print(f"Error fetching {ticker}: {e}")
         return None
+
+def extract_meaningful_messages(ticker, max_pages=2, max_messages=50):
+    from bs4 import BeautifulSoup
+    
+    messages = []
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+    
+    for page in range(1, max_pages + 1):
+        if page == 1:
+            url = f"https://smart-lab.ru/forum/{ticker}"
+        else:
+            url = f"https://smart-lab.ru/forum/{ticker}/page{page}/"
+            
+        try:
+            r = requests.get(url, headers=headers, timeout=10)
+            if r.status_code != 200:
+                break
+                
+            soup = BeautifulSoup(r.text, 'html.parser')
+            # Ищем все контейнеры постов
+            items = soup.select('li.cm_wrap, div.post')
+            if not items:
+                # Fallback для других вариантов
+                items = soup.select('div.comment_body, div.text')
+                
+            for it in items:
+                # Для li.cm_wrap и подобных
+                text_tag = it.select_one('.text') or (it if 'text' in it.get('class', []) else None)
+                if not text_tag:
+                    text_tag = it.select_one('.comment_body')
+                if not text_tag:
+                    continue
+                    
+                raw_text = text_tag.get_text(separator=' ', strip=True)
+                if len(raw_text) < 30: # Слишком коротко
+                    continue
+                    
+                # Получаем автора
+                author_tag = it.select_one('a[href*="/profile/"], a[href*="/my/"], .user_name, .author, .name')
+                author = author_tag.get_text(strip=True) if author_tag else "Аноним"
+                
+                # Получаем время
+                time_tag = it.select_one('time, .time, .date')
+                time_str = time_tag.get_text(strip=True) if time_tag else ""
+                if not time_str and time_tag and time_tag.get('datetime'):
+                    time_str = time_tag.get('datetime')
+                    
+                # Получаем ссылку на коммент
+                data_id = it.get('data-id')
+                link = f"https://smart-lab.ru/forum/{ticker}#comment{data_id}" if data_id else url
+                
+                # Анализ текста
+                clean_txt = clean_html(str(text_tag))
+                p, n = analyze_sentiment(clean_txt)
+                
+                # Ищем аналитику
+                a_count = sum(1 for word in ANALYTICS_WORDS if re.search(r'\b' + word + r'[а-я]*\b', clean_txt))
+                
+                # Фильтруем откровенный спам: если нет ни позитива, ни негатива, ни аналитики и текст короткий
+                if p == 0 and n == 0 and a_count == 0 and len(raw_text) < 100:
+                    continue
+                
+                if p > n: trend = "positive"
+                elif n > p: trend = "negative"
+                elif a_count > 0: trend = "analytics"
+                else: trend = "neutral"
+                
+                messages.append({
+                    "author": author,
+                    "time": time_str,
+                    "text": raw_text,
+                    "link": link,
+                    "pos": p,
+                    "neg": n,
+                    "analytics": a_count,
+                    "trend": trend
+                })
+                
+                if len(messages) >= max_messages:
+                    return messages
+                    
+        except Exception as e:
+            print(f"Error fetching detailed {ticker} page {page}: {e}")
+            break
+            
+        time.sleep(0.5) # Пауза между страницами
+        
+    return messages
 
 def main():
     print(f"Starting sentiment analysis for {len(TICKERS_TO_SCAN)} tickers...")

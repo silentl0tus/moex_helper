@@ -1031,6 +1031,8 @@ if not raw_fundamental_data.empty:
             
         st.bar_chart(data=df_ranked, x="ticker", y="Health_Score")
         
+        st.page_link("pages/2_💬_Сентимент_и_Пульс.py", label="Открыть детальную ленту сообщений и сентимента (Smart-Lab)", icon="💬")
+        
         cols_to_show = ["ticker", "Health_Score", "Тренд", "RSI", "Сентимент", "Div_Yield_%", "Rev_Growth_%", "ROE_%", "P_E", "P_BV", "Debt_EBITDA"]
         if my_portfolio:
             cols_to_show.insert(2, "Доля в портфеле (%)")

@@ -12,6 +12,7 @@ __pycache__/
 *.xlsx
 *.xls
 !securities.json # Исключение для словарей/системных файлов
+!fundamentals_cache.csv
 
 # Сгенерированные ботом медиафайлы
 *.webp
