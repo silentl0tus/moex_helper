@@ -998,44 +998,6 @@ with tab1:
             
         df_ranked['RSI'] = df_ranked['RSI'].apply(format_rsi)
 
-        with tab1:
-            st.bar_chart(data=df_ranked, x="ticker", y="Health_Score")
-        
-            st.page_link("pages/2_💬_Сентимент_и_Пульс.py", label="Открыть детальную ленту сообщений и сентимента (Smart-Lab)", icon="💬")
-        
-            cols_to_show = ["ticker", "Health_Score", "Тренд", "RSI", "Сентимент", "Div_Yield_%", "Rev_Growth_%", "ROE_%", "P_E", "P_BV", "Debt_EBITDA"]
-            if my_portfolio:
-                cols_to_show.insert(2, "Доля в портфеле (%)")
-                cols_to_show.insert(3, "PnL (%)")
-            
-            st.dataframe(
-                df_ranked[cols_to_show], 
-                width="stretch", 
-                hide_index=True,
-                column_config={
-                    "Health_Score": st.column_config.NumberColumn(
-                        "Health_Score",
-                        help="Комплексный рейтинг здоровья бизнеса. База = 1.0. Умножается на коэффициенты за рентабельность, долг, дивиденды и тренд. Ниже 1.0 — кандидаты на продажу."
-                    ),
-                    "Тренд": st.column_config.TextColumn(
-                        "Тренд",
-                        help="🔪 Падающий нож (цена ниже SMA-50 и SMA-200).\n🚀 Восходящий тренд (пробой SMA-50).\nБоковик (нейтрально)."
-                    ),
-                    "Сентимент": st.column_config.TextColumn(
-                        "Сентимент",
-                        help="Настроения на SmartLab.\n🟢 Позитив (дает бонус)\n🔴 Негатив (штраф)"
-                    ),
-                    "Div_Yield_%": st.column_config.NumberColumn(
-                        "Div_Yield_%",
-                        help="⚠️ Сжигатель капитала: если дивиденды и реальный ROE отрицательные (ниже инфляции), компания жестко штрафуется."
-                    ),
-                    "Debt_EBITDA": st.column_config.NumberColumn(
-                        "Debt_EBITDA",
-                        help="Долговая нагрузка. Значение выше 3.0 — красный флаг риска банкротства."
-                    )
-                }
-            )
-            
         with tab2:
             # 💼 АУДИТ ПОРТФЕЛЯ
             if my_portfolio:
@@ -1074,6 +1036,44 @@ with tab1:
             
                 df_ranked['Доля в портфеле (%)'] = (df_ranked['Текущая Стоимость'] / total_val * 100).fillna(0).round(1)
                 df_ranked['PnL (%)'] = ((df_ranked['Текущая Стоимость'] - df_ranked['Вложено']) / df_ranked['Вложено'] * 100).fillna(0).round(1)
+            
+        with tab1:
+            st.bar_chart(data=df_ranked, x="ticker", y="Health_Score")
+        
+            st.page_link("pages/2_💬_Сентимент_и_Пульс.py", label="Открыть детальную ленту сообщений и сентимента (Smart-Lab)", icon="💬")
+        
+            cols_to_show = ["ticker", "Health_Score", "Тренд", "RSI", "Сентимент", "Div_Yield_%", "Rev_Growth_%", "ROE_%", "P_E", "P_BV", "Debt_EBITDA"]
+            if my_portfolio:
+                cols_to_show.insert(2, "Доля в портфеле (%)")
+                cols_to_show.insert(3, "PnL (%)")
+            
+            st.dataframe(
+                df_ranked[cols_to_show], 
+                width="stretch", 
+                hide_index=True,
+                column_config={
+                    "Health_Score": st.column_config.NumberColumn(
+                        "Health_Score",
+                        help="Комплексный рейтинг здоровья бизнеса. База = 1.0. Умножается на коэффициенты за рентабельность, долг, дивиденды и тренд. Ниже 1.0 — кандидаты на продажу."
+                    ),
+                    "Тренд": st.column_config.TextColumn(
+                        "Тренд",
+                        help="🔪 Падающий нож (цена ниже SMA-50 и SMA-200).\n🚀 Восходящий тренд (пробой SMA-50).\nБоковик (нейтрально)."
+                    ),
+                    "Сентимент": st.column_config.TextColumn(
+                        "Сентимент",
+                        help="Настроения на SmartLab.\n🟢 Позитив (дает бонус)\n🔴 Негатив (штраф)"
+                    ),
+                    "Div_Yield_%": st.column_config.NumberColumn(
+                        "Div_Yield_%",
+                        help="⚠️ Сжигатель капитала: если дивиденды и реальный ROE отрицательные (ниже инфляции), компания жестко штрафуется."
+                    ),
+                    "Debt_EBITDA": st.column_config.NumberColumn(
+                        "Debt_EBITDA",
+                        help="Долговая нагрузка. Значение выше 3.0 — красный флаг риска банкротства."
+                    )
+                }
+            )
             
         with tab3:
             st.caption("По оси X — **Оценка (P/E)**: левее = дешевле. По оси Y — **Эффективность (ROE)**: выше = лучше. Размер точки пропорционален общему **Health Score**. Ваш портфель выделен отдельным цветом.")
