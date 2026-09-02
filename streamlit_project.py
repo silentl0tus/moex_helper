@@ -528,7 +528,7 @@ with st.spinner("Считываю сигналы систем..."):
     tech_data = fetch_technical_indicators(selected_tickers)
     raw_fundamental_data = fetch_smartlab_fundamentals(selected_tickers)
     sentiment_data = load_sentiment_data(_cache_buster=_sentiment_mtime())
-    st.write(f"DEBUG: sentiment_data keys = {list(sentiment_data.keys())[:5]} (Total {len(sentiment_data)}). SBER score: {sentiment_data.get('SBER', {}).get('score', 'NOT FOUND')}")
+
 
 index_level = market_context.get("IMOEX")
 usd_rate = market_context.get("USD000UTSTOM")
