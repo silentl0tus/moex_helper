@@ -327,13 +327,14 @@ def build_portfolio_rules(index_level, usd_rate):
     
     return {"cash_target": cash_target, "bond_target": bond_target, "equity_target": equity_target, "regime": regime, "bond_currency": bond_currency}
 
-def build_position_weights(ranked_df, equity_target, max_single=0.15, rest_cap=0.05):
+def build_position_weights(ranked_df, equity_target, max_single=0.15, rest_cap=0.05, n_assets=10):
     if ranked_df.empty:
         return pd.DataFrame(columns=["ticker", "weight"])
-    weights = [max_single if idx < 3 else rest_cap for idx, _ in ranked_df.iterrows()]
+    # Берём только топ-N активов по Health_Score
+    ranked_df = ranked_df.head(n_assets).copy()
+    ranked_df = ranked_df.reset_index(drop=True)
+    weights = [max_single if i < 3 else rest_cap for i in range(len(ranked_df))]
     scale = min(1.0, equity_target / sum(weights))
-    
-    ranked_df = ranked_df.copy()
     ranked_df["weight"] = [w * scale for w in weights]
     ranked_df["weight"] = ranked_df["weight"].clip(upper=max_single)
     return ranked_df[["ticker", "Health_Score", "weight", "ROE_%", "P_E", "Debt_EBITDA"]]
@@ -506,6 +507,8 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("Фильтры отбраковки")
     capital = st.number_input("Размер капитала, ₽", min_value=100000, value=4200000, step=100000)
+    n_assets = st.slider("Число активов в портфеле", min_value=3, max_value=20, value=10, step=1,
+                         help="Сколько лучших акций по Health Score войдёт в итоговый портфель.")
     max_single_name = st.slider("Макс. доля одной акции", 0.05, 0.15, 0.12, 0.01)
     rest_cap = st.slider("Макс. доля остальных акций", 0.03, 0.05, 0.05, 0.01)
 
@@ -1102,8 +1105,12 @@ if not raw_fundamental_data.empty:
 
         st.markdown("---")
         st.subheader("Рекомендуемые веса в портфеле")
-        position_df = build_position_weights(df_ranked, rules["equity_target"], max_single=max_single_name, rest_cap=rest_cap)
+        position_df = build_position_weights(
+            df_ranked, rules["equity_target"],
+            max_single=max_single_name, rest_cap=rest_cap, n_assets=n_assets
+        )
         position_df["target_value_rub"] = (position_df["weight"] * capital).astype(int)
+        st.caption(f"Топ-{n_assets} активов по Health Score | Акционерная доля: {rules['equity_target']*100:.0f}% от капитала")
         st.dataframe(position_df, width="stretch", hide_index=True)
     else:
         st.error("Аварийная остановка: Ни один актив не прошел проверку качества.")
