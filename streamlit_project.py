@@ -1,12 +1,15 @@
 import json
 import os
+import re
 from datetime import datetime, timedelta
 from io import StringIO
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
+import altair as alt
 import pandas as pd
 import requests
+import yfinance as yf
 import streamlit as st
 st.set_page_config(page_title="Аналитика Портфеля", page_icon="📈", layout="wide")
 
@@ -27,6 +30,22 @@ st.caption("Гибрид: цены с MOEX, фундаментал, правил
 MIN_DAILY_TURNOVER_RUB = 50_000_000
 MOEX_TQBR_URL = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities.json"
 REQUIRED_FUNDAMENTALS = ["ROE_%", "P_E", "Debt_EBITDA"]
+
+# -- Классификация тикеров по секторам (единственное определение) --
+BANK_TICKERS     = ['SBER', 'SBERP', 'VTBR', 'TCSG', 'BSPB', 'CBOM', 'T', 'SVCB']
+IT_TICKERS       = ['ASTR', 'POSI', 'DIAS', 'DATA', 'SOFL', 'VKCO', 'YNDX', 'HEAD', 'OZON']
+OIL_TICKERS      = ['ROSN', 'LKOH', 'SIBN', 'TATN', 'TATNP', 'SNGS', 'SNGSP', 'TRNFP', 'BANE', 'BANEP', 'RNFT']
+STEEL_TICKERS    = ['CHMF', 'NLMK', 'MAGN']
+GOLD_TICKERS     = ['PLZL', 'UGC', 'SELG']
+CONSUMER_TICKERS = ['MGNT', 'FIVE', 'FIXP', 'OBUV', 'ORUP', 'BELU', 'AQUA']
+TELECOM_TICKERS  = ['MTSS', 'RTKM', 'RTKMP']
+UTILITIES_TICKERS = ['IRAO', 'UPRO', 'HYDR', 'MSNG', 'FEES', 'LSNG', 'LSNGP']
+CYCLICAL_TICKERS = ['CHMF', 'NLMK', 'MAGN', 'ALRS', 'PLZL', 'UGC', 'MTLR', 'RASP', 'SELG']
+# Холдинги: P/E искажён переоценками дочек/кубышки — оцениваем по P/BV
+HOLDING_TICKERS  = ['SNGS', 'SNGSP', 'AFKS', 'SFIN', 'ENPG', 'GAZP']
+ZERO_DEBT_TICKERS = ['SNGS', 'SNGSP']  # отрицательный чистый долг
+# Чёрный список: предбанкроты, уход с биржи, плохое корп. управление
+TOXIC_TICKERS    = ['PIKK', 'SMLT', 'EUTR', 'QIWI', 'POLY', 'ORUP', 'OBUV', 'RUGR', 'FIXP', 'CBOM']
 
 # ==========================================
 # 2. ФУНКЦИИ СБОРА ДАННЫХ
@@ -144,7 +163,6 @@ def fetch_market_context():
             
     # Парсинг котировок Urals с tankermap
     try:
-        import re
         url = "https://tankermap.com/market-data/urals"
         headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(url, headers=headers, timeout=5)
@@ -158,7 +176,6 @@ def fetch_market_context():
         
     # Парсинг Ключевой Ставки ЦБ РФ (Безрисковая ставка)
     try:
-        import re
         url_cbr = "https://cbr.ru/hd_base/KeyRate/"
         headers = {"User-Agent": "Mozilla/5.0"}
         resp_cbr = requests.get(url_cbr, headers=headers, timeout=5)
@@ -186,7 +203,6 @@ def fetch_market_context():
         
     # Парсинг котировок сырья через yfinance (чтобы избежать блокировок Cloudflare)
     try:
-        import yfinance as yf
         # Золото (COMEX Gold Futures)
         gold_ticker = yf.Ticker("GC=F")
         gold_df = gold_ticker.history(period="1d")
@@ -283,8 +299,6 @@ def fetch_smartlab_fundamentals(ticker_list):
         return pd.DataFrame(columns=["ticker", "P_E", "ROE_%", "Debt_EBITDA", "Rev_Growth_%", "P_BV", "FCF_Yield_%", "Div_RUB"])
 
     # Для банков нет Debt/EBITDA — подставляем безопасную константу если отсутствует
-    BANK_TICKERS = {'SBER', 'SBERP', 'VTBR', 'TCSG', 'BSPB', 'CBOM', 'T', 'SVCB'}
-    ZERO_DEBT_TICKERS = {'SNGS', 'SNGSP'}
     if 'Debt_EBITDA' in df.columns:
         bank_mask = df['ticker'].isin(BANK_TICKERS) & df['Debt_EBITDA'].isna()
         df.loc[bank_mask, 'Debt_EBITDA'] = 1.0
@@ -348,7 +362,6 @@ with st.sidebar:
         my_blocked = {}
         
         if uploaded_file.name.endswith(".json"):
-            import json
             data = json.load(uploaded_file)
             assets = {a['id']: a['symbol'] for a in data.get('assets', [])}
             
@@ -628,22 +641,8 @@ if not raw_fundamental_data.empty:
     df_fund["ROE_%"] = df_fund["ROE_%"].fillna(0)
     df_fund["Debt_EBITDA"] = df_fund["Debt_EBITDA"].fillna(999)
 
-    # IT-сектор, для которого классический ROE не работает корректно
-    HOLDING_TICKERS = ['AFKS', 'SFI', 'CBOM', 'GAZP'] # GAZP оцениваем как холдинг
-    BANK_TICKERS = ['SBER', 'SBERP', 'VTBR', 'TCSG', 'BSPB', 'CBOM', 'SVCB', 'T']
-    IT_TICKERS = ['ASTR', 'POSI', 'DIAS', 'DATA', 'SOFL', 'VKCO', 'YNDX', 'HEAD', 'OZON']
-    CONSUMER_TICKERS = ['MGNT', 'FIVE', 'FIXP', 'OBUV', 'ORUP', 'BELU', 'AQUA']
-    TELECOM_TICKERS = ['MTSS', 'RTKM', 'RTKMP']
-    STEEL_TICKERS = ['CHMF', 'NLMK', 'MAGN']
-    GOLD_TICKERS = ['PLZL', 'UGC', 'SELG']
-    OIL_TICKERS = ['ROSN', 'LKOH', 'SIBN', 'TATN', 'TATNP', 'SNGS', 'SNGSP', 'TRNFP', 'BANE', 'BANEP', 'RNFT']
-    UTILITIES_TICKERS = ['IRAO', 'UPRO', 'HYDR', 'MSNG', 'FEES', 'LSNG', 'LSNGP']
-    
     is_portfolio = df_fund['ticker'].isin(portfolio_tickers_list)
     is_it = df_fund['ticker'].isin(IT_TICKERS)
-    
-    # Черный список: предбанкроты, уход с биржи, отвратительное корп. управление, дыры в капитале (скрытые убытки)
-    TOXIC_TICKERS = ['PIKK', 'SMLT', 'EUTR', 'QIWI', 'POLY', 'ORUP', 'OBUV', 'RUGR', 'FIXP', 'CBOM']
     is_toxic = df_fund['ticker'].isin(TOXIC_TICKERS)
     
     # Для IT-компаний игнорируем фильтр по ROE, так как он может быть искажен
@@ -688,19 +687,16 @@ if not raw_fundamental_data.empty:
         
         # Специфика Сургутнефтегаза и Холдингов: их P/E искажен переоценками кубышки/дочек. Оцениваем по P/BV.
         # GAZP добавлен сюда как холдинг (владеет Газпром нефтью, Газпромбанком), торгующийся глубоко ниже капитала.
-        HOLDING_TICKERS = ['SNGS', 'SNGSP', 'AFKS', 'SFIN', 'ENPG', 'GAZP']
         is_holding = df_fund['ticker'].isin(HOLDING_TICKERS)
         df_fund.loc[is_holding, "Health_Score"] = (((3.0 / df_fund.loc[is_holding, "P_BV"].clip(lower=0.1)) / (1 + df_fund.loc[is_holding, "Debt_EBITDA"])) * growth_multiplier[is_holding]).round(2)
         
         # Специфика Банков (Финансовый сектор): их оценивают по связке Капитала (P/BV) и Эффективности (ROE).
         # Умножаем P_BV на 5.0, чтобы шкала оценки банка математически совпадала со шкалой P/E обычных компаний.
-        BANK_TICKERS = ['SBER', 'SBERP', 'VTBR', 'TCSG', 'BSPB', 'CBOM', 'T', 'SVCB']
         is_bank = df_fund['ticker'].isin(BANK_TICKERS)
         df_fund.loc[is_bank, "Health_Score"] = (((df_fund.loc[is_bank, "ROE_norm"] / (df_fund.loc[is_bank, "P_BV"].clip(lower=0.1) * 5.0)) / (1 + df_fund.loc[is_bank, "Debt_EBITDA"])) * growth_multiplier[is_bank]).round(2)
         
         # Учет макро-контекста: корректировка нефтяников по текущей цене Urals
         urals_price = market_context.get("URALS")
-        OIL_TICKERS = ['ROSN', 'LKOH', 'SIBN', 'TATN', 'TATNP', 'SNGS', 'SNGSP', 'TRNFP', 'BANE', 'BANEP', 'RNFT']
         if urals_price:
             if urals_price < 60:
                 oil_multiplier = 0.8  # Штраф за низкие цены на нефть
@@ -1075,8 +1071,6 @@ if not raw_fundamental_data.empty:
         map_df['P/E (масштабированный)'] = map_df['P_E'].clip(lower=-40, upper=40)
         # Размер точки (только положительные значения)
         map_df['Здоровье'] = map_df['Health_Score'].clip(lower=0.1) * 10 
-        
-        import altair as alt
         
         # Жестко задаем контрастные цвета: яркий красный для вашего портфеля, приглушенный синий для остальных
         domain = ['Мой портфель', 'Кандидаты с рынка']
