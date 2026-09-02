@@ -249,159 +249,41 @@ def load_sentiment_data():
             return {}
     return {}
 
-@st.cache_data(ttl=86400)
+@st.cache_data(ttl=3600)
 def fetch_smartlab_fundamentals(ticker_list):
-    fundamental_data = []
-    
-    SMARTLAB_MAP = {
-        'YDEX': 'YNDX',
-        'SBER': 'SBER',
-        'LKOH': 'LKOH',
-        'GAZP': 'GAZP'
-    }
-    
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-    
-    import random
-    
-    proxy_list = []
-    try:
-        resp = requests.get("https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=5000&country=RU&ssl=all&anonymity=all", timeout=5)
-        if resp.status_code == 200:
-            proxy_list = [p for p in resp.text.strip().split("\r\n") if p]
-    except Exception:
-        pass
-
-    for ticker in ticker_list:
-        try:
-            smartlab_ticker = SMARTLAB_MAP.get(ticker.upper(), ticker.upper())
-            url = f"https://smart-lab.ru/q/{smartlab_ticker}/f/y/"
-            
-            response = None
-            try:
-                # Пытаемся напрямую (сработает при локальном запуске)
-                response = requests.get(url, headers=headers, timeout=5)
-                if response.status_code != 200:
-                    response = None
-            except Exception:
-                response = None
-                
-            # Если не вышло, пробуем до 3 случайных российских прокси (поможет для Streamlit Cloud)
-            if not response and proxy_list:
-                random.shuffle(proxy_list)
-                for proxy in proxy_list[:3]:
-                    try:
-                        proxies = {"http": f"http://{proxy}", "https": f"http://{proxy}"}
-                        response = requests.get(url, headers=headers, proxies=proxies, timeout=5)
-                        if response.status_code == 200:
-                            break
-                        else:
-                            response = None
-                    except Exception:
-                        response = None
-                        
-            if not response:
-                continue
-            
-            tables = pd.read_html(StringIO(response.text))
-            if not tables:
-                continue
-                
-            df = tables[0]
-            
-            # Удаляем колонку LTM, так как смарт-лаб часто отдает по ней искаженные
-            # или сломанные экстраполяции (из-за чего P/E бывает -700+).
-            # Будем полагаться только на закрытые годовые отчеты.
-            cols_to_drop = [col for col in df.columns if df[col].astype(str).str.contains('LTM', case=False).any()]
-            if cols_to_drop:
-                df = df.drop(columns=cols_to_drop)
-                
-            df = df.rename(columns={df.columns[0]: 'Metric'})
-            df = df[[c for c in df.columns if c != '?']]
-            
-            for col in df.columns:
-                if col != 'Metric':
-                    df[col] = df[col].astype(str).str.replace(r'[\s%]', '', regex=True)
-            
-            # Удаляем дубликаты метрик, чтобы при транспонировании не было одинаковых колонок
-            df = df.drop_duplicates(subset=['Metric'], keep='first')
-            
-            df = df.set_index('Metric').T
-            
-            for col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
-                
-            columns_map = {str(col).lower(): col for col in df.columns}
-            
-            roe_col = next((v for k, v in columns_map.items() if 'roe' in k), None)
-            pe_col = next((v for k, v in columns_map.items() if 'p/e' in k or 'p / e' in k), None)
-            debt_ebitda_col = next((v for k, v in columns_map.items() if 'долг/ebitda' in k or 'debt/ebitda' in k), None)
-            rev_col = next((v for k, v in columns_map.items() if 'выручка' in k or 'чист. операц' in k or 'чистый операц' in k), None)
-            pbv_col = next((v for k, v in columns_map.items() if 'p/bv' in k or 'p / bv' in k), None)
-            fcf_yield_col = next((v for k, v in columns_map.items() if 'доходность fcf' in k), None)
-            div_rub_col = next((v for k, v in columns_map.items() if 'дивиденд, руб' in k and 'ап' not in k), None)
-            
-            payload = {"ticker": ticker.upper()}
-            if roe_col and not df[roe_col].dropna().empty:
-                payload["ROE_%"] = df[roe_col].dropna().iloc[-1]
-            if pe_col and not df[pe_col].dropna().empty:
-                payload["P_E"] = df[pe_col].dropna().iloc[-1]
-            if pbv_col and not df[pbv_col].dropna().empty:
-                payload["P_BV"] = df[pbv_col].dropna().iloc[-1]
-            if fcf_yield_col and not df[fcf_yield_col].dropna().empty:
-                payload["FCF_Yield_%"] = df[fcf_yield_col].dropna().iloc[-1]
-            if div_rub_col and not df[div_rub_col].dropna().empty:
-                payload["Div_RUB"] = df[div_rub_col].dropna().iloc[-1]
-                
-            if rev_col and not df[rev_col].dropna().empty:
-                rev_series = df[rev_col].dropna()
-                if len(rev_series) >= 2:
-                    current_rev = rev_series.iloc[-1]
-                    prev_rev = rev_series.iloc[-2]
-                    if prev_rev != 0:
-                        payload["Rev_Growth_%"] = round((current_rev - prev_rev) / abs(prev_rev) * 100, 2)
-                
-            if debt_ebitda_col and not df[debt_ebitda_col].dropna().empty:
-                payload["Debt_EBITDA"] = df[debt_ebitda_col].dropna().iloc[-1]
-            elif ticker.upper() in ['SBER', 'SBERP', 'VTBR', 'TCSG', 'BSPB', 'CBOM', 'T', 'SVCB']: 
-                # Для банков нет Debt/EBITDA, ставим безопасное значение
-                payload["Debt_EBITDA"] = 1.0
-            elif ticker.upper() in ['SNGS', 'SNGSP']:
-                # У Сургутнефтегаза гигантская кэш-кубышка и отрицательный чистый долг
-                payload["Debt_EBITDA"] = 0.0
-                
-            fundamental_data.append(payload)
-            
-        except Exception:
-            pass
-            
-    df = pd.DataFrame(fundamental_data)
-    from pathlib import Path
+    """
+    Читает фундаментальные данные из fundamentals_cache.csv,
+    который обновляется GitHub Actions каждый будний день в 09:00 МСК.
+    Прямой парсинг smart-lab.ru здесь не выполняется — это позволяет
+    дашборду работать на Streamlit Cloud без проксей и домашнего ПК.
+    """
     cache_path = Path(__file__).parent / "fundamentals_cache.csv"
-    
-    if df.empty:
-        # Облако Streamlit заблокировано. Пробуем загрузить данные из локального кэша
-        if cache_path.exists():
-            try:
-                cached_df = pd.read_csv(cache_path)
-                # Отдаем только те тикеры, которые запросил пользователь
-                return cached_df[cached_df['ticker'].isin([t.upper() for t in ticker_list])]
-            except Exception:
-                pass
+
+    if not cache_path.exists():
+        st.warning(
+            "⚠️ Файл fundamentals_cache.csv не найден. "
+            "Запустите GitHub Actions вручную: "
+            "репозиторий → Actions → Update Fundamentals Cache → Run workflow."
+        )
         return pd.DataFrame(columns=["ticker", "P_E", "ROE_%", "Debt_EBITDA", "Rev_Growth_%", "P_BV", "FCF_Yield_%", "Div_RUB"])
-    else:
-        # Если удалось успешно спарсить (например, локально), обновляем кэш
-        if cache_path.exists():
-            try:
-                old_cache = pd.read_csv(cache_path)
-                merged = pd.concat([df, old_cache]).drop_duplicates(subset=['ticker'], keep='first')
-                merged.to_csv(cache_path, index=False)
-            except Exception:
-                df.to_csv(cache_path, index=False)
-        else:
-            df.to_csv(cache_path, index=False)
-            
-    return df
+
+    try:
+        df = pd.read_csv(cache_path)
+    except Exception as e:
+        st.error(f"Не удалось прочитать кэш: {e}")
+        return pd.DataFrame(columns=["ticker", "P_E", "ROE_%", "Debt_EBITDA", "Rev_Growth_%", "P_BV", "FCF_Yield_%", "Div_RUB"])
+
+    # Для банков нет Debt/EBITDA — подставляем безопасную константу если отсутствует
+    BANK_TICKERS = {'SBER', 'SBERP', 'VTBR', 'TCSG', 'BSPB', 'CBOM', 'T', 'SVCB'}
+    ZERO_DEBT_TICKERS = {'SNGS', 'SNGSP'}
+    if 'Debt_EBITDA' in df.columns:
+        bank_mask = df['ticker'].isin(BANK_TICKERS) & df['Debt_EBITDA'].isna()
+        df.loc[bank_mask, 'Debt_EBITDA'] = 1.0
+        zero_mask = df['ticker'].isin(ZERO_DEBT_TICKERS) & df['Debt_EBITDA'].isna()
+        df.loc[zero_mask, 'Debt_EBITDA'] = 0.0
+
+    # Отдаём только те тикеры, которые запросил пользователь
+    return df[df['ticker'].isin([t.upper() for t in ticker_list])].reset_index(drop=True)
 
 # ==========================================
 # 3. БИЗНЕС-ЛОГИКА И РАСЧЕТЫ

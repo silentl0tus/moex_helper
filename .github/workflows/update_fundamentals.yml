@@ -1,0 +1,40 @@
+name: Update Fundamentals Cache
+
+on:
+  schedule:
+    # Каждый будний день в 09:00 по Москве (06:00 UTC)
+    - cron: '0 6 * * 1-5'
+  # Позволяет запустить вручную из GitHub UI
+  workflow_dispatch:
+
+jobs:
+  fetch-fundamentals:
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: write  # Нужно для git push
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install requests pandas lxml html5lib beautifulsoup4
+
+      - name: Run fundamentals parser
+        run: python fetch_fundamentals.py
+
+      - name: Commit and push updated cache
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add fundamentals_cache.csv
+          # Коммитим только если файл изменился
+          git diff --staged --quiet || git commit -m "chore: update fundamentals cache [$(date +'%Y-%m-%d')]"
+          git push
