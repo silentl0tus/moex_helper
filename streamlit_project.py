@@ -521,6 +521,7 @@ with st.spinner("Считываю сигналы систем..."):
     tech_data = fetch_technical_indicators(selected_tickers)
     raw_fundamental_data = fetch_smartlab_fundamentals(selected_tickers)
     sentiment_data = load_sentiment_data(_mtime=_sentiment_mtime())
+    st.write(f"DEBUG: sentiment_data keys = {list(sentiment_data.keys())[:5]} (Total {len(sentiment_data)})")
 
 index_level = market_context.get("IMOEX")
 usd_rate = market_context.get("USD000UTSTOM")
@@ -643,6 +644,7 @@ with tab1:
         *Акции с итоговым счетом **ниже 1.0** помечаются как "слабые" (Кандидаты на продажу). Лидеры рынка уходят выше 1.5.*
         """)
 
+    df_fund = pd.DataFrame()
     if not raw_fundamental_data.empty:
         df_fund = raw_fundamental_data[raw_fundamental_data["ticker"].isin([t.upper() for t in selected_tickers])].copy()
 
@@ -811,8 +813,8 @@ with tab1:
         df_fund['Сентимент_Балл'] = df_fund['ticker'].apply(get_sentiment_score)
         df_fund['Сентимент'] = df_fund['Сентимент_Балл'].apply(format_sentiment)
         
-        # Контрарианский подход: покупай на панике (бонус до +5% за негатив), продавай на эйфории (штраф до -5% за позитив)
-        sentiment_multiplier = 1 - (df_fund['Сентимент_Балл'] * 0.05)
+        # Прямой подход: позитивный сентимент дает бонус (до +5%), негативный - штраф (до -5%)
+        sentiment_multiplier = 1 + (df_fund['Сентимент_Балл'] * 0.05)
         df_fund["Health_Score"] = (df_fund["Health_Score"] * sentiment_multiplier).round(2)
         
         # Интеграция Безрисковой Ставки (Key Rate / Cost of Money)
