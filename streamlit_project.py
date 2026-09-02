@@ -1,3 +1,4 @@
+import json
 import os
 from datetime import datetime, timedelta
 from io import StringIO
@@ -236,18 +237,26 @@ def fetch_technical_indicators(tickers):
         results = list(ex.map(get_ticker_tech, tickers))
     return pd.DataFrame(results)
 
-@st.cache_data(ttl=300)
-def load_sentiment_data():
-    import json
-    from pathlib import Path
+def _sentiment_mtime() -> float:
+    """Возвращает mtime sentiment.json как ключ для инвалидации кэша."""
+    p = Path(__file__).parent / "sentiment.json"
+    return p.stat().st_mtime if p.exists() else 0.0
+
+@st.cache_data(ttl=600)
+def load_sentiment_data(_mtime: float = 0.0):
+    """
+    Читает sentiment.json из репозитория.
+    Кэш сбрасывается автоматически при каждом обновлении файла
+    (GitHub Actions обновляет его каждые 2 часа в рабочее время).
+    """
     sentiment_path = Path(__file__).parent / "sentiment.json"
-    if sentiment_path.exists():
-        try:
-            with open(sentiment_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {}
-    return {}
+    if not sentiment_path.exists():
+        return {}
+    try:
+        with open(sentiment_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
 
 @st.cache_data(ttl=3600)
 def fetch_smartlab_fundamentals(ticker_list):
@@ -497,7 +506,7 @@ with st.spinner("Считываю сигналы систем..."):
     market_context = fetch_market_context()
     tech_data = fetch_technical_indicators(selected_tickers)
     raw_fundamental_data = fetch_smartlab_fundamentals(selected_tickers)
-    sentiment_data = load_sentiment_data()
+    sentiment_data = load_sentiment_data(_mtime=_sentiment_mtime())
 
 index_level = market_context.get("IMOEX")
 usd_rate = market_context.get("USD000UTSTOM")

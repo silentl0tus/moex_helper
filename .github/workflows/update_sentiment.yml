@@ -1,0 +1,40 @@
+name: Update Sentiment Cache
+
+on:
+  schedule:
+    # Каждые 2 часа в торговое время: 07:00–19:00 UTC (10:00–22:00 МСК)
+    - cron: '0 7,9,11,13,15,17,19 * * 1-5'
+    # В выходные — один раз утром
+    - cron: '0 8 * * 0,6'
+  workflow_dispatch:
+
+jobs:
+  fetch-sentiment:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run sentiment scraper
+        run: python sentiment_scraper.py
+
+      - name: Commit and push updated sentiment
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add sentiment.json
+          git diff --staged --quiet || git commit -m "chore: update sentiment [$(date +'%Y-%m-%d %H:%M UTC')]"
+          git push
