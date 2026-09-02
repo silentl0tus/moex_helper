@@ -17,13 +17,63 @@ NEGATIVE_WORDS = [
     "убыток", "дорого", "пузырь", "скам"
 ]
 
-# Топ-ликвидных тикеров для анализа
-TICKERS_TO_SCAN = [
+# Тикеры из портфеля пользователя (всегда включаются)
+PORTFOLIO_TICKERS = [
+    "MGNT", "SBER", "ROSN", "NMTP", "SVCB",
+    "T", "SIBN", "BELU", "CHMF", "NLMK",
+    "SNGS", "TRNFP", "GAZP"
+]
+
+# Резервный список (если MOEX API недоступен)
+FALLBACK_TICKERS = [
     "SBER", "SBERP", "LKOH", "GAZP", "ROSN", "NVTK", "YNDX", "YDEX", "T", "TCSG", 
     "PLZL", "MGNT", "CHMF", "NLMK", "SNGS", "SNGSP", "MTSS", "TATN", "TRNFP", 
     "SVCB", "HEAD", "ASTR", "DIAS", "DATA", "POSI", "OZON", "MOEX", "AFKS", 
     "FLOT", "ALRS", "BANE", "BANEP", "RNFT", "SOFL", "VKCO", "MAGN", "PIKK"
 ]
+
+MIN_DAILY_TURNOVER_RUB = 50_000_000
+MOEX_TQBR_URL = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities.json"
+
+def fetch_moex_tickers():
+    """Динамически получает список ликвидных тикеров с MOEX ISS API."""
+    try:
+        params = {
+            "iss.meta": "off",
+            "iss.only": "securities,marketdata",
+            "securities.columns": "SECID,LISTLEVEL",
+            "marketdata.columns": "SECID,VALTODAY",
+        }
+        response = requests.get(MOEX_TQBR_URL, params=params, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+
+        turnover_by_ticker = {
+            row[0]: row[1] or 0
+            for row in data["marketdata"]["data"]
+        }
+        
+        max_turnover = max(turnover_by_ticker.values()) if turnover_by_ticker else 0
+        market_is_open = max_turnover > MIN_DAILY_TURNOVER_RUB
+
+        tickers = set()
+        for ticker, list_level in data["securities"]["data"]:
+            if list_level not in (1, 2) and ticker not in PORTFOLIO_TICKERS:
+                continue
+            turnover_rub = turnover_by_ticker.get(ticker, 0)
+            if market_is_open and turnover_rub < MIN_DAILY_TURNOVER_RUB and ticker not in PORTFOLIO_TICKERS:
+                continue
+            tickers.add(ticker)
+        
+        # Всегда добавляем тикеры из портфеля
+        tickers.update(PORTFOLIO_TICKERS)
+        
+        print(f"Fetched {len(tickers)} tickers from MOEX API")
+        return sorted(tickers)
+        
+    except Exception as e:
+        print(f"Failed to fetch MOEX tickers: {e}. Using fallback list.")
+        return sorted(set(FALLBACK_TICKERS + PORTFOLIO_TICKERS))
 
 ANALYTICS_WORDS = [
     "отчет", "выручка", "прибыль", "дивиденд", "дивы", "ставка", "цб", "таргет",
@@ -245,11 +295,12 @@ def extract_pulse_messages(ticker, max_messages=50):
     return messages
 
 def main():
-    print(f"Starting sentiment analysis for {len(TICKERS_TO_SCAN)} tickers...")
+    tickers = fetch_moex_tickers()
+    print(f"Starting sentiment analysis for {len(tickers)} tickers...")
     results = {}
     
-    for i, ticker in enumerate(TICKERS_TO_SCAN):
-        print(f"[{i+1}/{len(TICKERS_TO_SCAN)}] Analyzing {ticker}...", end=" ")
+    for i, ticker in enumerate(tickers):
+        print(f"[{i+1}/{len(tickers)}] Analyzing {ticker}...", end=" ")
         sentiment = fetch_forum_sentiment(ticker)
         
         if sentiment is not None:
@@ -266,7 +317,7 @@ def main():
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
         
-    print(f"\nSaved sentiment data to {OUTPUT_FILE}")
+    print(f"\nSaved sentiment data for {len(results)} tickers to {OUTPUT_FILE}")
 
 if __name__ == "__main__":
     main()
