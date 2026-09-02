@@ -9,7 +9,7 @@ project_root = Path(__file__).parent.parent
 if str(project_root) not in sys.path:
     sys.path.append(str(project_root))
 
-from sentiment_scraper import extract_meaningful_messages, TICKERS_TO_SCAN
+from sentiment_scraper import extract_meaningful_messages, extract_pulse_messages, TICKERS_TO_SCAN
 
 st.set_page_config(page_title="Сентимент и Пульс", page_icon="💬", layout="wide")
 
@@ -30,7 +30,8 @@ with col1:
     ticker_to_search = custom_ticker if custom_ticker else selected_ticker
     
     st.markdown("---")
-    st.subheader("Фильтры")
+    st.subheader("Источник и Фильтры")
+    source_option = st.radio("Источник данных:", ["Smart-Lab (Форум)", "Тинькофф Пульс"])
     filter_option = st.radio(
         "Показать сообщения:",
         options=["Все осмысленные", "Только 🟢 Позитив", "Только 🔴 Негатив", "Только 📊 Аналитика"]
@@ -45,8 +46,11 @@ with col1:
         st.session_state.force_reload = False
 
 @st.cache_data(ttl=600, show_spinner=False)
-def get_messages(ticker, force_reload=False):
-    return extract_meaningful_messages(ticker, max_pages=2, max_messages=50)
+def get_messages(ticker, source, force_reload=False):
+    if source == "Тинькофф Пульс":
+        return extract_pulse_messages(ticker, max_messages=50)
+    else:
+        return extract_meaningful_messages(ticker, max_pages=2, max_messages=50)
 
 with col2:
     st.subheader(f"Лента сообщений: {ticker_to_search}")
@@ -54,8 +58,8 @@ with col2:
     if st.session_state.force_reload:
         get_messages.clear()
         
-    with st.spinner("Загрузка данных с форума..."):
-        messages = get_messages(ticker_to_search, st.session_state.force_reload)
+    with st.spinner("Загрузка данных..."):
+        messages = get_messages(ticker_to_search, source_option, st.session_state.force_reload)
         
     if not messages:
         st.warning(f"Не удалось найти осмысленных сообщений для тикера {ticker_to_search}.")

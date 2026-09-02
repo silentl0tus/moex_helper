@@ -148,7 +148,7 @@ def extract_meaningful_messages(ticker, max_pages=2, max_messages=50):
                 a_count = sum(1 for word in ANALYTICS_WORDS if re.search(r'\b' + word + r'[а-я]*\b', clean_txt))
                 
                 # Фильтруем откровенный спам: если нет ни позитива, ни негатива, ни аналитики и текст короткий
-                if p == 0 and n == 0 and a_count == 0 and len(raw_text) < 100:
+                if p == 0 and n == 0 and a_count == 0 and len(raw_text) < 10:
                     continue
                 
                 if p > n: trend = "positive"
@@ -175,6 +175,72 @@ def extract_meaningful_messages(ticker, max_pages=2, max_messages=50):
             break
             
         time.sleep(0.5) # Пауза между страницами
+        
+    return messages
+
+def extract_pulse_messages(ticker, max_messages=50):
+    url = f"https://www.tbank.ru/api/invest-gw/social/v1/post/instrument/{ticker}?limit={max_messages}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/json"
+    }
+    
+    messages = []
+    try:
+        r = requests.get(url, headers=headers, timeout=10)
+        if r.status_code != 200:
+            return messages
+            
+        data = r.json()
+        items = data.get("payload", {}).get("items", [])
+        
+        for item in items:
+            raw_text = item.get("content", {}).get("text", "")
+            if not raw_text or len(raw_text) < 30:
+                continue
+                
+            author = item.get("nickname", "Аноним")
+            
+            # Парсинг времени (формат: 2026-09-02T11:14:03.794Z)
+            time_str = item.get("inserted", "")
+            if time_str:
+                try:
+                    # Попытка преобразовать в более читаемый вид
+                    from datetime import datetime
+                    dt = datetime.strptime(time_str.split('.')[0].replace('Z', ''), "%Y-%m-%dT%H:%M:%S")
+                    time_str = dt.strftime("%Y-%m-%d %H:%M")
+                except:
+                    pass
+            
+            post_id = item.get("id", "")
+            link = f"https://www.tbank.ru/invest/social/profile/{author}/{post_id}/" if author != "Аноним" and post_id else url
+            
+            # Очищаем текст от базовых спецсимволов для анализа (Пульс отдает чистый текст, но могут быть смайлы)
+            clean_txt = clean_html(raw_text)
+            p, n = analyze_sentiment(clean_txt)
+            a_count = sum(1 for word in ANALYTICS_WORDS if re.search(r'\b' + word + r'[а-я]*\b', clean_txt))
+            
+            if p == 0 and n == 0 and a_count == 0 and len(raw_text) < 10:
+                continue
+                
+            if p > n: trend = "positive"
+            elif n > p: trend = "negative"
+            elif a_count > 0: trend = "analytics"
+            else: trend = "neutral"
+            
+            messages.append({
+                "author": author,
+                "time": time_str,
+                "text": raw_text,
+                "link": link,
+                "pos": p,
+                "neg": n,
+                "analytics": a_count,
+                "trend": trend
+            })
+            
+    except Exception as e:
+        print(f"Error fetching Pulse detailed {ticker}: {e}")
         
     return messages
 
