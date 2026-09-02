@@ -260,13 +260,20 @@ def _sentiment_mtime() -> float:
 
 @st.cache_data(ttl=600)
 def load_sentiment_data(_cache_buster: float = 0.0):
-    """
-    Читает sentiment.json из репозитория.
-    Кэш сбрасывается автоматически при каждом обновлении файла
-    (GitHub Actions обновляет его каждые 2 часа в рабочее время).
-    """
-    sentiment_path = Path(os.path.abspath(__file__)).parent / "sentiment.json"
-    if not sentiment_path.exists():
+    paths_to_try = [
+        Path(os.path.abspath(__file__)).parent / "sentiment.json",
+        Path.cwd() / "sentiment.json",
+        Path("/mnt/new_volume/VS_code_base/moex_helper/sentiment.json")
+    ]
+    
+    sentiment_path = None
+    for p in paths_to_try:
+        if p.exists():
+            sentiment_path = p
+            break
+            
+        st.error(f"Sentiment file not found! Tried: {paths_to_try}")
+        return {}
         return {}
     try:
         with open(sentiment_path, "r", encoding="utf-8") as f:
@@ -521,7 +528,7 @@ with st.spinner("Считываю сигналы систем..."):
     tech_data = fetch_technical_indicators(selected_tickers)
     raw_fundamental_data = fetch_smartlab_fundamentals(selected_tickers)
     sentiment_data = load_sentiment_data(_cache_buster=_sentiment_mtime())
-    st.write(f"DEBUG: sentiment_data keys = {list(sentiment_data.keys())[:5]} (Total {len(sentiment_data)})")
+    st.write(f"DEBUG: sentiment_data keys = {list(sentiment_data.keys())[:5]} (Total {len(sentiment_data)}). SBER score: {sentiment_data.get('SBER', {}).get('score', 'NOT FOUND')}")
 
 index_level = market_context.get("IMOEX")
 usd_rate = market_context.get("USD000UTSTOM")
