@@ -255,17 +255,17 @@ def fetch_technical_indicators(tickers):
 
 def _sentiment_mtime() -> float:
     """Возвращает mtime sentiment.json как ключ для инвалидации кэша."""
-    p = Path(__file__).parent / "sentiment.json"
+    p = Path(os.path.abspath(__file__)).parent / "sentiment.json"
     return p.stat().st_mtime if p.exists() else 0.0
 
 @st.cache_data(ttl=600)
-def load_sentiment_data(_mtime: float = 0.0):
+def load_sentiment_data(_cache_buster: float = 0.0):
     """
     Читает sentiment.json из репозитория.
     Кэш сбрасывается автоматически при каждом обновлении файла
     (GitHub Actions обновляет его каждые 2 часа в рабочее время).
     """
-    sentiment_path = Path(__file__).parent / "sentiment.json"
+    sentiment_path = Path(os.path.abspath(__file__)).parent / "sentiment.json"
     if not sentiment_path.exists():
         return {}
     try:
@@ -282,7 +282,7 @@ def fetch_smartlab_fundamentals(ticker_list):
     Прямой парсинг smart-lab.ru здесь не выполняется — это позволяет
     дашборду работать на Streamlit Cloud без проксей и домашнего ПК.
     """
-    cache_path = Path(__file__).parent / "fundamentals_cache.csv"
+    cache_path = Path(os.path.abspath(__file__)).parent / "fundamentals_cache.csv"
 
     if not cache_path.exists():
         st.warning(
@@ -520,7 +520,7 @@ with st.spinner("Считываю сигналы систем..."):
     market_context = fetch_market_context()
     tech_data = fetch_technical_indicators(selected_tickers)
     raw_fundamental_data = fetch_smartlab_fundamentals(selected_tickers)
-    sentiment_data = load_sentiment_data(_mtime=_sentiment_mtime())
+    sentiment_data = load_sentiment_data(_cache_buster=_sentiment_mtime())
     st.write(f"DEBUG: sentiment_data keys = {list(sentiment_data.keys())[:5]} (Total {len(sentiment_data)})")
 
 index_level = market_context.get("IMOEX")
