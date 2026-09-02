@@ -800,7 +800,7 @@ with tab1:
             
         # Интеграция Sentiment Analysis (Настроения толпы)
         def get_sentiment_score(ticker):
-            data = sentiment_data.get(ticker)
+            data = sentiment_data.get(str(ticker).upper().strip())
             return data["score"] if data else 0.0
             
         def format_sentiment(score):
