@@ -9,7 +9,7 @@ project_root = Path(__file__).parent.parent
 if str(project_root) not in sys.path:
     sys.path.append(str(project_root))
 
-from sentiment_scraper import extract_meaningful_messages, extract_pulse_messages, TICKERS_TO_SCAN, POSITIVE_WORDS, NEGATIVE_WORDS, ANALYTICS_WORDS
+from sentiment_scraper import extract_meaningful_messages, extract_pulse_messages, FALLBACK_TICKERS, POSITIVE_WORDS, NEGATIVE_WORDS, ANALYTICS_WORDS
 import re
 
 st.set_page_config(page_title="Сентимент и Пульс", page_icon="💬", layout="wide")
@@ -23,7 +23,7 @@ with col1:
     st.subheader("Выбор компании")
     selected_ticker = st.selectbox(
         "Выберите тикер из списка",
-        options=TICKERS_TO_SCAN,
+        options=FALLBACK_TICKERS,
         index=0
     )
     custom_ticker = st.text_input("Или введите свой тикер (например, GAZP):").upper()
