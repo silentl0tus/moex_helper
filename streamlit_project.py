@@ -501,15 +501,19 @@ with st.sidebar:
                                 net_invested[sym] = 0.0
                                 net_type[sym]     = typ
 
+                            # qty в журнале SIGNED: buy=+N, sell=-N.
+                            # Всегда берём abs() — направление задаёт ветка is_buy/is_sell.
+                            qty_abs = abs(qty)
+
                             if is_buy:
-                                net_qty[sym]      += qty
+                                net_qty[sym]      += qty_abs
                                 net_invested[sym] += summa
                             else:  # sell
                                 prev = net_qty[sym]
                                 if prev > 0:
                                     avg_p = net_invested[sym] / prev
-                                    net_invested[sym] -= qty * avg_p
-                                net_qty[sym] -= qty
+                                    net_invested[sym] -= qty_abs * avg_p
+                                net_qty[sym] -= qty_abs
 
                         for sym, qty in net_qty.items():
                             if qty < 0.01:
