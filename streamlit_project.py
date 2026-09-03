@@ -407,8 +407,6 @@ with st.sidebar:
         elif uploaded_file.name.endswith((".xlsx", ".csv")):
             # ISIN: 12-символьный код вида RU000A..., SU262..., XS... и т.п.
             _isin_re = re.compile(r'^[A-Z]{2}[0-9A-Z]{10}$')
-            # Денежные ETF — учитываем как ликвидный кэш (не как позицию)
-            _CASH_ETF = {"LQDT", "AKMM", "SBMM", "TMON", "AMNB", "BCSD"}
 
             if uploaded_file.name.endswith(".csv"):
                 # encoding='utf-8-sig' срезает BOM (\ufeff) из экспортов Snowball / Excel
@@ -477,9 +475,6 @@ with st.sidebar:
                             invested = max(0.0, net_invested.get(sym, 0.0))
                             typ = net_type.get(sym, "")
 
-                            if sym in _CASH_ETF:
-                                cash_rub += invested
-                                continue
 
                             if sym.startswith("FX") or sym in ["RUSE", "RSHE"]:
                                 target_dict = my_blocked
@@ -555,9 +550,6 @@ with st.sidebar:
                             except:
                                 invested = 0.0
 
-                        if sym in _CASH_ETF:
-                            cash_rub += invested
-                            continue
 
                         if sym.startswith('FX') or sym in ['RUSE', 'RSHE']:
                             target_dict = my_blocked
