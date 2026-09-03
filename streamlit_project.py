@@ -592,10 +592,13 @@ with st.sidebar:
                                 invested = float(row[invested_col])
                             except:
                                 invested = 0.0
-                        if invested == 0.0 and price_col:
-                            try:
-                                invested = count * float(row[price_col])
-                            except:
+                        if pd.isna(invested) or invested == 0.0:
+                            if price_col:
+                                try:
+                                    invested = count * float(row[price_col])
+                                except:
+                                    invested = 0.0
+                            else:
                                 invested = 0.0
 
 
