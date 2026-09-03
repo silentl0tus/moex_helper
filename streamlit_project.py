@@ -428,6 +428,12 @@ with st.sidebar:
             invested_col = next((c for c in df_upload.columns if c in [
                 'вложено', 'invested', 'сумма', 'cost'
             ]), None)
+            # Дополнительные колонки для точной классификации (Snowball)
+            asset_type_col = next((c for c in df_upload.columns if c in ['тип', 'type', 'asset type']), None)
+            sector_col     = next((c for c in df_upload.columns if c in ['сектор', 'sector']), None)
+            
+            # ISIN: 12-символьный код вида RU000A..., US..., XS... и т.п.
+            _isin_re = re.compile(r'^[A-Z]{2}[0-9A-Z]{10}$')
             
             if not ticker_col or not count_col:
                 st.error(
@@ -460,12 +466,20 @@ with st.sidebar:
                         except:
                             invested = 0.0
                     
-                    if sym in moex_tickers:
-                        target_dict = my_portfolio
-                    elif sym.startswith('FX') or sym in ['RUSE', 'RSHE']:
+                    # Определяем класс актива:
+                    # 1) Заблокированные иностранные фонды
+                    if sym.startswith('FX') or sym in ['RUSE', 'RSHE']:
                         target_dict = my_blocked
-                    else:
+                    # 2) Облигации: ISIN-код ИЛИ колонка «Тип» непустая ИЛИ сектор = «Облигации»
+                    elif (
+                        _isin_re.match(sym)
+                        or (asset_type_col and str(row.get(asset_type_col, '')).strip())
+                        or (sector_col and str(row.get(sector_col, '')).strip().lower() == 'облигации')
+                    ):
                         target_dict = my_reserves
+                    # 3) Всё остальное — акции в портфель (независимо от ликвидности на MOEX)
+                    else:
+                        target_dict = my_portfolio
                         
                     if sym not in target_dict:
                         target_dict[sym] = {'count': 0, 'invested': 0.0}
