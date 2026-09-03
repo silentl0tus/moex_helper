@@ -457,8 +457,13 @@ with st.sidebar:
             else:
                 xl = pd.ExcelFile(uploaded_file)
 
-                # ── Вариант A: личный журнал сделок (лист «Сделки») ─────────────────
-                if "Сделки" in xl.sheet_names:
+                # ── Вариант A: Готовый лист "Портфель" (точнее отражает текущие остатки) ──
+                if "Портфель" in xl.sheet_names:
+                    df_upload = xl.parse("Портфель")
+                    _trades_parsed = False
+
+                # ── Вариант B: личный журнал сделок (лист «Сделки») ─────────────────
+                elif "Сделки" in xl.sheet_names:
                     df_tr = xl.parse("Сделки")
                     df_tr.columns = [str(c).strip() for c in df_tr.columns]
 
@@ -543,11 +548,8 @@ with st.sidebar:
                         df_upload = pd.DataFrame()
                         _trades_parsed = True  # ничего не делаем
                 else:
-                    # ── Вариант B: generic flat-таблица (Snowball-style xlsx) ──────────
-                    try:
-                        df_upload = pd.read_excel(uploaded_file, sheet_name="Портфель")
-                    except ValueError:
-                        df_upload = pd.read_excel(uploaded_file)
+                    # ── Вариант C: первая страница по умолчанию ──────────
+                    df_upload = pd.read_excel(uploaded_file)
                     _trades_parsed = False
 
             # ── Generic flat-таблица (CSV или xlsx без листа «Сделки») ────────────────
