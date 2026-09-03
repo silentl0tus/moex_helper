@@ -406,7 +406,8 @@ with st.sidebar:
 
         elif uploaded_file.name.endswith((".xlsx", ".csv")):
             if uploaded_file.name.endswith(".csv"):
-                df_upload = pd.read_csv(uploaded_file)
+                # encoding='utf-8-sig' срезает BOM (\ufeff) из экспортов Snowball / Excel
+                df_upload = pd.read_csv(uploaded_file, encoding='utf-8-sig')
             else:
                 try:
                     df_upload = pd.read_excel(uploaded_file, sheet_name="Портфель")
@@ -414,12 +415,25 @@ with st.sidebar:
                     df_upload = pd.read_excel(uploaded_file)
             
             df_upload.columns = [str(c).strip().lower() for c in df_upload.columns]
-            ticker_col = next((c for c in df_upload.columns if c in ['тикер', 'ticker', 'акция', 'инструмент']), None)
-            count_col = next((c for c in df_upload.columns if c in ['количество', 'кол-во', 'лоты', 'позиция', 'штук', 'qty', 'quantity', 'count']), None)
-            price_col = next((c for c in df_upload.columns if c in ['средняя цена', 'цена покупки', 'avg price', 'price', 'цена']), None)
+            ticker_col = next((c for c in df_upload.columns if c in [
+                'актив', 'тикер', 'ticker', 'акция', 'инструмент', 'symbol'
+            ]), None)
+            count_col = next((c for c in df_upload.columns if c in [
+                'кол-во', 'количество', 'лоты', 'позиция', 'штук', 'qty', 'quantity', 'count'
+            ]), None)
+            price_col = next((c for c in df_upload.columns if c in [
+                'средняя цена', 'цена покупки', 'avg price', 'price', 'цена'
+            ]), None)
+            # Snowball: «Вложено» = общая сумма покупок по позиции (используем если нет цены)
+            invested_col = next((c for c in df_upload.columns if c in [
+                'вложено', 'invested', 'сумма', 'cost'
+            ]), None)
             
             if not ticker_col or not count_col:
-                st.error("В таблице не найдены колонки 'Тикер' и 'Количество' (или похожие).")
+                st.error(
+                    f"В таблице не найдены колонки 'Тикер' и 'Количество' (или похожие). "
+                    f"Найдены колонки: {list(df_upload.columns)}"
+                )
             else:
                 for _, row in df_upload.iterrows():
                     sym = str(row[ticker_col]).strip().upper()
@@ -431,12 +445,20 @@ with st.sidebar:
                         continue
                     if count <= 0: continue
                     
-                    try:
-                        price = float(row[price_col]) if price_col else 0.0
-                    except:
-                        price = 0.0
-                        
-                    invested = count * price
+                    # Считаем вложенную сумму: предпочитаем готовую сумму (Вложено),
+                    # иначе считаем из средней цены × кол-во
+                    invested = 0.0
+                    if invested_col:
+                        try:
+                            invested = float(row[invested_col])
+                        except:
+                            invested = 0.0
+                    if invested == 0.0 and price_col:
+                        try:
+                            price = float(row[price_col])
+                            invested = count * price
+                        except:
+                            invested = 0.0
                     
                     if sym in moex_tickers:
                         target_dict = my_portfolio
