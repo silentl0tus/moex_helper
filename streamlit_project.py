@@ -567,20 +567,20 @@ with st.sidebar:
             # ── Generic flat-таблица (CSV или xlsx без листа «Сделки») ────────────────
             if not _trades_parsed and not df_upload.empty:
                 df_upload.columns = [str(c).strip().lower() for c in df_upload.columns]
-                ticker_col = next((c for c in df_upload.columns if c in [
+                ticker_col = next((c for c in [
                     'актив', 'тикер', 'ticker', 'акция', 'инструмент', 'symbol'
-                ]), None)
-                count_col = next((c for c in df_upload.columns if c in [
+                ] if c in df_upload.columns), None)
+                count_col = next((c for c in [
                     'кол-во', 'количество', 'лоты', 'позиция', 'штук', 'qty', 'quantity', 'count'
-                ]), None)
-                price_col = next((c for c in df_upload.columns if c in [
+                ] if c in df_upload.columns), None)
+                price_col = next((c for c in [
                     'средняя цена', 'цена покупки', 'avg price', 'price', 'цена'
-                ]), None)
-                invested_col = next((c for c in df_upload.columns if c in [
+                ] if c in df_upload.columns), None)
+                invested_col = next((c for c in [
                     'вложено', 'invested', 'сумма', 'cost'
-                ]), None)
-                asset_type_col = next((c for c in df_upload.columns if c in ['тип', 'type', 'asset type']), None)
-                sector_col     = next((c for c in df_upload.columns if c in ['сектор', 'sector']), None)
+                ] if c in df_upload.columns), None)
+                asset_type_col = next((c for c in ['тип', 'type', 'asset type'] if c in df_upload.columns), None)
+                sector_col     = next((c for c in ['сектор', 'sector'] if c in df_upload.columns), None)
 
                 if not ticker_col or not count_col:
                     st.error(
