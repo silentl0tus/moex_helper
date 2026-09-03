@@ -911,18 +911,21 @@ with tab1:
         # Ограничиваем влияние выбросов (не больше удвоения скора и не меньше половинки).
         growth_multiplier = 1 + (df_fund['Rev_Growth_%'].clip(lower=-50, upper=100) / 100.0)
         
+        # Ограничиваем бонус за отрицательный долг (максимум х2 к баллу), чтобы не ломать рейтинг
+        safe_debt = df_fund["Debt_EBITDA"].clip(lower=-0.5)
+        
         # Используем ROE_norm вместо сырого ROE_% и умножаем на мультипликатор роста
-        df_fund["Health_Score"] = (((df_fund["ROE_norm"] / df_fund["P_E"]) / (1 + df_fund["Debt_EBITDA"])) * growth_multiplier).round(2)
+        df_fund["Health_Score"] = (((df_fund["ROE_norm"] / df_fund["P_E"]) / (1 + safe_debt)) * growth_multiplier).round(2)
         
         # Специфика Сургутнефтегаза и Холдингов: их P/E искажен переоценками кубышки/дочек. Оцениваем по P/BV.
         # GAZP добавлен сюда как холдинг (владеет Газпром нефтью, Газпромбанком), торгующийся глубоко ниже капитала.
         is_holding = df_fund['ticker'].isin(HOLDING_TICKERS)
-        df_fund.loc[is_holding, "Health_Score"] = (((3.0 / df_fund.loc[is_holding, "P_BV"].clip(lower=0.1)) / (1 + df_fund.loc[is_holding, "Debt_EBITDA"])) * growth_multiplier[is_holding]).round(2)
+        df_fund.loc[is_holding, "Health_Score"] = (((3.0 / df_fund.loc[is_holding, "P_BV"].clip(lower=0.1)) / (1 + safe_debt[is_holding])) * growth_multiplier[is_holding]).round(2)
         
         # Специфика Банков (Финансовый сектор): их оценивают по связке Капитала (P/BV) и Эффективности (ROE).
         # Умножаем P_BV на 5.0, чтобы шкала оценки банка математически совпадала со шкалой P/E обычных компаний.
         is_bank = df_fund['ticker'].isin(BANK_TICKERS)
-        df_fund.loc[is_bank, "Health_Score"] = (((df_fund.loc[is_bank, "ROE_norm"] / (df_fund.loc[is_bank, "P_BV"].clip(lower=0.1) * 5.0)) / (1 + df_fund.loc[is_bank, "Debt_EBITDA"])) * growth_multiplier[is_bank]).round(2)
+        df_fund.loc[is_bank, "Health_Score"] = (((df_fund.loc[is_bank, "ROE_norm"] / (df_fund.loc[is_bank, "P_BV"].clip(lower=0.1) * 5.0)) / (1 + safe_debt[is_bank])) * growth_multiplier[is_bank]).round(2)
         
         # Учет макро-контекста: корректировка нефтяников по текущей цене Urals
         urals_price = market_context.get("URALS")
