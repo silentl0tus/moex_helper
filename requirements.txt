@@ -6,3 +6,4 @@ xlrd
 altair
 moexalgo
 yfinance
+html5lib
