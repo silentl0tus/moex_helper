@@ -259,6 +259,17 @@ def fetch_bond_prices_moex():
     Одним запросом тянет текущие цены и номиналы всех облигаций с MOEX ISS.
     Возвращает dict: {SECID: {'price': float, 'facevalue': float, 'accrued': float}}
     """
+    rates = {"SUR": 1.0, "RUB": 1.0, "USD": 90.0, "EUR": 100.0, "CNY": 12.0}
+    try:
+        url_rates = "https://iss.moex.com/iss/engines/currency/markets/selt/boards/CETS/securities.json"
+        resp_rates = requests.get(url_rates, params={"iss.meta": "off", "iss.only": "marketdata", "marketdata.columns": "SECID,LAST"}, timeout=5).json()
+        for row in resp_rates["marketdata"]["data"]:
+            if row[0] == "USD000UTSTOM" and row[1]: rates["USD"] = float(row[1])
+            elif row[0] == "EUR_RUB__TOM" and row[1]: rates["EUR"] = float(row[1])
+            elif row[0] == "CNYRUB_TOM" and row[1]: rates["CNY"] = float(row[1])
+    except Exception:
+        pass
+
     result = {}
     boards = [
         ("stock", "bonds", "TQOB"),   # ОФЗ
@@ -271,14 +282,14 @@ def fetch_bond_prices_moex():
             params = {
                 "iss.meta": "off",
                 "iss.only": "securities,marketdata",
-                "securities.columns": "SECID,FACEVALUE,ACCRUEDINT",
+                "securities.columns": "SECID,FACEVALUE,ACCRUEDINT,FACEUNIT",
                 "marketdata.columns": "SECID,LAST,LCURRENTPRICE",
             }
             resp = requests.get(url, params=params, timeout=10)
             data = resp.json()
 
             sec_map = {
-                row[0]: {"facevalue": float(row[1] or 1000), "accrued": float(row[2] or 0)}
+                row[0]: {"facevalue": float(row[1] or 1000), "accrued": float(row[2] or 0), "currency": row[3] or "RUB"}
                 for row in data["securities"]["data"] if row[0]
             }
             for row in data["marketdata"]["data"]:
@@ -290,6 +301,7 @@ def fetch_bond_prices_moex():
                         "price":     float(price),
                         "facevalue": sec_map[secid]["facevalue"],
                         "accrued":   sec_map[secid]["accrued"],
+                        "rate":      rates.get(sec_map[secid]["currency"], 1.0)
                     }
         except Exception:
             pass
@@ -632,7 +644,7 @@ with st.sidebar:
             qty  = v["count"]
             if sym in _bond_prices:
                 bp = _bond_prices[sym]
-                market = qty * (bp["price"] / 100 * bp["facevalue"] + bp["accrued"])
+                market = qty * (bp["price"] / 100 * bp["facevalue"] + bp["accrued"]) * bp["rate"]
             else:
                 market = cost  # котировки нет — берём себестоимость
             reserves_market_value += market
