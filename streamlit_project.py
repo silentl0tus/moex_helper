@@ -405,87 +405,175 @@ with st.sidebar:
                         cash_rub += cash_item.get('value', 0)
 
         elif uploaded_file.name.endswith((".xlsx", ".csv")):
+            # ISIN: 12-символьный код вида RU000A..., SU262..., XS... и т.п.
+            _isin_re = re.compile(r'^[A-Z]{2}[0-9A-Z]{10}$')
+            # Денежные ETF — учитываем как ликвидный кэш (не как позицию)
+            _CASH_ETF = {"LQDT", "AKMM", "SBMM", "TMON", "AMNB", "BCSD"}
+
             if uploaded_file.name.endswith(".csv"):
                 # encoding='utf-8-sig' срезает BOM (\ufeff) из экспортов Snowball / Excel
                 df_upload = pd.read_csv(uploaded_file, encoding='utf-8-sig')
+                _trades_parsed = False   # пойдём в generic-блок ниже
             else:
-                try:
-                    df_upload = pd.read_excel(uploaded_file, sheet_name="Портфель")
-                except ValueError:
-                    df_upload = pd.read_excel(uploaded_file)
-            
-            df_upload.columns = [str(c).strip().lower() for c in df_upload.columns]
-            ticker_col = next((c for c in df_upload.columns if c in [
-                'актив', 'тикер', 'ticker', 'акция', 'инструмент', 'symbol'
-            ]), None)
-            count_col = next((c for c in df_upload.columns if c in [
-                'кол-во', 'количество', 'лоты', 'позиция', 'штук', 'qty', 'quantity', 'count'
-            ]), None)
-            price_col = next((c for c in df_upload.columns if c in [
-                'средняя цена', 'цена покупки', 'avg price', 'price', 'цена'
-            ]), None)
-            # Snowball: «Вложено» = общая сумма покупок по позиции (используем если нет цены)
-            invested_col = next((c for c in df_upload.columns if c in [
-                'вложено', 'invested', 'сумма', 'cost'
-            ]), None)
-            # Дополнительные колонки для точной классификации (Snowball)
-            asset_type_col = next((c for c in df_upload.columns if c in ['тип', 'type', 'asset type']), None)
-            sector_col     = next((c for c in df_upload.columns if c in ['сектор', 'sector']), None)
-            
-            # ISIN: 12-символьный код вида RU000A..., US..., XS... и т.п.
-            _isin_re = re.compile(r'^[A-Z]{2}[0-9A-Z]{10}$')
-            
-            if not ticker_col or not count_col:
-                st.error(
-                    f"В таблице не найдены колонки 'Тикер' и 'Количество' (или похожие). "
-                    f"Найдены колонки: {list(df_upload.columns)}"
-                )
-            else:
-                for _, row in df_upload.iterrows():
-                    sym = str(row[ticker_col]).strip().upper()
-                    if not sym or sym == 'NAN': continue
-                    
-                    try:
-                        count = float(row[count_col])
-                    except:
-                        continue
-                    if count <= 0: continue
-                    
-                    # Считаем вложенную сумму: предпочитаем готовую сумму (Вложено),
-                    # иначе считаем из средней цены × кол-во
-                    invested = 0.0
-                    if invested_col:
-                        try:
-                            invested = float(row[invested_col])
-                        except:
-                            invested = 0.0
-                    if invested == 0.0 and price_col:
-                        try:
-                            price = float(row[price_col])
-                            invested = count * price
-                        except:
-                            invested = 0.0
-                    
-                    # Определяем класс актива:
-                    # 1) Заблокированные иностранные фонды
-                    if sym.startswith('FX') or sym in ['RUSE', 'RSHE']:
-                        target_dict = my_blocked
-                    # 2) Облигации: ISIN-код ИЛИ колонка «Тип» непустая ИЛИ сектор = «Облигации»
-                    elif (
-                        _isin_re.match(sym)
-                        or (asset_type_col and str(row.get(asset_type_col, '')).strip())
-                        or (sector_col and str(row.get(sector_col, '')).strip().lower() == 'облигации')
-                    ):
-                        target_dict = my_reserves
-                    # 3) Всё остальное — акции в портфель (независимо от ликвидности на MOEX)
+                xl = pd.ExcelFile(uploaded_file)
+
+                # ── Вариант A: личный журнал сделок (лист «Сделки») ─────────────────
+                if "Сделки" in xl.sheet_names:
+                    df_tr = xl.parse("Сделки")
+                    df_tr.columns = [str(c).strip() for c in df_tr.columns]
+
+                    t_col  = next((c for c in df_tr.columns if c.lower() in ["тикер", "ticker", "symbol"]), None)
+                    op_col = next((c for c in df_tr.columns if c.lower() in ["операция", "operation"]), None)
+                    ty_col = next((c for c in df_tr.columns if c.lower() == "тип"), None)
+                    q_col  = next((c for c in df_tr.columns if c.lower() in ["количество", "qty", "кол-во", "кол."]), None)
+                    s_col  = next((c for c in df_tr.columns if c.lower() in ["сумма", "sum", "summa"]), None)
+
+                    if t_col and op_col and q_col:
+                        net_qty      = {}
+                        net_invested = {}
+                        net_type     = {}
+
+                        for _, row in df_tr.iterrows():
+                            sym = str(row.get(t_col, "")).strip().upper()
+                            op  = str(row.get(op_col, "")).strip().lower()
+                            typ = str(row.get(ty_col, "")).strip().lower() if ty_col else ""
+                            try:
+                                qty = float(row.get(q_col, 0) or 0)
+                            except:
+                                qty = 0.0
+                            try:
+                                summa = abs(float(row.get(s_col, 0) or 0)) if s_col else 0.0
+                            except:
+                                summa = 0.0
+
+                            if not sym or sym in ("NAN", "NONE") or qty == 0:
+                                continue
+                            if op in ("input", "output", "налог", "купон", "дивиденд"):
+                                continue
+
+                            is_buy  = op == "buy" or op.startswith("buy")
+                            is_sell = op == "sell" or op.startswith("sell")
+                            if not (is_buy or is_sell):
+                                continue
+
+                            if sym not in net_qty:
+                                net_qty[sym]      = 0.0
+                                net_invested[sym] = 0.0
+                                net_type[sym]     = typ
+
+                            if is_buy:
+                                net_qty[sym]      += qty
+                                net_invested[sym] += summa
+                            else:  # sell
+                                prev = net_qty[sym]
+                                if prev > 0:
+                                    avg_p = net_invested[sym] / prev
+                                    net_invested[sym] -= qty * avg_p
+                                net_qty[sym] -= qty
+
+                        for sym, qty in net_qty.items():
+                            if qty < 0.01:
+                                continue
+                            invested = max(0.0, net_invested.get(sym, 0.0))
+                            typ = net_type.get(sym, "")
+
+                            if sym in _CASH_ETF:
+                                cash_rub += invested
+                                continue
+
+                            if sym.startswith("FX") or sym in ["RUSE", "RSHE"]:
+                                target_dict = my_blocked
+                            elif typ == "bond" or _isin_re.match(sym):
+                                target_dict = my_reserves
+                            elif typ == "etf":
+                                target_dict = my_reserves
+                            else:
+                                target_dict = my_portfolio
+
+                            if sym not in target_dict:
+                                target_dict[sym] = {"count": 0, "invested": 0.0}
+                            target_dict[sym]["count"]    += qty
+                            target_dict[sym]["invested"] += invested
+
+                        _trades_parsed = True
+                        df_upload = pd.DataFrame()  # уже разобрано
                     else:
-                        target_dict = my_portfolio
-                        
-                    if sym not in target_dict:
-                        target_dict[sym] = {'count': 0, 'invested': 0.0}
-                    
-                    target_dict[sym]['count'] += count
-                    target_dict[sym]['invested'] += invested
+                        st.warning("Лист 'Сделки' найден, но не содержит нужных колонок (Тикер, Операция, Количество).")
+                        df_upload = pd.DataFrame()
+                        _trades_parsed = True  # ничего не делаем
+                else:
+                    # ── Вариант B: generic flat-таблица (Snowball-style xlsx) ──────────
+                    try:
+                        df_upload = pd.read_excel(uploaded_file, sheet_name="Портфель")
+                    except ValueError:
+                        df_upload = pd.read_excel(uploaded_file)
+                    _trades_parsed = False
+
+            # ── Generic flat-таблица (CSV или xlsx без листа «Сделки») ────────────────
+            if not _trades_parsed and not df_upload.empty:
+                df_upload.columns = [str(c).strip().lower() for c in df_upload.columns]
+                ticker_col = next((c for c in df_upload.columns if c in [
+                    'актив', 'тикер', 'ticker', 'акция', 'инструмент', 'symbol'
+                ]), None)
+                count_col = next((c for c in df_upload.columns if c in [
+                    'кол-во', 'количество', 'лоты', 'позиция', 'штук', 'qty', 'quantity', 'count'
+                ]), None)
+                price_col = next((c for c in df_upload.columns if c in [
+                    'средняя цена', 'цена покупки', 'avg price', 'price', 'цена'
+                ]), None)
+                invested_col = next((c for c in df_upload.columns if c in [
+                    'вложено', 'invested', 'сумма', 'cost'
+                ]), None)
+                asset_type_col = next((c for c in df_upload.columns if c in ['тип', 'type', 'asset type']), None)
+                sector_col     = next((c for c in df_upload.columns if c in ['сектор', 'sector']), None)
+
+                if not ticker_col or not count_col:
+                    st.error(
+                        f"В таблице не найдены колонки 'Тикер' и 'Количество' (или похожие). "
+                        f"Найдены колонки: {list(df_upload.columns)}"
+                    )
+                else:
+                    for _, row in df_upload.iterrows():
+                        sym = str(row[ticker_col]).strip().upper()
+                        if not sym or sym == 'NAN': continue
+
+                        try:
+                            count = float(row[count_col])
+                        except:
+                            continue
+                        if count <= 0: continue
+
+                        invested = 0.0
+                        if invested_col:
+                            try:
+                                invested = float(row[invested_col])
+                            except:
+                                invested = 0.0
+                        if invested == 0.0 and price_col:
+                            try:
+                                invested = count * float(row[price_col])
+                            except:
+                                invested = 0.0
+
+                        if sym in _CASH_ETF:
+                            cash_rub += invested
+                            continue
+
+                        if sym.startswith('FX') or sym in ['RUSE', 'RSHE']:
+                            target_dict = my_blocked
+                        elif (
+                            _isin_re.match(sym)
+                            or (asset_type_col and str(row.get(asset_type_col, '')).strip())
+                            or (sector_col and str(row.get(sector_col, '')).strip().lower() == 'облигации')
+                        ):
+                            target_dict = my_reserves
+                        else:
+                            target_dict = my_portfolio
+
+                        if sym not in target_dict:
+                            target_dict[sym] = {'count': 0, 'invested': 0.0}
+                        target_dict[sym]['count']    += count
+                        target_dict[sym]['invested'] += invested
                     
         # Фильтруем закрытые позиции
         my_portfolio = {k: v for k, v in my_portfolio.items() if v['count'] > 0.01}
