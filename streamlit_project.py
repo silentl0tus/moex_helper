@@ -253,6 +253,48 @@ def fetch_technical_indicators(tickers):
         results = list(ex.map(get_ticker_tech, tickers))
     return pd.DataFrame(results)
 
+@st.cache_data(ttl=600)
+def fetch_bond_prices_moex():
+    """
+    Одним запросом тянет текущие цены и номиналы всех облигаций с MOEX ISS.
+    Возвращает dict: {SECID: {'price': float, 'facevalue': float, 'accrued': float}}
+    """
+    result = {}
+    boards = [
+        ("stock", "bonds", "TQOB"),   # ОФЗ
+        ("stock", "bonds", "TQCB"),   # корпоративные
+    ]
+    for engine, market, board in boards:
+        try:
+            url = (f"https://iss.moex.com/iss/engines/{engine}/markets/{market}"
+                   f"/boards/{board}/securities.json")
+            params = {
+                "iss.meta": "off",
+                "iss.only": "securities,marketdata",
+                "securities.columns": "SECID,FACEVALUE,ACCRUEDINT",
+                "marketdata.columns": "SECID,LAST,LCURRENTPRICE",
+            }
+            resp = requests.get(url, params=params, timeout=10)
+            data = resp.json()
+
+            sec_map = {
+                row[0]: {"facevalue": float(row[1] or 1000), "accrued": float(row[2] or 0)}
+                for row in data["securities"]["data"] if row[0]
+            }
+            for row in data["marketdata"]["data"]:
+                secid = row[0]
+                if not secid: continue
+                price = row[1] or row[2]  # LAST или LCURRENTPRICE
+                if price and secid in sec_map:
+                    result[secid] = {
+                        "price":     float(price),
+                        "facevalue": sec_map[secid]["facevalue"],
+                        "accrued":   sec_map[secid]["accrued"],
+                    }
+        except Exception:
+            pass
+    return result
+
 def _sentiment_mtime() -> float:
     """Возвращает mtime sentiment.json как ключ для инвалидации кэша."""
     p = Path(os.path.abspath(__file__)).parent / "sentiment.json"
@@ -572,22 +614,43 @@ with st.sidebar:
         my_reserves = {k: v for k, v in my_reserves.items() if v['count'] > 0.01}
         my_blocked = {k: v for k, v in my_blocked.items() if v['count'] > 0.01}
         
-        # Считаем сумму в резервах (ОФЗ, фонды, валюта)
-        reserves_total = sum(v['invested'] for v in my_reserves.values())
+        # Считаем рыночную стоимость резервов через MOEX ISS (не себестоимость!)
+        _bond_prices = fetch_bond_prices_moex()
+        reserves_market_value = 0.0
+        _reserves_detail = {}  # {ticker: {market, cost, count}}
+        for sym, v in my_reserves.items():
+            cost = v["invested"]
+            qty  = v["count"]
+            if sym in _bond_prices:
+                bp = _bond_prices[sym]
+                market = qty * (bp["price"] / 100 * bp["facevalue"] + bp["accrued"])
+            else:
+                market = cost  # котировки нет — берём себестоимость
+            reserves_market_value += market
+            _reserves_detail[sym] = {"market": market, "cost": cost, "count": qty}
+
         blocked_total = sum(v['invested'] for v in my_blocked.values())
-        
-        my_reserves_invested = reserves_total + cash_rub
-        my_blocked_invested = blocked_total
-        
+
+        my_reserves_invested = reserves_market_value + cash_rub
+        my_blocked_invested  = blocked_total
+
     if my_portfolio:
         portfolio_tickers_list = list(my_portfolio.keys())
         st.success(f"Загружено {len(portfolio_tickers_list)} акций из портфеля")
         if my_reserves_invested > 0:
-            st.info(f"💵 Свободный Кэш и Облигации: {my_reserves_invested:,.0f} ₽")
+            st.info(f"💵 Облигации / Резервы: {my_reserves_invested:,.0f} ₽")
             with st.expander("Детализация резервов"):
-                st.write(f"**Прямой кэш (RUB):** {cash_rub:,.0f} ₽")
-                for k, v in my_reserves.items():
-                    st.write(f"**{k}**: {v['invested']:,.0f} ₽ (Позиция: {v['count']})")
+                if cash_rub > 0:
+                    st.write(f"Кэш (RUB): **{cash_rub:,.0f} ₽**")
+                for sym, d in _reserves_detail.items():
+                    pnl     = d["market"] - d["cost"]
+                    pnl_pct = (pnl / d["cost"] * 100) if d["cost"] else 0
+                    st.write(
+                        f"**{sym}**: рынок {d['market']:,.0f} ₽ │ "
+                        f"себест. {d['cost']:,.0f} ₽ │ "
+                        f"PnL {'%+,.0f' % pnl} ₽ ({pnl_pct:+.1f}%) │ "
+                        f"Позиция: {d['count']}"
+                    )
         if my_blocked_invested > 0:
             st.warning(f"🔒 Заблокированные фонды (FinEx/Иностранные): {my_blocked_invested:,.0f} ₽")
     else:
