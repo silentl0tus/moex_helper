@@ -435,6 +435,11 @@ with st.sidebar:
                 sym = assets.get(aid)
                 if not sym: continue
                     
+                if sym in ['CASH', 'RUB', 'RUR', 'USD', 'EUR', 'CNY']:
+                    if count > 0:
+                        cash_rub += abs(t.get('summa', 0))
+                    continue
+                    
                 if sym in moex_tickers:
                     target_dict = my_portfolio
                 elif sym.startswith('FX') or sym in ['RUSE', 'RSHE', 'Unknown']:
@@ -614,7 +619,10 @@ with st.sidebar:
                                 invested = 0.0
 
 
-                        if sym.startswith('FX') or sym in ['RUSE', 'RSHE']:
+                        if sym in ['CASH', 'RUB', 'RUR', 'USD', 'EUR', 'CNY']:
+                            cash_rub += invested
+                            continue
+                        elif sym.startswith('FX') or sym in ['RUSE', 'RSHE']:
                             target_dict = my_blocked
                         elif (
                             _isin_re.match(sym)
