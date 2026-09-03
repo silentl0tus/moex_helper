@@ -648,7 +648,7 @@ with st.sidebar:
                     st.write(
                         f"**{sym}**: рынок {d['market']:,.0f} ₽ │ "
                         f"себест. {d['cost']:,.0f} ₽ │ "
-                        f"PnL {'%+,.0f' % pnl} ₽ ({pnl_pct:+.1f}%) │ "
+                        f"PnL {pnl:+,.0f} ₽ ({pnl_pct:+.1f}%) │ "
                         f"Позиция: {d['count']}"
                     )
         if my_blocked_invested > 0:
