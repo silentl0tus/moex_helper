@@ -601,7 +601,7 @@ with st.sidebar:
                             target_dict = my_blocked
                         elif (
                             _isin_re.match(sym)
-                            or (asset_type_col and str(row.get(asset_type_col, '')).strip())
+                            or (asset_type_col and str(row.get(asset_type_col, '')).strip().lower() in ['bond', 'облигация', 'etf', 'фонд'])
                             or (sector_col and str(row.get(sector_col, '')).strip().lower() == 'облигации')
                         ):
                             target_dict = my_reserves
