@@ -428,7 +428,7 @@ def build_position_weights(ranked_df, equity_target, max_single=0.15, rest_cap=0
 # ==========================================
 with st.sidebar:
     st.header("Настройки портфеля")
-    ignore_liquidity = st.toggle("Игнорировать фильтр ликвидности (рынок закрыт)", value=False)
+    ignore_liquidity = st.checkbox("Игнорировать фильтр ликвидности (рынок закрыт)", value=False)
     moex_universe = fetch_moex_universe(ignore_liquidity=ignore_liquidity)
     moex_tickers = moex_universe["ticker"].tolist()
     st.caption(
