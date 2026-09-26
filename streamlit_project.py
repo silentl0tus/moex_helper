@@ -175,7 +175,7 @@ def fetch_moex_tickers(min_turnover_rub=MIN_DAILY_TURNOVER_RUB):
 @st.cache_data(ttl=600)
 def fetch_market_context():
     context = {}
-    for symbol in ["IMOEX", "USD000UTSTOM"]:
+    for symbol in ["IMOEX", "RTSI", "USD000UTSTOM"]:
         try:
             asset = Ticker(symbol)
             candles_df = _fetch_candles(asset, datetime.now().date() - timedelta(days=30), datetime.now().date())
@@ -790,25 +790,30 @@ with tab1:
         )
 
     if not live_data.empty:
-        cols = st.columns(9)
+        cols = st.columns(11)
         cols[0].metric("IMOEX", f"{index_level:,.0f}" if index_level else "Н/Д")
-        cols[1].metric("USD/RUB", f"{usd_rate:.2f}" if usd_rate else "Н/Д")
+        
+        rtsi_level = market_context.get("RTSI")
+        cols[1].metric("RTSI", f"{rtsi_level:,.0f}" if rtsi_level else "Н/Д")
+        
+        cols[2].metric("USD/RUB", f"{usd_rate:.2f}" if usd_rate else "Н/Д")
         urals_price = market_context.get("URALS")
-        cols[2].metric("Urals", f"${urals_price:.2f}" if urals_price else "Н/Д")
+        cols[3].metric("Urals", f"${urals_price:.2f}" if urals_price else "Н/Д")
         key_rate = market_context.get("KEY_RATE")
-        cols[3].metric("Ставка", f"{key_rate}%" if key_rate else "Н/Д")
+        cols[4].metric("Ставка", f"{key_rate}%" if key_rate else "Н/Д")
     
         inflation_real = market_context.get("INFLATION_REAL")
-        cols[4].metric("Инфляция(Р)", f"{inflation_real}%" if inflation_real else "Н/Д")
+        cols[5].metric("Инфляция(Р)", f"{inflation_real}%" if inflation_real else "Н/Д")
     
         gold_price = market_context.get("GOLD")
-        cols[5].metric("Золото", f"${gold_price:,.0f}" if gold_price else "Н/Д")
+        cols[6].metric("Золото", f"${gold_price:,.0f}" if gold_price else "Н/Д")
     
         steel_price = market_context.get("STEEL")
-        cols[6].metric("Сталь(HRC,$)", f"${steel_price:,.0f}" if steel_price else "Н/Д")
+        cols[7].metric("Сталь(HRC,$)", f"${steel_price:,.0f}" if steel_price else "Н/Д")
     
-        cols[7].metric("Кэш", f"{rules['cash_target'] * 100:.0f}%")
-        cols[8].metric("Облигации", f"{rules['bond_target'] * 100:.0f}%")
+        cols[8].metric("Кэш", f"{rules['cash_target'] * 100:.0f}%")
+        cols[9].metric("Облигации", f"{rules['bond_target'] * 100:.0f}%")
+        cols[10].metric("Акции", f"{rules['equity_target'] * 100:.0f}%")
     
         st.markdown("---")
         if selected_phase.startswith("Рефляция"):
