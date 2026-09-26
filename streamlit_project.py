@@ -125,7 +125,7 @@ def normalize_returns(price_df):
     )
 
 @st.cache_data(ttl=600)
-def fetch_moex_universe(min_turnover_rub=MIN_DAILY_TURNOVER_RUB):
+def fetch_moex_universe(min_turnover_rub=MIN_DAILY_TURNOVER_RUB, ignore_liquidity=False):
     params = {
         "iss.meta": "off",
         "iss.only": "securities,marketdata",
@@ -153,7 +153,7 @@ def fetch_moex_universe(min_turnover_rub=MIN_DAILY_TURNOVER_RUB):
         turnover_rub = turnover_by_ticker.get(ticker, 0)
         
         # Если биржа открыта, жестко фильтруем по обороту. Иначе берем все акции 1-2 эшелона.
-        if market_is_open and turnover_rub < min_turnover_rub and ticker not in PORTFOLIO_TICKERS:
+        if not ignore_liquidity and market_is_open and turnover_rub < min_turnover_rub and ticker not in PORTFOLIO_TICKERS:
             continue
             
         rows.append(
@@ -169,8 +169,8 @@ def fetch_moex_universe(min_turnover_rub=MIN_DAILY_TURNOVER_RUB):
     return df.sort_values("turnover_rub", ascending=False).reset_index(drop=True)
 
 @st.cache_data(ttl=600)
-def fetch_moex_tickers(min_turnover_rub=MIN_DAILY_TURNOVER_RUB):
-    return fetch_moex_universe(min_turnover_rub=min_turnover_rub)["ticker"].tolist()
+def fetch_moex_tickers(min_turnover_rub=MIN_DAILY_TURNOVER_RUB, ignore_liquidity=False):
+    return fetch_moex_universe(min_turnover_rub=min_turnover_rub, ignore_liquidity=ignore_liquidity)["ticker"].tolist()
 
 @st.cache_data(ttl=600)
 def fetch_market_context():
@@ -428,7 +428,8 @@ def build_position_weights(ranked_df, equity_target, max_single=0.15, rest_cap=0
 # ==========================================
 with st.sidebar:
     st.header("Настройки портфеля")
-    moex_universe = fetch_moex_universe()
+    ignore_liquidity = st.toggle("Игнорировать фильтр ликвидности (рынок закрыт)", value=False)
+    moex_universe = fetch_moex_universe(ignore_liquidity=ignore_liquidity)
     moex_tickers = moex_universe["ticker"].tolist()
     st.caption(
         f"MOEX TQBR, 1–2 эшелон, оборот ≥ {MIN_DAILY_TURNOVER_RUB // 1_000_000} млн ₽: "
