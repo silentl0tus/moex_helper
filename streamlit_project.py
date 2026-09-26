@@ -791,30 +791,35 @@ with tab1:
         )
 
     if not live_data.empty:
-        cols = st.columns(11)
-        cols[0].metric("IMOEX", f"{index_level:,.0f}" if index_level else "Н/Д")
+        row1 = st.columns(6)
+        row1[0].metric("IMOEX", f"{index_level:,.0f}" if index_level else "Н/Д")
         
         rtsi_level = market_context.get("RTSI")
-        cols[1].metric("RTSI", f"{rtsi_level:,.0f}" if rtsi_level else "Н/Д")
+        row1[1].metric("RTSI", f"{rtsi_level:,.0f}" if rtsi_level else "Н/Д")
         
-        cols[2].metric("USD/RUB", f"{usd_rate:.2f}" if usd_rate else "Н/Д")
+        row1[2].metric("USD/RUB", f"{usd_rate:.2f}" if usd_rate else "Н/Д")
+        
         urals_price = market_context.get("URALS")
-        cols[3].metric("Urals", f"${urals_price:.2f}" if urals_price else "Н/Д")
-        key_rate = market_context.get("KEY_RATE")
-        cols[4].metric("Ставка", f"{key_rate}%" if key_rate else "Н/Д")
-    
-        inflation_real = market_context.get("INFLATION_REAL")
-        cols[5].metric("Инфляция(Р)", f"{inflation_real}%" if inflation_real else "Н/Д")
-    
+        row1[3].metric("Urals", f"${urals_price:.2f}" if urals_price else "Н/Д")
+        
         gold_price = market_context.get("GOLD")
-        cols[6].metric("Золото", f"${gold_price:,.0f}" if gold_price else "Н/Д")
+        row1[4].metric("Золото", f"${gold_price:,.0f}" if gold_price else "Н/Д")
     
         steel_price = market_context.get("STEEL")
-        cols[7].metric("Сталь(HRC,$)", f"${steel_price:,.0f}" if steel_price else "Н/Д")
+        row1[5].metric("Сталь(HRC,$)", f"${steel_price:,.0f}" if steel_price else "Н/Д")
+        
+        st.write("") # Add a small empty space between rows
+        
+        row2 = st.columns(5)
+        key_rate = market_context.get("KEY_RATE")
+        row2[0].metric("Ставка", f"{key_rate}%" if key_rate else "Н/Д")
     
-        cols[8].metric("Кэш", f"{rules['cash_target'] * 100:.0f}%")
-        cols[9].metric("Облигации", f"{rules['bond_target'] * 100:.0f}%")
-        cols[10].metric("Акции", f"{rules['equity_target'] * 100:.0f}%")
+        inflation_real = market_context.get("INFLATION_REAL")
+        row2[1].metric("Инфляция(Р)", f"{inflation_real}%" if inflation_real else "Н/Д")
+    
+        row2[2].metric("Кэш", f"{rules['cash_target'] * 100:.0f}%")
+        row2[3].metric("Облигации", f"{rules['bond_target'] * 100:.0f}%")
+        row2[4].metric("Акции", f"{rules['equity_target'] * 100:.0f}%")
     
         st.markdown("---")
         if selected_phase.startswith("Рефляция"):
