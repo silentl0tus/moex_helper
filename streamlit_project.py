@@ -791,7 +791,7 @@ with tab1:
         )
 
     if not live_data.empty:
-        row1 = st.columns(6)
+        row1 = st.columns(4)
         row1[0].metric("IMOEX", f"{index_level:,.0f}" if index_level else "Н/Д")
         
         rtsi_level = market_context.get("RTSI")
@@ -802,24 +802,27 @@ with tab1:
         urals_price = market_context.get("URALS")
         row1[3].metric("Urals", f"${urals_price:.2f}" if urals_price else "Н/Д")
         
+        st.write("") # Space between rows
+        
+        row2 = st.columns(4)
         gold_price = market_context.get("GOLD")
-        row1[4].metric("Золото", f"${gold_price:,.0f}" if gold_price else "Н/Д")
+        row2[0].metric("Золото", f"${gold_price:,.0f}" if gold_price else "Н/Д")
     
         steel_price = market_context.get("STEEL")
-        row1[5].metric("Сталь(HRC,$)", f"${steel_price:,.0f}" if steel_price else "Н/Д")
+        row2[1].metric("Сталь(HRC,$)", f"${steel_price:,.0f}" if steel_price else "Н/Д")
         
-        st.write("") # Add a small empty space between rows
-        
-        row2 = st.columns(5)
         key_rate = market_context.get("KEY_RATE")
-        row2[0].metric("Ставка", f"{key_rate}%" if key_rate else "Н/Д")
+        row2[2].metric("Ставка", f"{key_rate}%" if key_rate else "Н/Д")
     
         inflation_real = market_context.get("INFLATION_REAL")
-        row2[1].metric("Инфляция(Р)", f"{inflation_real}%" if inflation_real else "Н/Д")
-    
-        row2[2].metric("Кэш", f"{rules['cash_target'] * 100:.0f}%")
-        row2[3].metric("Облигации", f"{rules['bond_target'] * 100:.0f}%")
-        row2[4].metric("Акции", f"{rules['equity_target'] * 100:.0f}%")
+        row2[3].metric("Инфляция(Р)", f"{inflation_real}%" if inflation_real else "Н/Д")
+        
+        st.write("") # Space between rows
+        
+        row3 = st.columns(3)
+        row3[0].metric("Кэш", f"{rules['cash_target'] * 100:.0f}%")
+        row3[1].metric("Облигации", f"{rules['bond_target'] * 100:.0f}%")
+        row3[2].metric("Акции", f"{rules['equity_target'] * 100:.0f}%")
     
         st.markdown("---")
         if selected_phase.startswith("Рефляция"):
