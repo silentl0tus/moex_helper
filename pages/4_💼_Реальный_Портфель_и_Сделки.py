@@ -168,10 +168,27 @@ if not portfolio_data:
     st.info("👈 Нажмите кнопку «Загрузить портфель» в боковой панели или загрузите файл отчёта.")
     st.stop()
 
+transfers = portfolio_data.get("transfers", [])
+enable_transfers = True
+if transfers:
+    with st.sidebar:
+        st.divider()
+        st.markdown("### ⚙️ Учёт переносов")
+        enable_transfers = st.toggle(
+            "🔄 Сквозной учёт (ВТБ ➔ Альфа)",
+            value=True,
+            help="Связывает внутридневные сделки переноса между брокерами (MGNT, NLMK, SVCB, T), восстанавливая историческую себестоимость покупок и исключая фиктивные закрытия из FIFO."
+        )
+
+if enable_transfers and "adj_positions" in portfolio_data:
+    df_pos = portfolio_data["adj_positions"].copy()
+    df_fifo = portfolio_data["adj_fifo"].copy()
+else:
+    df_pos = portfolio_data.get("raw_positions", portfolio_data["positions"]).copy()
+    df_fifo = portfolio_data.get("raw_fifo", portfolio_data["fifo"]).copy()
+
 summary = portfolio_data["summary"]
-df_pos = portfolio_data["positions"].copy()
 df_trades = portfolio_data["trades"].copy()
-df_fifo = portfolio_data["fifo"].copy()
 df_div = portfolio_data["dividends"].copy()
 df_coup = portfolio_data["coupons"].copy()
 
@@ -245,6 +262,37 @@ with col_export_btn:
         st.session_state["backtest_custom_capital"] = tot_val
         st.success("Структура скопирована! Перейдите на вкладку «⏳ Бэктест Стратегии» в левом меню.")
 
+if transfers:
+    if enable_transfers:
+        with st.expander(f"🔄 Сквозной учёт межброкерских переносов активен ({len(transfers)} актива)", expanded=False):
+            st.markdown(
+                "**Обнаружены синхронные перемещения позиций между брокерами (ВТБ ➔ Альфа в июле 2026 г.).**  \n"
+                "В сквозном режиме историческая себестоимость покупок сохраняется, а фиктивные убытки исключены из закрытых сделок FIFO."
+            )
+            tr_rows = []
+            for tr in transfers:
+                t = tr["ticker"]
+                raw_p = portfolio_data.get("raw_positions", pd.DataFrame())
+                adj_p = portfolio_data.get("adj_positions", pd.DataFrame())
+                r_raw = raw_p[raw_p["Тикер"] == t] if not raw_p.empty else pd.DataFrame()
+                r_adj = adj_p[adj_p["Тикер"] == t] if not adj_p.empty else pd.DataFrame()
+                avg_raw = r_raw["Средняя цена"].iloc[0] if not r_raw.empty else 0.0
+                avg_adj = r_adj["Средняя цена"].iloc[0] if not r_adj.empty else 0.0
+                pnl_raw = r_raw["Доходность от входа, %"].iloc[0] if not r_raw.empty else 0.0
+                pnl_adj = r_adj["Доходность от входа, %"].iloc[0] if not r_adj.empty else 0.0
+                tr_rows.append({
+                    "Тикер": t,
+                    "Дата": tr["date"],
+                    "Перевод": f"{tr['from_broker']} ➔ {tr['to_broker']}",
+                    "Объем, шт.": tr["trans_qty"],
+                    "Средняя (брокер)": f"{avg_raw:,.2f} ₽ ({pnl_raw:+.1f}%)",
+                    "Сквозная средняя": f"{avg_adj:,.2f} ₽ ({pnl_adj:+.1f}%)",
+                    "Убыток переноса в FIFO": f"{tr['transferred_loss']:+,.0f} ₽"
+                })
+            st.dataframe(pd.DataFrame(tr_rows), hide_index=True, width="stretch")
+    else:
+        st.warning("⚠️ Сквозной учёт переносов отключён в боковом меню: позиции отображаются по локальной себестоимости брокера.")
+
 
 # ==========================================
 # 5. ТЕМАТИЧЕСКИЕ ВКЛАДКИ
@@ -296,10 +344,15 @@ with tab_positions:
         oil_tickers = {"ROSN", "TRNFP", "SNGS", "SNGSP", "LKOH", "TATN", "TATNP", "NMTP"}
         bank_tickers = {"SBER", "SBERP", "SVCB", "T", "VTBR", "BSPB"}
 
-        df_display = df_pos[[
+        display_cols = [
             "Тикер", "Название", "Количество", "Средняя цена", "Текущая цена",
             "Текущая стоимость", "Вложенная сумма", "Прибыль, ₽", "Доходность от входа, %", "Вес, %"
-        ]].copy()
+        ]
+        if "Сквозной перенос" in df_pos.columns and enable_transfers:
+            df_pos["Учёт"] = df_pos["Сквозной перенос"].apply(lambda x: "🔄 Сквозной" if x is True else "Обычный")
+            display_cols.append("Учёт")
+
+        df_display = df_pos[display_cols].copy()
 
         # Форматирование и подсветка
         st_styled_pos = df_display.style.format({
@@ -438,27 +491,51 @@ with tab_fifo:
     st.caption("Анализирует сделки, по которым была зафиксирована прибыль или убыток.")
 
     if not df_fifo.empty:
-        total_closed_deals = len(df_fifo)
-        wins = df_fifo[df_fifo["Прибыль, ₽"] > 0]
-        losses = df_fifo[df_fifo["Прибыль, ₽"] < 0]
-        win_rate = (len(wins) / total_closed_deals) * 100.0 if total_closed_deals > 0 else 0.0
+        has_transfers = "is_transfer" in df_fifo.columns and df_fifo["is_transfer"].any()
+        if has_transfers and enable_transfers:
+            c_f_flt1, c_f_flt2 = st.columns([3, 1])
+            with c_f_flt1:
+                st.info("ℹ️ В статистику закрытых сделок не включены искусственные убытки от межброкерских переносов (ВТБ ➔ Альфа).")
+            with c_f_flt2:
+                show_transfers_in_fifo = st.checkbox("Показать переносы в таблице", value=False)
 
-        total_realized_profit = df_fifo["Прибыль, ₽"].sum()
-        avg_days = df_fifo["Дней в сделке"].mean()
+            clean_fifo = df_fifo[~df_fifo["is_transfer"]]
+            trans_deals = df_fifo[df_fifo["is_transfer"]]
+            total_closed_deals = len(clean_fifo)
+            wins = clean_fifo[clean_fifo["Прибыль, ₽"] > 0]
+            losses = clean_fifo[clean_fifo["Прибыль, ₽"] < 0]
+            win_rate = (len(wins) / total_closed_deals) * 100.0 if total_closed_deals > 0 else 0.0
+            total_realized_profit = clean_fifo["Прибыль, ₽"].sum()
+            avg_days = clean_fifo["Дней в сделке"].mean()
+            best_deal = clean_fifo.sort_values(by="Прибыль, ₽", ascending=False).iloc[0] if not clean_fifo.empty else None
+
+            df_to_render = df_fifo if show_transfers_in_fifo else clean_fifo
+        else:
+            total_closed_deals = len(df_fifo)
+            wins = df_fifo[df_fifo["Прибыль, ₽"] > 0]
+            losses = df_fifo[df_fifo["Прибыль, ₽"] < 0]
+            win_rate = (len(wins) / total_closed_deals) * 100.0 if total_closed_deals > 0 else 0.0
+            total_realized_profit = df_fifo["Прибыль, ₽"].sum()
+            avg_days = df_fifo["Дней в сделке"].mean()
+            best_deal = df_fifo.sort_values(by="Прибыль, ₽", ascending=False).iloc[0] if not df_fifo.empty else None
+            df_to_render = df_fifo
 
         w_c1, w_c2, w_c3, w_c4 = st.columns(4)
         w_c1.metric("Win Rate закрытых сделок", f"{win_rate:.1f}%", f"{len(wins)} прибыльных / {len(losses)} убыточных")
         w_c2.metric("Зафиксированный PnL", f"{total_realized_profit:+,.0f} ₽", "Суммарный результат")
         w_c3.metric("Средний срок удержания", f"{avg_days:.0f} дней", "Период нахождения в сделке")
-
-        best_deal = df_fifo.sort_values(by="Прибыль, ₽", ascending=False).iloc[0]
-        w_c4.metric("Лучшая сделка", f"{best_deal['Тикер']}", f"{best_deal['Прибыль, ₽']:+,.0f} ₽ ({best_deal['Доходность, %']:+.1f}%)")
+        if best_deal is not None:
+            w_c4.metric("Лучшая сделка", f"{best_deal['Тикер']}", f"{best_deal['Прибыль, ₽']:+,.0f} ₽ ({best_deal['Доходность, %']:+.1f}%)")
 
         st.markdown("##### 📋 Детальный реестр закрытых позиций")
-        st_styled_fifo = df_fifo[[
+        fifo_cols = [
             "Тикер", "Название", "Покупка", "Продажа", "Цена покупки", "Цена продажи",
             "Кол.", "Прибыль, ₽", "Доходность, %", "Дней в сделке", "Доходность годовых, %"
-        ]].copy().style.format({
+        ]
+        if "Статус" in df_to_render.columns:
+            fifo_cols.append("Статус")
+
+        st_styled_fifo = df_to_render[fifo_cols].copy().style.format({
             "Покупка": lambda d: d.strftime("%Y-%m-%d") if pd.notna(d) else "—",
             "Продажа": lambda d: d.strftime("%Y-%m-%d") if pd.notna(d) else "—",
             "Цена покупки": "{:,.2f} ₽",

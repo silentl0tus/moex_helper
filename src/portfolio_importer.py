@@ -410,6 +410,148 @@ def reconstruct_positions_from_trades(trades_df: pd.DataFrame) -> pd.DataFrame:
     return res_df
 
 
+def detect_cross_broker_transfers(trades_df: pd.DataFrame, fifo_df: pd.DataFrame) -> List[Dict[str, Any]]:
+    """
+    Автоматически находит пары сделок перемещения позиций между брокерами (например, продажа в ВТБ и покупка в Альфе).
+    Критерии переноса:
+    - Один тикер
+    - Окно даты: в пределах 2 календарных дней
+    - Разные счета/брокеры ('Портфель')
+    - Одна операция 'sell', другая 'buy'
+    """
+    if trades_df.empty or "Операция" not in trades_df.columns:
+        return []
+
+    t = trades_df.copy()
+    if not pd.api.types.is_datetime64_any_dtype(t["Дата"]):
+        t["Дата"] = pd.to_datetime(t["Дата"], errors="coerce")
+    t = t.dropna(subset=["Дата"]).sort_values(by="Дата").reset_index(drop=True)
+
+    f = fifo_df.copy() if not fifo_df.empty else pd.DataFrame()
+    if not f.empty and not pd.api.types.is_datetime64_any_dtype(f["Продажа"]):
+        f["Продажа"] = pd.to_datetime(f["Продажа"], errors="coerce")
+
+    transfers = []
+    processed_buy_indices = set()
+
+    for sell_idx, r_sell in t[t["Операция"] == "sell"].iterrows():
+        ticker = str(r_sell.get("Тикер", "")).upper()
+        sell_port = str(r_sell.get("Портфель", "")).strip()
+        sell_qty = abs(float(r_sell.get("Количество", 0.0) or 0.0))
+        sell_date = r_sell["Дата"]
+        sell_price = float(r_sell.get("Цена", 0.0) or 0.0)
+
+        if sell_qty <= 0:
+            continue
+
+        buys = t[
+            (t.index.isin(set(t.index) - processed_buy_indices)) &
+            (t["Операция"] == "buy") &
+            (t["Тикер"].str.upper() == ticker) &
+            (t["Портфель"].astype(str).str.strip() != sell_port) &
+            (t["Дата"] >= sell_date - pd.Timedelta(days=2)) &
+            (t["Дата"] <= sell_date + pd.Timedelta(days=2))
+        ]
+
+        if buys.empty:
+            continue
+
+        best_buy_idx = buys.index[0]
+        r_buy = buys.loc[best_buy_idx]
+        processed_buy_indices.add(best_buy_idx)
+
+        buy_qty = abs(float(r_buy.get("Количество", 0.0) or 0.0))
+        buy_port = str(r_buy.get("Портфель", "")).strip()
+        trans_qty = min(sell_qty, buy_qty)
+
+        # Сопоставляем строки FIFO
+        fifo_indices = []
+        fifo_loss = 0.0
+        if not f.empty and "Тикер" in f.columns and "Продажа" in f.columns:
+            d_sell = sell_date.date()
+            f_matches = f[
+                (f["Тикер"].str.upper() == ticker) &
+                (f["Продажа"].dt.date == d_sell)
+            ]
+            if not f_matches.empty:
+                fifo_indices = f_matches.index.tolist()
+                fifo_loss = float(((f_matches["Цена продажи"] - f_matches["Цена покупки"]) * f_matches["Кол."]).sum())
+
+        ratio = min(1.0, trans_qty / sell_qty) if sell_qty > 0 else 1.0
+        transferred_loss = fifo_loss * ratio
+
+        transfers.append({
+            "ticker": ticker,
+            "date": sell_date.strftime("%Y-%m-%d"),
+            "from_broker": sell_port,
+            "to_broker": buy_port,
+            "trans_qty": trans_qty,
+            "sell_qty": sell_qty,
+            "buy_qty": buy_qty,
+            "sell_price": sell_price,
+            "buy_price": float(r_buy.get("Цена", 0.0) or 0.0),
+            "fifo_indices": fifo_indices,
+            "transferred_loss": round(transferred_loss, 2)
+        })
+
+    return transfers
+
+
+def apply_cross_broker_transfers(
+    positions_df: pd.DataFrame,
+    fifo_df: pd.DataFrame,
+    transfers: List[Dict[str, Any]]
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Корректирует позиции (positions_df) и закрытые сделки (fifo_df) с учетом сквозных переносов:
+    1. К открытой позиции добавляется себестоимость перенесенных акций, восстанавливая истинную историческую среднюю цену входа.
+    2. В FIFO сделки переноса помечаются как 'Перенос', исключая искусственный убыток из статистики закрытых позиций.
+    """
+    if not transfers:
+        return positions_df.copy(), fifo_df.copy()
+
+    adj_pos = positions_df.copy()
+    adj_fifo = fifo_df.copy()
+
+    trans_loss_by_ticker = {}
+    trans_indices_all = set()
+    for tr in transfers:
+        t = tr["ticker"]
+        trans_loss_by_ticker[t] = trans_loss_by_ticker.get(t, 0.0) + tr["transferred_loss"]
+        trans_indices_all.update(tr.get("fifo_indices", []))
+
+    if not adj_pos.empty:
+        for idx, row in adj_pos.iterrows():
+            t = str(row.get("Тикер", "")).upper()
+            if t in trans_loss_by_ticker:
+                extra_cost = -trans_loss_by_ticker[t]
+                orig_inv = float(row.get("Вложенная сумма", 0.0) or 0.0)
+                new_inv = orig_inv + extra_cost
+                qty = float(row.get("Количество", 0.0) or 0.0)
+                cur_val = float(row.get("Текущая стоимость", 0.0) or 0.0)
+
+                new_avg = (new_inv / qty) if qty > 0 else float(row.get("Средняя цена", 0.0) or 0.0)
+                new_pnl = cur_val - new_inv
+                new_pnl_pct = ((new_pnl / new_inv) * 100.0) if new_inv > 0 else 0.0
+
+                adj_pos.at[idx, "Вложенная сумма"] = round(new_inv, 2)
+                adj_pos.at[idx, "Средняя цена"] = round(new_avg, 2)
+                adj_pos.at[idx, "Прибыль, ₽"] = round(new_pnl, 2)
+                adj_pos.at[idx, "Доходность от входа, %"] = round(new_pnl_pct, 2)
+                adj_pos.at[idx, "Сквозной перенос"] = True
+                adj_pos.at[idx, "Коррекция переноса, ₽"] = round(extra_cost, 2)
+
+    if not adj_fifo.empty:
+        adj_fifo["Статус"] = "Закрыта"
+        adj_fifo["is_transfer"] = False
+        for f_idx in trans_indices_all:
+            if f_idx in adj_fifo.index:
+                adj_fifo.at[f_idx, "Статус"] = "Перенос"
+                adj_fifo.at[f_idx, "is_transfer"] = True
+
+    return adj_pos, adj_fifo
+
+
 def parse_izi_invest_excel(file_bytes: bytes, source_id: str = "export", identifier: str = "") -> Dict[str, Any]:
     """
     Парсит XLSX файл из izi-invest, Intelinvest, Snowball или отчётов брокеров.
@@ -681,6 +823,10 @@ def parse_izi_invest_excel(file_bytes: bytes, source_id: str = "export", identif
             if w > 0.01:
                 weights_dict[t] = round(w, 2)
 
+    # 8. Детекция и сквозной учет межброкерских переносов (ВТБ ➔ Альфа и др.)
+    transfers = detect_cross_broker_transfers(trades_df, fifo_df)
+    adj_positions_df, adj_fifo_df = apply_cross_broker_transfers(positions_df, fifo_df, transfers)
+
     return {
         "source": "excel_import",
         "portfolio_id": source_id,
@@ -700,9 +846,14 @@ def parse_izi_invest_excel(file_bytes: bytes, source_id: str = "export", identif
             "total_trades_count": len(trades_df),
             "closed_deals_count": len(fifo_df)
         },
-        "positions": positions_df,
+        "positions": adj_positions_df,
+        "raw_positions": positions_df,
+        "adj_positions": adj_positions_df,
         "trades": trades_df,
-        "fifo": fifo_df,
+        "fifo": adj_fifo_df,
+        "raw_fifo": fifo_df,
+        "adj_fifo": adj_fifo_df,
+        "transfers": transfers,
         "dividends": dividends_df,
         "coupons": coupons_df,
         "xirr_flows": pd.DataFrame(xirr_flows, columns=["Дата", "Сумма"]),
