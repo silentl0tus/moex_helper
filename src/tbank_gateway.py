@@ -9,8 +9,13 @@ load_dotenv()
 
 class TBankGateway:
     def __init__(self, token=None):
-        # Если передан аргумент - используем его, если нет - ищем в системе
-        self.token = token or os.getenv("TOKEN")
+        if not token:
+            try:
+                import streamlit as st
+                token = st.secrets.get("TOKEN") or st.secrets.get("TBANK_TOKEN")
+            except Exception:
+                pass
+        self.token = token or os.getenv("TOKEN") or os.getenv("TBANK_TOKEN")
         if not self.token:
             raise ValueError("Токен не найден! Передай его при инициализации или установи переменную окружения 'TOKEN'.")
         
