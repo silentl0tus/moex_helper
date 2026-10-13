@@ -571,6 +571,12 @@ def summarize_with_hf(messages: list, ticker: str = "", hf_token: str = None) ->
                 "structured": fallback_summary,
                 "model": model_name
             }
+        elif resp.status_code == 402:
+            return {
+                "ai_summary": "⚠️ Hugging Face вернул ошибку 402 (Payment/Credits Required): на аккаунте HF исчерпаны кредиты Inference API. Hugging Face перевел серверный инференс на платную тарификацию. Ниже отображена автономная выжимка.",
+                "structured": fallback_summary,
+                "model": model_name
+            }
         elif resp.status_code == 401:
             return {
                 "ai_summary": "❌ Неверный токен Hugging Face (ошибка 401). Проверьте токен в настройках.",
