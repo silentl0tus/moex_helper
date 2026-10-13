@@ -3,11 +3,17 @@ import streamlit as st
 import pandas as pd
 from pathlib import Path
 import sys
+import importlib
 
 # Добавляем корень проекта в sys.path чтобы импорты работали
 project_root = Path(__file__).parent.parent
 if str(project_root) not in sys.path:
     sys.path.append(str(project_root))
+
+import sentiment_scraper
+# В Streamlit Cloud при hot-reload старый sentiment_scraper может зависнуть в sys.modules без новых функций
+if not hasattr(sentiment_scraper, "generate_structured_summary") or not hasattr(sentiment_scraper, "extract_aggregated_messages"):
+    sentiment_scraper = importlib.reload(sentiment_scraper)
 
 from sentiment_scraper import (
     extract_meaningful_messages,

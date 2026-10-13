@@ -298,6 +298,51 @@ def extract_pulse_messages(ticker, max_messages=50):
     return messages
 
 
+RU_MONTHS = {
+    'янв': 1, 'фев': 2, 'мар': 3, 'апр': 4, 'май': 5, 'мая': 5, 'июн': 6,
+    'июл': 7, 'авг': 8, 'сен': 9, 'окт': 10, 'ноя': 11, 'дек': 12
+}
+
+
+def parse_time_to_dt(time_str: str):
+    """Преобразует различные форматы дат из Пульса и Smart-Lab в объект datetime для корректной сортировки."""
+    import datetime
+    if not time_str:
+        return datetime.datetime.min
+    now = datetime.datetime.now()
+    s = str(time_str).strip().lower()
+    try:
+        if 'сегодня' in s:
+            parts = s.split(',')
+            if len(parts) > 1:
+                t = parts[1].strip()
+                h, m = map(int, t.split(':')[:2])
+                return now.replace(hour=h, minute=m, second=0, microsecond=0)
+        elif 'вчера' in s:
+            parts = s.split(',')
+            if len(parts) > 1:
+                t = parts[1].strip()
+                h, m = map(int, t.split(':')[:2])
+                yest = now - datetime.timedelta(days=1)
+                return yest.replace(hour=h, minute=m, second=0, microsecond=0)
+
+        if re.match(r'^\d{4}-\d{2}-\d{2}', s):
+            return datetime.datetime.strptime(s[:16], '%Y-%m-%d %H:%M')
+
+        m = re.search(r'(\d{1,2})\s+([а-я]{3,8})(?:\s+(\d{4}))?.*?(\d{1,2}):(\d{2})', s)
+        if m:
+            day = int(m.group(1))
+            mon_str = m.group(2)[:3]
+            month = RU_MONTHS.get(mon_str, now.month)
+            year = int(m.group(3)) if m.group(3) else now.year
+            hour = int(m.group(4))
+            minute = int(m.group(5))
+            return datetime.datetime(year, month, day, hour, minute)
+    except Exception:
+        pass
+    return datetime.datetime.min
+
+
 def extract_aggregated_messages(ticker, max_messages=50):
     """
     Одновременно агрегирует обсуждения из Т-Банк Пульс и Smart-Lab,
@@ -313,7 +358,7 @@ def extract_aggregated_messages(ticker, max_messages=50):
         smart_msgs = f_smart.result() or []
 
     combined = pulse_msgs + smart_msgs
-    combined.sort(key=lambda m: str(m.get("time", "")), reverse=True)
+    combined.sort(key=lambda m: parse_time_to_dt(m.get("time", "")), reverse=True)
     return combined[:max_messages]
 
 
