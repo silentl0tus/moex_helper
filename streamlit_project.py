@@ -1719,6 +1719,7 @@ with tab1:
             st.caption(f"Топ-{n_assets} активов по Health Score | Акционерная доля: {rules['equity_target']*100:.0f}% от капитала")
             st.dataframe(position_df, width="stretch", hide_index=True)
             st.page_link("pages/3_⏳_Бэктест_Стратегии.py", label="⏳ Протестировать эффективность ребалансировки на исторических данных MOEX", icon="⏳")
+            st.page_link("pages/4_💼_Реальный_Портфель_и_Сделки.py", label="💼 Анализ реального портфеля инвестора и сделок (izi-invest / брокер)", icon="💼")
 
         with tab5:
             # 🌊 ORDER FLOW (Russian Magellan PRO)

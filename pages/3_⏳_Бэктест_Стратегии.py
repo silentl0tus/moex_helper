@@ -387,9 +387,13 @@ rf_rate_input = st.sidebar.slider(
 selected_weights: Dict[str, float] = {}
 
 if strategy_mode.startswith("💼 Мой текущий"):
-    # Проверяем, есть ли загруженный портфель в сессии
+    # Проверяем, есть ли переданные веса из раздела "Реальный Портфель и Сделки"
+    custom_w = st.session_state.get("backtest_custom_weights", {})
     loaded_port = st.session_state.get("my_portfolio", {})
-    if loaded_port:
+    if custom_w:
+        selected_weights = custom_w.copy()
+        st.sidebar.success(f"Загружено {len(custom_w)} активов из реального портфеля!")
+    elif loaded_port:
         user_tickers = list(loaded_port.keys())
         st.sidebar.success(f"Загружено {len(user_tickers)} акций из вашего файла")
         # Веса пропорционально текущей стоимости
