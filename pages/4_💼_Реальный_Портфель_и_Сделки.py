@@ -83,27 +83,57 @@ def load_portfolio_from_url(url_or_id: str):
 # ==========================================
 
 st.sidebar.title("💼 Учёт сделок и Портфель")
-st.sidebar.caption("Анализ позиций от реальной цены покупки и история операций.")
-
-DEFAULT_LOCAL_PATH = "/home/silent/Downloads/Ликвидная часть-13.10.2026.xlsx"
-has_local_file = os.path.exists(DEFAULT_LOCAL_PATH)
-
-source_options = [
-    "🌐 Сервис izi-invest.ru (онлайн)",
-    "💻 Локальный файл из Downloads",
-    "📂 Загрузить файл через браузер (XLSX / CSV)"
-]
+st.sidebar.caption("Загрузите свой отчёт брокера или экспорта для анализа позиций от цен входа.")
 
 source_mode = st.sidebar.radio(
-    "Источник данных:",
-    options=source_options,
-    index=1 if has_local_file else 0
+    "Способ добавления портфеля:",
+    options=[
+        "📂 Загрузить файл отчёта (XLSX / XLS / CSV)",
+        "🌐 Сервис izi-invest.ru (по ссылке)"
+    ],
+    index=0
 )
 
 portfolio_data = None
 load_error = None
+is_demo = False
 
-if source_mode == "🌐 Сервис izi-invest.ru (онлайн)":
+sample_file_path = "data/sample_portfolio.xlsx"
+has_sample = os.path.exists(sample_file_path)
+
+if source_mode == "📂 Загрузить файл отчёта (XLSX / XLS / CSV)":
+    uploaded_file = st.sidebar.file_uploader(
+        "Выберите файл отчёта:",
+        type=["xlsx", "xls", "csv"],
+        help="Поддерживаются отчёты izi-invest.ru, Intelinvest, Snowball, брокеров (Т-Банк, Сбер, ВТБ, Альфа, БКС) и файлы CSV со сделками."
+    )
+
+    if uploaded_file is not None:
+        st.sidebar.success(f"Файл выбран: `{uploaded_file.name}`")
+        with st.spinner("Чтение и парсинг файла сделок..."):
+            try:
+                file_bytes = uploaded_file.read()
+                portfolio_data = parse_broker_file(file_bytes, uploaded_file.name)
+            except Exception as e:
+                load_error = str(e)
+    else:
+        # Если пользователь еще не загрузил свой файл, предлагаем посмотреть пример
+        use_sample = st.sidebar.checkbox(
+            "Показать демонстрационный отчёт",
+            value=True if has_sample else False,
+            help="Показывает реальный пример портфеля со сделками, если вы пока не выбрали свой файл."
+        )
+        if use_sample and has_sample:
+            is_demo = True
+            with st.spinner("Загрузка демонстрационного отчёта..."):
+                try:
+                    with open(sample_file_path, "rb") as f:
+                        file_bytes = f.read()
+                    portfolio_data = parse_broker_file(file_bytes, "Демо-отчёт («Ликвидная часть»)")
+                except Exception as e:
+                    load_error = str(e)
+
+else:
     default_url = "https://izi-invest.ru/maxgamer#sdelki"
     url_input = st.sidebar.text_input(
         "Ссылка на портфель или ID/никнейм:",
@@ -113,7 +143,7 @@ if source_mode == "🌐 Сервис izi-invest.ru (онлайн)":
 
     col_btn1, col_btn2 = st.sidebar.columns([3, 1])
     with col_btn1:
-        load_btn = st.button("🔄 Загрузить портфель", type="primary", width="stretch")
+        load_btn = st.button("🔄 Загрузить по ссылке", type="primary", width="stretch")
     with col_btn2:
         if st.button("Сброс", width="stretch"):
             st.cache_data.clear()
@@ -123,46 +153,6 @@ if source_mode == "🌐 Сервис izi-invest.ru (онлайн)":
         with st.spinner("Загрузка данных и истории сделок из izi-invest.ru..."):
             try:
                 portfolio_data = load_portfolio_from_url(url_input)
-            except Exception as e:
-                load_error = str(e)
-
-elif source_mode == "💻 Локальный файл из Downloads":
-    local_path = st.sidebar.text_input(
-        "Путь к файлу на диске:",
-        value=DEFAULT_LOCAL_PATH,
-        help="Локальный путь к выгруженному файлу отчета."
-    )
-    col_btn1, col_btn2 = st.sidebar.columns([3, 1])
-    with col_btn1:
-        load_local_btn = st.button("🔄 Прочитать файл", type="primary", width="stretch")
-    with col_btn2:
-        if st.button("Сброс", width="stretch", key="reset_local"):
-            st.cache_data.clear()
-            st.rerun()
-
-    if local_path and os.path.exists(local_path):
-        st.sidebar.success(f"Файл найден: `{os.path.basename(local_path)}` ({os.path.getsize(local_path)/1024:.0f} КБ)")
-        with st.spinner("Чтение локального файла и листа 'Сделки'..."):
-            try:
-                with open(local_path, "rb") as f:
-                    file_bytes = f.read()
-                portfolio_data = parse_broker_file(file_bytes, os.path.basename(local_path))
-            except Exception as e:
-                load_error = str(e)
-    else:
-        load_error = f"Файл не найден по пути: {local_path}"
-
-else:
-    uploaded_file = st.sidebar.file_uploader(
-        "Загрузите отчет брокера или экспорт izi-invest:",
-        type=["xlsx", "xls", "csv"],
-        help="Поддерживаются файлы экспорта izi-invest.ru, Snowball, Intelinvest и стандартные CSV со сделками."
-    )
-    if uploaded_file is not None:
-        with st.spinner("Чтение и парсинг файла отчёта..."):
-            try:
-                file_bytes = uploaded_file.read()
-                portfolio_data = parse_broker_file(file_bytes, uploaded_file.name)
             except Exception as e:
                 load_error = str(e)
 
@@ -187,10 +177,16 @@ df_coup = portfolio_data["coupons"].copy()
 # ==========================================
 
 st.title("💼 Анализ Реального Портфеля и Сделок")
+
+if is_demo:
+    st.info("💡 **Демонстрационный режим:** загружен демонстрационный отчёт («Ликвидная часть»). Чтобы проанализировать **свой личный отчёт**, выберите ваш файл в поле загрузки в боковой панели слева 👈")
+else:
+    st.success(f"✅ Успешно загружен и обработан ваш отчёт: **`{portfolio_data.get('identifier', 'файл')}`**")
+
 st.markdown(
-    f"Интеграция с источником: **`{portfolio_data.get('identifier', 'izi-invest')}`** &nbsp;|&nbsp; "
     f"Открытых позиций: **{summary['open_positions_count']}** &nbsp;|&nbsp; "
-    f"Всего операций в истории: **{summary['total_trades_count']}**"
+    f"Всего операций в истории: **{summary['total_trades_count']}** &nbsp;|&nbsp; "
+    f"Закрытых сделок FIFO: **{summary['closed_deals_count']}**"
 )
 
 kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)

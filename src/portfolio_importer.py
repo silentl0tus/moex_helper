@@ -186,31 +186,196 @@ def fetch_izi_invest_data(identifier: str) -> Dict[str, Any]:
     return parse_izi_invest_excel(content_bytes, source_id=str(pid), identifier=identifier)
 
 
+def _find_sheet(sheet_names: List[str], keywords: List[str]) -> Optional[str]:
+    """Находит подходящий лист по ключевым словам без учета регистра."""
+    for s in sheet_names:
+        sl = str(s).strip().lower()
+        for kw in keywords:
+            if kw in sl:
+                return s
+    return None
+
+
+def reconstruct_positions_from_trades(trades_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Восстанавливает текущие открытые позиции инвестора и среднюю цену входа (Break-even)
+    из хронологического журнала сделок купли/продажи.
+    """
+    if trades_df.empty or "Операция" not in trades_df.columns:
+        return pd.DataFrame()
+
+    trades = trades_df.copy()
+    trades["Дата"] = pd.to_datetime(trades["Дата"])
+    trades = trades.sort_values(by="Дата")
+
+    holdings = {}
+    for _, row in trades.iterrows():
+        t = str(row.get("Тикер", "")).strip().upper()
+        if not t or t in ["NAN", "NONE", "INPUT", "OUTPUT", "DOHOD", "NALOG", "COMMISSION"]:
+            continue
+        name = str(row.get("Название", t))
+        atype = str(row.get("Тип", "share"))
+        qty = abs(float(row.get("Количество", 0.0)))
+        price = float(row.get("Цена", 0.0))
+        cost = abs(float(row.get("Сумма", 0.0)))
+        if cost == 0.0 and price > 0:
+            cost = qty * price
+
+        op = str(row.get("Операция", "")).lower()
+        is_buy = any(b in op for b in ["buy", "покупка", "приобретение"])
+        is_sell = any(s in op for s in ["sell", "продажа", "списание"])
+
+        if t not in holdings:
+            holdings[t] = {"qty": 0.0, "total_cost": 0.0, "name": name, "type": atype, "last_price": price}
+
+        if is_buy:
+            holdings[t]["qty"] += qty
+            holdings[t]["total_cost"] += cost
+            if price > 0:
+                holdings[t]["last_price"] = price
+        elif is_sell:
+            curr_q = holdings[t]["qty"]
+            if curr_q > 0:
+                avg_p = holdings[t]["total_cost"] / curr_q
+                sold_q = min(qty, curr_q)
+                holdings[t]["qty"] -= sold_q
+                holdings[t]["total_cost"] -= sold_q * avg_p
+            if price > 0:
+                holdings[t]["last_price"] = price
+
+    rows = []
+    for t, data in holdings.items():
+        if data["qty"] > 0.001:
+            avg_p = data["total_cost"] / data["qty"] if data["qty"] > 0 else 0.0
+            cur_price = data["last_price"]
+            # Попытка получить свежую цену с MOEX если доступно
+            if Ticker is not None and data["type"] == "share":
+                try:
+                    asset = Ticker(t)
+                    c = asset.candles(date=str(datetime.now().date() - pd.Timedelta(days=5)), till_date=str(datetime.now().date()), period="D")
+                    if c is not None and not c.empty and "close" in c.columns:
+                        cur_price = float(c["close"].iloc[-1])
+                except Exception:
+                    pass
+
+            cur_val = data["qty"] * cur_price
+            pnl = cur_val - data["total_cost"]
+            pnl_pct = (pnl / data["total_cost"] * 100.0) if data["total_cost"] > 0 else 0.0
+
+            rows.append({
+                "Тикер": t,
+                "Название": data["name"],
+                "Тип": data["type"],
+                "Количество": round(data["qty"], 2),
+                "Средняя цена": round(avg_p, 2),
+                "Текущая цена": round(cur_price, 2),
+                "Вложенная сумма": round(data["total_cost"], 2),
+                "Текущая стоимость": round(cur_val, 2),
+                "Прибыль, ₽": round(pnl, 2),
+                "Доходность от входа, %": round(pnl_pct, 2)
+            })
+
+    res_df = pd.DataFrame(rows)
+    if not res_df.empty:
+        tot_v = res_df["Текущая стоимость"].sum()
+        res_df["Вес, %"] = (res_df["Текущая стоимость"] / tot_v * 100.0) if tot_v > 0 else 0.0
+        res_df = res_df.sort_values(by="Текущая стоимость", ascending=False).reset_index(drop=True)
+    return res_df
+
+
 def parse_izi_invest_excel(file_bytes: bytes, source_id: str = "export", identifier: str = "") -> Dict[str, Any]:
     """
-    Парсит XLSX файл из izi-invest и возвращает структурированный словарь.
+    Парсит XLSX файл из izi-invest, Intelinvest, Snowball или отчётов брокеров.
+    Автоматически сопоставляет вкладки и восстанавливает позиции, если вкладка отсутствует.
     """
     xls = pd.ExcelFile(io.BytesIO(file_bytes))
     sheet_names = xls.sheet_names
 
-    # 1. Парсинг открытых позиций (Портфель)
+    sheet_pos = _find_sheet(sheet_names, ["портфел", "position", "holding", "актив"])
+    sheet_trades = _find_sheet(sheet_names, ["сделк", "trade", "deal", "operation", "операци", "транзакци"])
+    sheet_div = _find_sheet(sheet_names, ["дивиденд", "div"])
+    sheet_coup = _find_sheet(sheet_names, ["купон", "coupon"])
+    sheet_fifo = _find_sheet(sheet_names, ["fifo", "закрыт", "closed"])
+    sheet_xirr = _find_sheet(sheet_names, ["xirr"])
+
+    # Если лист сделок не найден по названию, проверяем колонки первого или всех листов
+    if not sheet_trades:
+        for s in sheet_names:
+            try:
+                head_df = pd.read_excel(xls, s, nrows=5)
+                cols_l = [str(c).lower() for c in head_df.columns]
+                if any("дат" in c or "date" in c for c in cols_l) and any("тикер" in c or "ticker" in c or "инструмент" in c for c in cols_l):
+                    sheet_trades = s
+                    break
+            except Exception:
+                continue
+
+    # 1. Парсинг сделок
+    trades_df = pd.DataFrame()
+    if sheet_trades:
+        raw_trades = pd.read_excel(xls, sheet_trades)
+        # Находим колонку даты и тикера
+        date_col = next((c for c in raw_trades.columns if any(k in str(c).lower() for k in ["дат", "date"])), None)
+        ticker_col = next((c for c in raw_trades.columns if any(k in str(c).lower() for k in ["тикер", "ticker", "secid", "инструмент", "код"])), None)
+        
+        if date_col and ticker_col:
+            t_df = raw_trades.dropna(subset=[date_col]).copy()
+            t_df["Дата"] = pd.to_datetime(t_df[date_col])
+            t_df["Тикер"] = t_df[ticker_col].astype(str).str.strip().str.upper()
+
+            # Нормализация колонок
+            for c in raw_trades.columns:
+                cl = str(c).lower()
+                if "количеств" in cl or "кол" in cl or "qty" in cl:
+                    t_df["Количество"] = pd.to_numeric(raw_trades[c], errors="coerce").fillna(0.0)
+                elif "цен" in cl or "price" in cl:
+                    t_df["Цена"] = pd.to_numeric(raw_trades[c], errors="coerce").fillna(0.0)
+                elif "сумм" in cl or "объем" in cl or "sum" in cl or "volume" in cl:
+                    t_df["Сумма"] = pd.to_numeric(raw_trades[c], errors="coerce").fillna(0.0)
+                elif "операц" in cl or "action" in cl or "вид" in cl or "тип" in cl:
+                    t_df["Операция"] = raw_trades[c].astype(str).str.lower()
+                elif "назван" in cl or "name" in cl or "эмитент" in cl:
+                    t_df["Название"] = raw_trades[c].astype(str)
+
+            if "Операция" not in t_df.columns:
+                t_df["Операция"] = "buy"
+            if "Количество" not in t_df.columns:
+                t_df["Количество"] = 0.0
+            if "Цена" not in t_df.columns:
+                t_df["Цена"] = 0.0
+            if "Сумма" not in t_df.columns:
+                t_df["Сумма"] = t_df["Количество"] * t_df["Цена"]
+
+            bank_fee = t_df.get("Комиссия банка", pd.Series(0.0, index=t_df.index))
+            ts_fee = t_df.get("Комиссия ТС", pd.Series(0.0, index=t_df.index))
+            t_df["Комиссия, ₽"] = (pd.to_numeric(bank_fee, errors="coerce").fillna(0.0).abs() + pd.to_numeric(ts_fee, errors="coerce").fillna(0.0).abs()).round(2)
+
+            trades_df = t_df.sort_values(by="Дата", ascending=False).reset_index(drop=True)
+
+    # 2. Парсинг открытых позиций
     positions_df = pd.DataFrame()
-    if "Портфель" in sheet_names:
-        raw_port = pd.read_excel(xls, "Портфель")
-        if "Тикер" in raw_port.columns:
-            p_df = raw_port.dropna(subset=["Тикер"]).copy()
-            # Исключаем строки валют если это рубль/юань в кэше
-            p_df = p_df[~p_df["Тикер"].isin(["RUR", "CNY", "USD", "EUR"])].copy()
+    if sheet_pos:
+        raw_port = pd.read_excel(xls, sheet_pos)
+        ticker_col = next((c for c in raw_port.columns if any(k in str(c).lower() for k in ["тикер", "ticker", "secid"])), None)
+        if ticker_col:
+            p_df = raw_port.dropna(subset=[ticker_col]).copy()
+            p_df = p_df[~p_df[ticker_col].astype(str).str.upper().isin(["RUR", "CNY", "USD", "EUR"])].copy()
+            p_df["Тикер"] = p_df[ticker_col].astype(str).str.strip().str.upper()
 
-            # Приводим типы
-            for c in ["Количество", "Цена", "Средняя цена", "Доля", "Доходность"]:
-                if c in p_df.columns:
-                    p_df[c] = pd.to_numeric(p_df[c], errors="coerce").fillna(0.0)
+            for c in raw_port.columns:
+                cl = str(c).lower()
+                if "количеств" in cl or "кол" in cl:
+                    p_df["Количество"] = pd.to_numeric(raw_port[c], errors="coerce").fillna(0.0)
+                elif "средняя" in cl:
+                    p_df["Средняя цена"] = pd.to_numeric(raw_port[c], errors="coerce").fillna(0.0)
+                elif "цен" in cl:
+                    p_df["Цена"] = pd.to_numeric(raw_port[c], errors="coerce").fillna(0.0)
+                elif "назван" in cl:
+                    p_df["Название"] = raw_port[c].astype(str)
 
-            # Расчёт стоимости и PnL
-            p_df["Количество"] = p_df["Количество"].astype(float)
-            p_df["Текущая цена"] = p_df["Цена"].astype(float)
-            p_df["Средняя цена"] = p_df["Средняя цена"].astype(float)
+            p_df["Текущая цена"] = p_df.get("Цена", p_df.get("Средняя цена", 0.0)).astype(float)
+            p_df["Средняя цена"] = p_df.get("Средняя цена", p_df["Текущая цена"]).astype(float)
+            p_df["Количество"] = p_df.get("Количество", 0.0).astype(float)
 
             p_df["Текущая стоимость"] = p_df["Количество"] * p_df["Текущая цена"]
             p_df["Вложенная сумма"] = p_df["Количество"] * p_df["Средняя цена"]
@@ -223,101 +388,81 @@ def parse_izi_invest_excel(file_bytes: bytes, source_id: str = "export", identif
 
             tot_val = p_df["Текущая стоимость"].sum()
             p_df["Вес, %"] = np.where(tot_val > 0, (p_df["Текущая стоимость"] / tot_val) * 100.0, 0.0)
-
             positions_df = p_df.sort_values(by="Текущая стоимость", ascending=False).reset_index(drop=True)
 
-    # 2. Парсинг сделок (Сделки)
-    trades_df = pd.DataFrame()
-    if "Сделки" in sheet_names:
-        raw_trades = pd.read_excel(xls, "Сделки")
-        if "Дата" in raw_trades.columns:
-            t_df = raw_trades.dropna(subset=["Дата"]).copy()
-            t_df["Дата"] = pd.to_datetime(t_df["Дата"])
-            for c in ["Количество", "Цена", "Сумма", "Комиссия банка", "Комиссия ТС"]:
-                if c in t_df.columns:
-                    t_df[c] = pd.to_numeric(t_df[c], errors="coerce").fillna(0.0)
-            
-            # Общая комиссия
-            bank_fee = t_df.get("Комиссия банка", pd.Series(0.0, index=t_df.index))
-            ts_fee = t_df.get("Комиссия ТС", pd.Series(0.0, index=t_df.index))
-            t_df["Комиссия, ₽"] = (bank_fee.abs() + ts_fee.abs()).round(2)
+    # Если вкладки портфеля не было, восстанавливаем открытые позиции из сделок
+    if positions_df.empty and not trades_df.empty:
+        positions_df = reconstruct_positions_from_trades(trades_df)
 
-            trades_df = t_df.sort_values(by="Дата", ascending=False).reset_index(drop=True)
-
-    # 3. Парсинг дивидендов
+    # 3. Дивиденды
     dividends_df = pd.DataFrame()
-    if "Дивиденды" in sheet_names:
-        raw_div = pd.read_excel(xls, "Дивиденды")
-        if "Дата" in raw_div.columns:
-            d_df = raw_div.dropna(subset=["Дата"]).copy()
-            d_df["Дата"] = pd.to_datetime(d_df["Дата"])
-            for c in ["Кол.", "Дивиденд", "Налог", "Сумма \nдо налога", "Сумма \nпосле налога"]:
-                if c in d_df.columns:
-                    d_df[c] = pd.to_numeric(d_df[c], errors="coerce").fillna(0.0)
+    if sheet_div:
+        raw_div = pd.read_excel(xls, sheet_div)
+        date_c = next((c for c in raw_div.columns if "дат" in str(c).lower()), None)
+        if date_c:
+            d_df = raw_div.dropna(subset=[date_c]).copy()
+            d_df["Дата"] = pd.to_datetime(d_df[date_c])
+            for col in raw_div.columns:
+                cl = str(col).lower()
+                if "после налога" in cl or "сумма" in cl:
+                    d_df["Сумма \nпосле налога"] = pd.to_numeric(raw_div[col], errors="coerce").fillna(0.0)
             dividends_df = d_df.sort_values(by="Дата", ascending=False).reset_index(drop=True)
 
-    # 4. Парсинг купонов
+    # 4. Купоны
     coupons_df = pd.DataFrame()
-    if "Купоны" in sheet_names:
-        raw_coup = pd.read_excel(xls, "Купоны")
-        if "Дата" in raw_coup.columns:
-            c_df = raw_coup.dropna(subset=["Дата"]).copy()
-            c_df["Дата"] = pd.to_datetime(c_df["Дата"])
-            for col in ["Кол.", "Купон", "Налог", "Сумма \nдо налога", "Сумма \nпосле налога"]:
-                if col in c_df.columns:
-                    c_df[col] = pd.to_numeric(c_df[col], errors="coerce").fillna(0.0)
+    if sheet_coup:
+        raw_coup = pd.read_excel(xls, sheet_coup)
+        date_c = next((c for c in raw_coup.columns if "дат" in str(c).lower()), None)
+        if date_c:
+            c_df = raw_coup.dropna(subset=[date_c]).copy()
+            c_df["Дата"] = pd.to_datetime(c_df[date_c])
+            for col in raw_coup.columns:
+                cl = str(col).lower()
+                if "после налога" in cl or "сумма" in cl:
+                    c_df["Сумма \nпосле налога"] = pd.to_numeric(raw_coup[col], errors="coerce").fillna(0.0)
             coupons_df = c_df.sort_values(by="Дата", ascending=False).reset_index(drop=True)
 
-    # 5. Парсинг FIFO (закрытые сделки)
+    # 5. FIFO
     fifo_df = pd.DataFrame()
-    if "FIFO" in sheet_names:
-        raw_fifo = pd.read_excel(xls, "FIFO")
-        if "Тикер" in raw_fifo.columns and "Цена покупки" in raw_fifo.columns:
-            f_df = raw_fifo.dropna(subset=["Тикер", "Цена покупки", "Цена продажи"]).copy()
-            f_df["Покупка"] = pd.to_datetime(f_df["Покупка"])
-            f_df["Продажа"] = pd.to_datetime(f_df["Продажа"])
+    if sheet_fifo:
+        raw_fifo = pd.read_excel(xls, sheet_fifo)
+        buy_p = next((c for c in raw_fifo.columns if "покупк" in str(c).lower() and "цен" in str(c).lower()), None)
+        sell_p = next((c for c in raw_fifo.columns if "продаж" in str(c).lower() and "цен" in str(c).lower()), None)
+        if buy_p and sell_p:
+            f_df = raw_fifo.dropna(subset=[buy_p, sell_p]).copy()
+            buy_d = next((c for c in raw_fifo.columns if "покупк" in str(c).lower() and "дат" in str(c).lower()), "Покупка")
+            sell_d = next((c for c in raw_fifo.columns if "продаж" in str(c).lower() and "дат" in str(c).lower()), "Продажа")
+            
+            f_df["Покупка"] = pd.to_datetime(f_df[buy_d] if buy_d in f_df.columns else datetime.now())
+            f_df["Продажа"] = pd.to_datetime(f_df[sell_d] if sell_d in f_df.columns else datetime.now())
+            f_df["Цена покупки"] = pd.to_numeric(f_df[buy_p], errors="coerce").fillna(0.0)
+            f_df["Цена продажи"] = pd.to_numeric(f_df[sell_p], errors="coerce").fillna(0.0)
+            f_df["Кол."] = pd.to_numeric(f_df.get("Кол.", f_df.get("Количество", 1.0)), errors="coerce").fillna(1.0)
 
-            for c in ["Цена покупки", "Цена продажи", "Кол."]:
-                f_df[c] = pd.to_numeric(f_df[c], errors="coerce").fillna(0.0)
-
-            # Вычисляем финансовый результат и доходность формулами в Python
             f_df["Прибыль, ₽"] = (f_df["Цена продажи"] - f_df["Цена покупки"]) * f_df["Кол."]
-            f_df["Доходность, %"] = np.where(
-                f_df["Цена покупки"] > 0,
-                ((f_df["Цена продажи"] / f_df["Цена покупки"]) - 1.0) * 100.0,
-                0.0
-            )
+            f_df["Доходность, %"] = np.where(f_df["Цена покупки"] > 0, ((f_df["Цена продажи"] / f_df["Цена покупки"]) - 1.0) * 100.0, 0.0)
             f_df["Дней в сделке"] = (f_df["Продажа"] - f_df["Покупка"]).dt.days.clip(lower=1)
             f_df["Доходность годовых, %"] = (f_df["Доходность, %"] * 365.25 / f_df["Дней в сделке"]).round(2)
-
             fifo_df = f_df.sort_values(by="Продажа", ascending=False).reset_index(drop=True)
 
-    # 6. Расчет денежных потоков и XIRR
+    # 6. Денежные потоки и XIRR
     xirr_flows: List[Tuple[datetime, float]] = []
     total_val = float(positions_df["Текущая стоимость"].sum()) if not positions_df.empty else 0.0
 
-    # Если есть вкладка XIRR в файле
-    if "XIRR" in sheet_names:
-        raw_xirr = pd.read_excel(xls, "XIRR").dropna(subset=["Дата", "Сумма"])
+    if sheet_xirr:
+        raw_xirr = pd.read_excel(xls, sheet_xirr).dropna(subset=["Дата", "Сумма"])
         for _, row in raw_xirr.iterrows():
             d = pd.to_datetime(row["Дата"])
             amt = float(row["Сумма"])
-            # В файле izi-invest вводы идут положительными, а в стандартной формуле XIRR
-            # вложения инвестора являются оттоком (минус), а баланс/выводы — притоком (плюс)
             xirr_flows.append((d, -amt))
     elif not trades_df.empty:
-        # Извлекаем вводы и выводы из сделок
         for _, row in trades_df[trades_df["Операция"].isin(["input", "output"])].iterrows():
             d = row["Дата"]
             amt = float(row["Сумма"])
-            # input — положительный в таблице, инвертируем в минус
-            # output — отрицательный в таблице, инвертируем в плюс
             xirr_flows.append((d, -amt))
 
-    # Добавляем финальную оценку портфеля на текущий момент как положительный приток
     now_dt = datetime.now()
     if total_val > 0:
-        # Удаляем последнюю оценку из файла если она уже была на дату экспорта
         if xirr_flows and abs(xirr_flows[-1][1] - total_val) / max(1.0, total_val) < 0.05:
             xirr_flows[-1] = (now_dt, total_val)
         else:
@@ -335,23 +480,28 @@ def parse_izi_invest_excel(file_bytes: bytes, source_id: str = "export", identif
         total_withdrawals = abs(float(trades_df.loc[out_mask, "Сумма"].sum()))
 
     net_invested = total_deposits - total_withdrawals
+    if net_invested <= 0 and not positions_df.empty:
+        net_invested = float(positions_df["Вложенная сумма"].sum())
+
     total_profit_rub = (total_val + total_withdrawals) - total_deposits
+    if total_profit_rub == 0.0 and not positions_df.empty:
+        total_profit_rub = float(positions_df["Прибыль, ₽"].sum())
+
     total_profit_pct = (total_profit_rub / net_invested * 100.0) if net_invested > 0 else 0.0
 
-    div_total = float(dividends_df["Сумма \nпосле налога"].sum()) if not dividends_df.empty else 0.0
-    coup_total = float(coupons_df["Сумма \nпосле налога"].sum()) if not coupons_df.empty else 0.0
+    div_total = float(dividends_df["Сумма \nпосле налога"].sum()) if not dividends_df.empty and "Сумма \nпосле налога" in dividends_df.columns else 0.0
+    coup_total = float(coupons_df["Сумма \nпосле налога"].sum()) if not coupons_df.empty and "Сумма \nпосле налога" in coupons_df.columns else 0.0
 
-    # Веса для переноса в бэктест
     weights_dict = {}
     if not positions_df.empty:
         for _, r in positions_df.iterrows():
             t = str(r["Тикер"]).strip().upper()
-            w = float(r["Вес, %"])
+            w = float(r.get("Вес, %", 0.0))
             if w > 0.01:
                 weights_dict[t] = round(w, 2)
 
     return {
-        "source": "izi-invest",
+        "source": "excel_import",
         "portfolio_id": source_id,
         "identifier": identifier,
         "summary": {
@@ -379,53 +529,50 @@ def parse_izi_invest_excel(file_bytes: bytes, source_id: str = "export", identif
     }
 
 
-# ==========================================
-# 3. УНИВЕРСАЛЬНЫЙ ПАРСЕР БРОКЕРСКИХ ОТЧЁТОВ
-# ==========================================
-
 def parse_broker_file(file_content: bytes, filename: str) -> Dict[str, Any]:
     """
-    Автоматически распознает брокерский отчет или экспорт (izi-invest, T-Банк, Сбер, ВТБ, CSV)
-    и строит структуру портфеля со сделками.
+    Универсальный парсер для любых файлов отчетов брокера (XLSX, XLS, CSV).
     """
     fn = filename.lower()
     
-    # 1. Если это XLSX файл из izi-invest
+    # 1. Если это XLSX или XLS
     if fn.endswith((".xlsx", ".xls")):
         try:
-            xls = pd.ExcelFile(io.BytesIO(file_content))
-            if "Портфель" in xls.sheet_names and "Сделки" in xls.sheet_names:
-                return parse_izi_invest_excel(file_content, source_id="file", identifier=filename)
-        except Exception:
-            pass
+            return parse_izi_invest_excel(file_content, source_id="file", identifier=filename)
+        except Exception as exc:
+            raise ValueError(f"Ошибка чтения Excel-файла '{filename}': {exc}")
 
-    # 2. Если это CSV файл
+    # 2. Если это CSV
     if fn.endswith(".csv"):
         try:
-            # Пробуем разные разделители
+            df = None
             for sep in [",", ";", "\t"]:
                 try:
-                    df = pd.read_csv(io.BytesIO(file_content), sep=sep)
-                    if len(df.columns) >= 4:
+                    t_df = pd.read_csv(io.BytesIO(file_content), sep=sep)
+                    if len(t_df.columns) >= 3:
+                        df = t_df
                         break
                 except Exception:
                     continue
-            
-            # Попытка сопоставить стандартные колонки
+
+            if df is None or df.empty:
+                raise ValueError("Не удалось определить разделитель CSV.")
+
+            # Сопоставляем колонки
             col_map = {}
             for c in df.columns:
                 cl = str(c).lower()
-                if any(k in cl for k in ["date", "дата"]):
+                if any(k in cl for k in ["date", "дат"]):
                     col_map["Дата"] = c
-                elif any(k in cl for k in ["ticker", "тикер", "secid", "инструмент"]):
+                elif any(k in cl for k in ["ticker", "тикер", "secid", "инструмент", "код"]):
                     col_map["Тикер"] = c
-                elif any(k in cl for k in ["operation", "операция", "тип сделки", "action"]):
+                elif any(k in cl for k in ["operation", "операц", "action", "вид сделки"]):
                     col_map["Операция"] = c
-                elif any(k in cl for k in ["qty", "кол", "количество", "amount", "volume"]):
+                elif any(k in cl for k in ["qty", "кол", "amount", "объем"]):
                     col_map["Количество"] = c
-                elif any(k in cl for k in ["price", "цена"]):
+                elif any(k in cl for k in ["price", "цен"]):
                     col_map["Цена"] = c
-                elif any(k in cl for k in ["sum", "сумма", "объем"]):
+                elif any(k in cl for k in ["sum", "сумм"]):
                     col_map["Сумма"] = c
 
             if "Дата" in col_map and "Тикер" in col_map:
@@ -439,35 +586,38 @@ def parse_broker_file(file_content: bytes, filename: str) -> Dict[str, Any]:
                     "Комиссия, ₽": 0.0
                 }).sort_values(by="Дата", ascending=False).reset_index(drop=True)
 
+                positions_df = reconstruct_positions_from_trades(trades_df)
+                total_val = float(positions_df["Текущая стоимость"].sum()) if not positions_df.empty else 0.0
+
                 return {
                     "source": "csv_import",
                     "portfolio_id": filename,
                     "identifier": filename,
                     "summary": {
-                        "total_value": float(trades_df["Сумма"].abs().sum()),
-                        "net_invested": float(trades_df["Сумма"].abs().sum()),
-                        "total_profit_rub": 0.0,
+                        "total_value": round(total_val, 2),
+                        "net_invested": round(float(positions_df["Вложенная сумма"].sum()) if not positions_df.empty else 0.0, 2),
+                        "total_profit_rub": round(float(positions_df["Прибыль, ₽"].sum()) if not positions_df.empty else 0.0, 2),
                         "total_profit_pct": 0.0,
                         "xirr_pct": 0.0,
                         "total_dividends": 0.0,
                         "total_coupons": 0.0,
                         "total_passive_income": 0.0,
-                        "open_positions_count": trades_df["Тикер"].nunique(),
+                        "open_positions_count": len(positions_df),
                         "total_trades_count": len(trades_df),
                         "closed_deals_count": 0
                     },
-                    "positions": pd.DataFrame(),
+                    "positions": positions_df,
                     "trades": trades_df,
                     "fifo": pd.DataFrame(),
                     "dividends": pd.DataFrame(),
                     "coupons": pd.DataFrame(),
                     "xirr_flows": pd.DataFrame(),
-                    "weights_dict": {}
+                    "weights_dict": {r["Тикер"]: round(r["Вес, %"], 2) for _, r in positions_df.iterrows() if r.get("Вес, %", 0) > 0.01}
                 }
         except Exception as exc:
             raise ValueError(f"Не удалось распарсить CSV файл '{filename}': {exc}")
 
-    raise ValueError(f"Формат файла '{filename}' пока не распознан. Поддерживаются экспорты izi-invest.ru, Snowball, Intelinvest и стандартные CSV.")
+    raise ValueError(f"Формат файла '{filename}' не поддерживается. Загрузите файл XLSX, XLS или CSV.")
 
 
 # ==========================================
