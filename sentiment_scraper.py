@@ -596,19 +596,33 @@ def summarize_with_openrouter(messages: list, ticker: str = "", api_key: str = N
             }
         ],
         "temperature": 0.3,
-        "max_tokens": 500
+        "max_tokens": 1200
     }
 
     try:
-        resp = requests.post(url, headers=headers, json=payload, timeout=25)
+        resp = requests.post(url, headers=headers, json=payload, timeout=35)
         if resp.status_code == 200:
             res_data = resp.json()
             choices = res_data.get("choices", [])
             if choices:
-                ai_text = str(choices[0].get("message", {}).get("content") or "").strip()
+                msg = choices[0].get("message", {})
+                ai_text = str(msg.get("content") or "").strip()
+                # Очищаем теги размышлений <think>...</think>, если модель поместила их в content
+                ai_text = re.sub(r"<think>[\s\S]*?</think>", "", ai_text).strip()
+
+                # Если content остался пустым, но модель сформировала reasoning
+                if not ai_text and msg.get("reasoning"):
+                    ai_text = str(msg.get("reasoning")).strip()
+
                 if ai_text:
                     return {
                         "ai_summary": ai_text,
+                        "structured": fallback_summary,
+                        "model": chosen_model
+                    }
+                else:
+                    return {
+                        "ai_summary": f"⏳ Модель {chosen_model} потратила лимит токенов на внутренние рассуждения. Рекомендуется переключить модель на LiquidAI LFM 2.5 в боковом меню.",
                         "structured": fallback_summary,
                         "model": chosen_model
                     }
