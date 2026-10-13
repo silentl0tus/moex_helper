@@ -7,3 +7,7 @@ altair
 moexalgo
 yfinance
 html5lib
+matplotlib
+httpx
+python-dotenv
+beautifulsoup4

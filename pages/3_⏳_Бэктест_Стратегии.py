@@ -738,13 +738,34 @@ with tab_monthly:
 
         pivot_m["YTD (Год)"] = pd.Series(ytd_map)
 
-        st.dataframe(
-            pivot_m.style.format("{:+.2f}%", na_rep="—").background_gradient(
+        st_styled = pivot_m.style.format("{:+.2f}%", na_rep="—")
+        try:
+            st_styled = st_styled.background_gradient(
                 cmap="RdYlGn",
                 subset=ordered_cols,
                 vmin=-15.0,
                 vmax=15.0
-            ),
+            )
+        except Exception:
+            # Безопасный fallback без жесткой зависимости от matplotlib
+            def _color_ret(val):
+                if pd.isna(val) or not isinstance(val, (int, float)):
+                    return ""
+                intensity = min(abs(val) / 15.0, 1.0)
+                alpha = 0.15 + 0.45 * intensity
+                if val > 0:
+                    return f"background-color: rgba(46, 204, 113, {alpha:.2f}); color: white; font-weight: 500;"
+                elif val < 0:
+                    return f"background-color: rgba(231, 76, 60, {alpha:.2f}); color: white; font-weight: 500;"
+                return "color: #888888;"
+
+            if hasattr(st_styled, "map"):
+                st_styled = st_styled.map(_color_ret, subset=ordered_cols)
+            elif hasattr(st_styled, "applymap"):
+                st_styled = st_styled.applymap(_color_ret, subset=ordered_cols)
+
+        st.dataframe(
+            st_styled,
             width="stretch"
         )
     else:
