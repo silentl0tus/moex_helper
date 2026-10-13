@@ -29,14 +29,56 @@ BANK_REGNUM_MAP = {
 }
 
 
+
+# Маппинг тикеров акций на ключевые слова эмитентов корпоративных облигаций
+TICKER_BOND_KEYWORD_MAP = {
+    "SBER": ["СБЕР"],
+    "SBERP": ["СБЕР"],
+    "GAZP": ["ГАЗПРОМ"],
+    "LKOH": ["ЛУКОЙЛ"],
+    "ROSN": ["РОСНЕФТ"],
+    "NVTK": ["НОВАТЭК"],
+    "GMKN": ["НОРИЛЬСК", "ГМК"],
+    "CHMF": ["СЕВЕРСТАЛ"],
+    "NLMK": ["НЛМК"],
+    "MAGN": ["ММК", "МАГНИТОГОРСК"],
+    "PLZL": ["ПОЛЮС"],
+    "ALRS": ["АЛРОСА"],
+    "VTBR": ["ВТБ"],
+    "T": ["Т-БАНК", "ТИНЬКОФФ", "ТКС"],
+    "TCSG": ["Т-БАНК", "ТИНЬКОФФ", "ТКС"],
+    "SVCB": ["СОВКОМБАНК"],
+    "BSPB": ["САНКТ-ПЕТЕРБУРГ"],
+    "MTSS": ["МТС"],
+    "MGNT": ["МАГНИТ"],
+    "SMLT": ["САМОЛЕТ"],
+    "SGZH": ["СЕГЕЖ"],
+    "AFLT": ["АЭРОФЛОТ"],
+    "RTKM": ["РОСТЕЛЕКОМ"],
+    "RTKMP": ["РОСТЕЛЕКОМ"],
+    "PHOR": ["ФОСАГРО"],
+    "TATN": ["ТАТНЕФТ"],
+    "TATNP": ["ТАТНЕФТ"],
+    "SIBN": ["ГАЗПРОМ НЕФТ"],
+    "TRNFP": ["ТРАНСНЕФТ"],
+    "FLOT": ["СОВКОМФЛОТ"],
+    "AFKS": ["СИСТЕМА"],
+    "SELG": ["СЕЛИГДАР"],
+    "MVID": ["М.ВИДЕО", "МВИДЕО"],
+    "PIKK": ["ПИК"],
+    "OZON": ["ОЗОН"],
+    "VKCO": ["ВК", "VK"],
+}
+
 class MagellanGateway:
     def __init__(self, timeout: int = 12):
         self.base_url = MAGELLAN_BASE_URL
         self.timeout = timeout
         self.session = requests.Session()
         self.session.headers.update({
-            "User-Agent": "MOEX-Helper-RoboAdvisor/2.0 (Analytics Integration)",
-            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
+            "Referer": "https://russianmagellan.pro/",
         })
 
     def get_order_flow(self, period: str = "today") -> Dict[str, Dict[str, Any]]:
@@ -193,4 +235,180 @@ class MagellanGateway:
             return resp.json()
         except Exception as exc:
             logger.warning("Ошибка загрузки данных ИПР: %s", exc)
+            return {}
+
+    def get_bonds_stress_radar(self) -> Dict[str, Dict[str, Any]]:
+        """Загружает базу корпоративных облигаций Magellan и живые доходности TQCB с Московской биржи (MOEX ISS).
+
+        Определяет долговой стресс компаний: если доходность бондов взлетает > 28-30%+,
+        это опережающий сигнал критического финансового риска / реструктуризации долга.
+        """
+        bonds_endpoint = f"{self.base_url}/api/market/company-bonds"
+        moex_endpoint = "http://iss.moex.com/iss/engines/stock/markets/bonds/boards/TQCB/securities.json?iss.meta=off&iss.only=marketdata&marketdata.columns=SECID,YIELD,DURATION"
+
+        try:
+            # 1. Загрузка справочника облигаций
+            resp_mag = self.session.get(bonds_endpoint, timeout=self.timeout)
+            resp_mag.raise_for_status()
+            mag_bonds = resp_mag.json().get("rows", [])
+            mag_by_secid = {b["secid"]: b for b in mag_bonds if "secid" in b}
+
+            # 2. Загрузка живых доходностей MOEX
+            resp_moex = requests.get(moex_endpoint, timeout=self.timeout)
+            resp_moex.raise_for_status()
+            moex_md = resp_moex.json().get("marketdata", {}).get("data", [])
+
+            ticker_bonds: Dict[str, List[Dict[str, Any]]] = {t: [] for t in TICKER_BOND_KEYWORD_MAP}
+
+            for row in moex_md:
+                if not row or len(row) < 2:
+                    continue
+                secid, yield_val, duration = row[0], row[1], row[2]
+                if yield_val is not None and 0 < yield_val < 150:
+                    mag_info = mag_by_secid.get(secid)
+                    if mag_info:
+                        target_str = ((mag_info.get("name") or "") + " " + (mag_info.get("issuer") or "")).upper()
+                        for ticker, keywords in TICKER_BOND_KEYWORD_MAP.items():
+                            if any(kw in target_str for kw in keywords):
+                                ticker_bonds[ticker].append({
+                                    "secid": secid,
+                                    "name": mag_info.get("name"),
+                                    "yield": float(yield_val),
+                                    "duration": duration,
+                                })
+
+            result: Dict[str, Dict[str, Any]] = {}
+            for ticker, blist in ticker_bonds.items():
+                if blist:
+                    yields = [b["yield"] for b in blist]
+                    avg_y = sum(yields) / len(yields)
+                    max_y = max(yields)
+                    min_y = min(yields)
+
+                    if max_y >= 50.0:
+                        status = "🚨 Преддефолтный спред (YTM > 50%)"
+                        risk_level = "CRITICAL"
+                        penalty_mult = 0.45
+                    elif max_y >= 28.0:
+                        status = "⚠️ Высокий долговой стресс (YTM > 28%)"
+                        risk_level = "HIGH"
+                        penalty_mult = 0.70
+                    elif max_y >= 18.0:
+                        status = "🟡 Повышенный спред к ОФЗ (YTM > 18%)"
+                        risk_level = "MEDIUM"
+                        penalty_mult = 1.0
+                    else:
+                        status = "🟢 Высокая надежность долга (YTM < 18%)"
+                        risk_level = "SAFE"
+                        penalty_mult = 1.05
+
+                    sorted_b = sorted(blist, key=lambda x: x["yield"], reverse=True)
+                    sample = sorted_b[0]
+
+                    result[ticker] = {
+                        "ticker": ticker,
+                        "bond_count": len(blist),
+                        "avg_ytm": round(avg_y, 2),
+                        "max_ytm": round(max_y, 2),
+                        "min_ytm": round(min_y, 2),
+                        "distress_status": status,
+                        "risk_level": risk_level,
+                        "health_mult": penalty_mult,
+                        "sample_name": sample.get("name"),
+                        "sample_ytm": round(sample.get("yield", 0), 2),
+                        "sample_secid": sample.get("secid"),
+                    }
+
+            return result
+        except Exception as exc:
+            logger.warning("Ошибка расчета долгового радара: %s", exc)
+            return {}
+
+    def get_funds_rebalancing(self) -> Dict[str, Dict[str, Any]]:
+        """Загружает раскрытия ребалансировок БПИФ институционалов (Т-Капитал, Ренессанс).
+
+        Показывает, в какие акции заходят институционалы, а из каких выходят.
+        """
+        endpoint = f"{self.base_url}/api/view/funds.json"
+        try:
+            resp = self.session.get(endpoint, timeout=self.timeout)
+            resp.raise_for_status()
+            funds_data = resp.json().get("funds", [])
+
+            ticker_funds_map: Dict[str, Dict[str, Any]] = {}
+            for f in funds_data:
+                f_ticker = f.get("ticker")
+                changes = f.get("changes", [])
+                for ch in changes:
+                    asset = ch.get("asset", {})
+                    t = asset.get("ticker")
+                    if not t:
+                        continue
+                    w_ch = float(ch.get("weightChange") or 0.0)
+                    val = float(asset.get("value") or 0.0)
+
+                    if t not in ticker_funds_map:
+                        ticker_funds_map[t] = {
+                            "ticker": t,
+                            "name": asset.get("name"),
+                            "funds": set(),
+                            "net_weight_change": 0.0,
+                            "total_val_rub": 0.0,
+                        }
+                    ticker_funds_map[t]["funds"].add(f_ticker)
+                    ticker_funds_map[t]["net_weight_change"] += w_ch
+                    ticker_funds_map[t]["total_val_rub"] += val
+
+            result: Dict[str, Dict[str, Any]] = {}
+            for t, item in ticker_funds_map.items():
+                net_w = round(item["net_weight_change"], 2)
+                funds_list = list(item["funds"])
+                if net_w >= 0.5:
+                    action = "🟢 Наращивание институционалами"
+                    mult = 1.03
+                elif net_w <= -0.5:
+                    action = "🔴 Сокращение институционалами"
+                    mult = 0.97
+                else:
+                    action = "⚪ Удержание в портфелях"
+                    mult = 1.01
+
+                result[t] = {
+                    "ticker": t,
+                    "name": item.get("name"),
+                    "funds": funds_list,
+                    "funds_count": len(funds_list),
+                    "net_weight_change": net_w,
+                    "total_val_rub": item["total_val_rub"],
+                    "action": action,
+                    "health_mult": mult,
+                }
+            return result
+        except Exception as exc:
+            logger.warning("Ошибка анализа фондов БПИФ: %s", exc)
+            return {}
+
+    def get_ipr_summary(self) -> Dict[str, Dict[str, Any]]:
+        """Загружает сводку инвестпрограмм и дивидендов сетевых компаний из формы 19."""
+        endpoint = f"{self.base_url}/api/view/ipr.json"
+        try:
+            resp = self.session.get(endpoint, timeout=self.timeout)
+            resp.raise_for_status()
+            companies = resp.json().get("companies", [])
+            result: Dict[str, Dict[str, Any]] = {}
+            for c in companies:
+                ticker = c.get("ticker")
+                if not ticker:
+                    continue
+                ann_div = c.get("annualDividend", {})
+                an = c.get("analysis", {})
+                result[ticker] = {
+                    "ticker": ticker,
+                    "name": c.get("name"),
+                    "div_status": ann_div.get("status", "—"),
+                    "nearest_year": an.get("nearest", {}).get("year", 2026),
+                }
+            return result
+        except Exception as exc:
+            logger.warning("Ошибка анализа ИПР: %s", exc)
             return {}

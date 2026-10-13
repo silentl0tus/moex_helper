@@ -421,19 +421,28 @@ def fetch_magellan_bank_details(ticker: str):
     except Exception:
         return None
 
-@st.cache_data(ttl=3600)
-def fetch_magellan_funds() -> list:
+@st.cache_data(ttl=900)
+def fetch_bonds_stress_radar() -> dict:
     try:
         from src.magellan_gateway import MagellanGateway
-        return MagellanGateway().get_funds_flow()
+        return MagellanGateway().get_bonds_stress_radar()
+    except Exception as exc:
+        st.sidebar.warning(f"Ошибка загрузки долгового радара: {exc}")
+        return {}
+
+@st.cache_data(ttl=1800)
+def fetch_funds_rebalancing() -> dict:
+    try:
+        from src.magellan_gateway import MagellanGateway
+        return MagellanGateway().get_funds_rebalancing()
     except Exception:
-        return []
+        return {}
 
 @st.cache_data(ttl=3600)
-def fetch_magellan_ipr() -> dict:
+def fetch_ipr_summary() -> dict:
     try:
         from src.magellan_gateway import MagellanGateway
-        return MagellanGateway().get_ipr_plans()
+        return MagellanGateway().get_ipr_summary()
     except Exception:
         return {}
 
@@ -536,6 +545,18 @@ HEALTH_SCORE_EXPLANATION = """
 - Положение цены относительно `SMA-50` и `SMA-200`, перепроданность `RSI < 30`.
 - Настроения инвесторов SmartLab (бонус/штраф до **±5%**).
 - Отраслевая ротация по Фазам Инвестиционных Часов (Рефляция, Восстановление, Перегрев, Стагфляция).
+
+---
+### 9. 💳 Долговой рынок и Бондовый стресс-радар (MOEX TQCB + Magellan)
+- **Опережающий сигнал долгового рынка:**
+  - Облигации с пиковой доходностью `YTM ≥ 50%` ➡️ суровый штраф **×0.45** (Преддефолтный спред, критический риск реструктуризации)
+  - Облигации с `YTM ≥ 28%` ➡️ штраф **×0.70** (Высокий долговой стресс, обслуживание долга сжигает кэш)
+  - Облигации с `YTM < 18%` ➡️ премия **×1.05** (Высочайшая надежность заимствований и доступ к рефинансированию)
+
+---
+### 10. 🏛️ Институциональные БПИФ (Т-Капитал, Ренессанс)
+- Чистый приток и наращивание веса в БПИФ `≥ +0.5%` ➡️ бонус **×1.03** (Институциональная поддержка ликвидности)
+- Сокращение веса фондами `≤ -0.5%` ➡️ штраф **×0.97**
 
 *Активы с итоговым счетом **ниже 1.0** признаются слабыми (кандидаты на фиксацию). Сильные фавориты рынка получают оценку **> 1.5**.*
 """
@@ -918,6 +939,9 @@ with st.spinner("Считываю сигналы систем..."):
     magellan_of = fetch_magellan_order_flow("today")
     magellan_banks = fetch_magellan_banks_summary()
     tanker_stats = fetch_tankermap_export_stats()
+    magellan_bonds = fetch_bonds_stress_radar()
+    magellan_funds = fetch_funds_rebalancing()
+    magellan_ipr = fetch_ipr_summary()
 
 
 index_level = market_context.get("IMOEX")
@@ -932,14 +956,15 @@ d_col2.metric("Ключевая ставка ЦБ", f"{market_context.get('KEY_R
 d_col3.metric("Индекс МосБиржи", f"{index_level:,.0f}" if index_level else "Н/Д")
 st.markdown("---")
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "🏆 Рейтинг и Аналитика",
     "💼 Мой Портфель",
     "🗺️ Карта рынка",
     "⚖️ Ребалансировка",
     "🌊 Order Flow (Magellan)",
     "🏦 Банки ЦБ РФ (РСБУ)",
-    "🚢 Танкеры & Нефть (TankerMap)"
+    "🚢 Танкеры & Нефть (TankerMap)",
+    "💳 Долг & БПИФ (Рынок капитала)"
 ])
 
 with tab1:
@@ -1328,6 +1353,50 @@ with tab1:
         df_fund['Поток (OrderFlow)'] = df_fund['ticker'].apply(get_of_badge)
         df_fund['OF_Multiplier'] = df_fund['ticker'].apply(get_order_flow_multiplier)
         df_fund["Health_Score"] = (df_fund["Health_Score"] * df_fund['OF_Multiplier']).round(2)
+
+        # Учет рынка долга и стресса корпоративных облигаций (MOEX TQCB + Magellan)
+        def get_bond_health_multiplier(ticker):
+            b_info = magellan_bonds.get(ticker, {}) if isinstance(magellan_bonds, dict) else {}
+            return b_info.get("health_mult", 1.0)
+
+        def get_bond_badge(ticker):
+            b_info = magellan_bonds.get(ticker, {}) if isinstance(magellan_bonds, dict) else {}
+            if not b_info:
+                return "—"
+            max_y = b_info.get("max_ytm")
+            level = b_info.get("risk_level")
+            if level == "CRITICAL":
+                return f"🚨 {max_y:.1f}%"
+            elif level == "HIGH":
+                return f"⚠️ {max_y:.1f}%"
+            elif level == "MEDIUM":
+                return f"🟡 {max_y:.1f}%"
+            return f"🟢 {max_y:.1f}%"
+
+        df_fund['Бонды YTM'] = df_fund['ticker'].apply(get_bond_badge)
+        df_fund['Bond_Multiplier'] = df_fund['ticker'].apply(get_bond_health_multiplier)
+        df_fund["Health_Score"] = (df_fund["Health_Score"] * df_fund['Bond_Multiplier']).round(2)
+
+        # Учет институциональной поддержки БПИФ
+        def get_fund_flow_multiplier(ticker):
+            f_info = magellan_funds.get(ticker, {}) if isinstance(magellan_funds, dict) else {}
+            return f_info.get("health_mult", 1.0)
+
+        def get_fund_flow_badge(ticker):
+            f_info = magellan_funds.get(ticker, {}) if isinstance(magellan_funds, dict) else {}
+            if not f_info:
+                return "—"
+            w = f_info.get("net_weight_change", 0.0)
+            cnt = f_info.get("funds_count", 0)
+            if w >= 0.5:
+                return f"🟢 +{w:.1f}% ({cnt} ф.)"
+            elif w <= -0.5:
+                return f"🔴 {w:.1f}% ({cnt} ф.)"
+            return f"⚪ {w:+.1f}% ({cnt} ф.)"
+
+        df_fund['БПИФ поток'] = df_fund['ticker'].apply(get_fund_flow_badge)
+        df_fund['Fund_Multiplier'] = df_fund['ticker'].apply(get_fund_flow_multiplier)
+        df_fund["Health_Score"] = (df_fund["Health_Score"] * df_fund['Fund_Multiplier']).round(2)
         
         # Интеграция Безрисковой Ставки (Key Rate / Cost of Money)
         key_rate_val = market_context.get("KEY_RATE", 16.0)
@@ -1556,7 +1625,7 @@ with tab1:
         
             st.page_link("pages/2_💬_Сентимент_и_Пульс.py", label="Открыть детальную ленту сообщений и сентимента (Smart-Lab)", icon="💬")
         
-            cols_to_show = ["ticker", "Health_Score", "Тренд", "Поток (OrderFlow)", "RSI", "Сентимент", "Div_Yield_%", "Rev_Growth_%", "ROE_%", "P_E", "P_BV", "Debt_EBITDA"]
+            cols_to_show = ["ticker", "Health_Score", "Тренд", "Поток (OrderFlow)", "Бонды YTM", "БПИФ поток", "RSI", "Сентимент", "Div_Yield_%", "Rev_Growth_%", "ROE_%", "P_E", "P_BV", "Debt_EBITDA"]
             if my_portfolio:
                 cols_to_show.insert(2, "Доля в портфеле (%)")
                 cols_to_show.insert(3, "PnL (%)")
@@ -1577,6 +1646,14 @@ with tab1:
                     "Поток (OrderFlow)": st.column_config.TextColumn(
                         "Поток (OrderFlow)",
                         help="Микроструктура торгов (Russian Magellan PRO).\n🟢 Накопление/Абсорбция — крупный покупатель поглощает навес продавцов.\n🔴 Распределение — скрытый сброс объемов.\nΔ — чистая дельта покупок и продаж."
+                    ),
+                    "Бонды YTM": st.column_config.TextColumn(
+                        "Бонды YTM",
+                        help="Рынок долга: пиковая доходность корпоративных облигаций эмитента.\n🚨 YTM > 50% — преддефолтный спред (штраф ×0.45)\n⚠️ YTM > 28% — высокий долговой стресс (штраф ×0.70)\n🟢 YTM < 18% — надежный долг (бонус ×1.05)"
+                    ),
+                    "БПИФ поток": st.column_config.TextColumn(
+                        "БПИФ поток",
+                        help="Институциональные БПИФ (Т-Капитал, Ренессанс): чистое изменение веса акции и число фондов-держателей.\n🟢 Наращивание (бонус ×1.03)\n🔴 Сокращение (штраф ×0.97)"
                     ),
                     "Сентимент": st.column_config.TextColumn(
                         "Сентимент",
@@ -1855,5 +1932,96 @@ with tab1:
                         st.write(n_item.get("excerpt", ""))
             else:
                 st.write("Лента морских новостей обновляется...")
+
+        with tab8:
+            # 💳 ДОЛГОВОЙ РЫНОК & ИНСТИТУЦИОНАЛЬНЫЕ БПИФ
+            st.subheader("💳 Рынок корпоративного долга & Институциональные БПИФ")
+            st.caption("Опережающий мониторинг долгового стресса по корпоративным облигациям (MOEX TQCB + Magellan) и притоков капитала институциональных ETF фондов.")
+
+            b_cnt_total = sum(b.get("bond_count", 0) for b in magellan_bonds.values()) if magellan_bonds else 0
+            critical_cnt = sum(1 for b in magellan_bonds.values() if b.get("risk_level") in ["CRITICAL", "HIGH"]) if magellan_bonds else 0
+            top_inflows = [t for t, f in magellan_funds.items() if f.get("net_weight_change", 0) >= 1.0][:3] if magellan_funds else []
+
+            tb1, tb2, tb3, tb4 = st.columns(4)
+            tb1.metric("Облигационных выпусков", f"{b_cnt_total} бумаг", "Связка с акциями MOEX")
+            tb2.metric("Эмитентов в долговом стрессе", f"{critical_cnt} комп.", "YTM > 28% (высокий риск)" if critical_cnt > 0 else "Рынок стабилен")
+            tb3.metric("Лидеры притоков БПИФ", ", ".join(top_inflows) if top_inflows else "Н/Д", "Институциональный спрос")
+            tb4.metric("Сетевые компании (ИПР)", f"{len(magellan_ipr)} комп.", "Форма 19 Минэнерго")
+
+            st.markdown("---")
+            st.markdown("#### 🚨 Радар долгового стресса (Корпоративные облигации эмитентов)")
+            st.write("Рынок долга умнее рынка акций: **если доходность облигаций компании взлетает до 30–50%+**, держатели бондов закладывают дефолт или жесткую реструктуризацию. Акции таких эмитентов получают суровый штраф к Health Score.")
+
+            if magellan_bonds:
+                b_rows = []
+                for t, b in magellan_bonds.items():
+                    if t in selected_tickers or not selected_tickers:
+                        b_rows.append({
+                            "Тикер": t,
+                            "Выпусков бондов": b.get("bond_count", 0),
+                            "Средняя YTM, %": b.get("avg_ytm"),
+                            "Макс YTM, %": b.get("max_ytm"),
+                            "Статус риска": b.get("distress_status"),
+                            "Пример выпуска": f"{b.get('sample_name', '')} ({b.get('sample_secid', '')})",
+                            "Множитель Health Score": f"×{b.get('health_mult', 1.0):.2f}"
+                        })
+                df_bonds_ui = pd.DataFrame(b_rows)
+                if not df_bonds_ui.empty:
+                    st.dataframe(
+                        df_bonds_ui.sort_values(by="Макс YTM, %", ascending=False),
+                        width="stretch",
+                        hide_index=True,
+                        column_config={
+                            "Макс YTM, %": st.column_config.NumberColumn(
+                                "Макс YTM, %",
+                                help="Пиковая доходность к погашению среди всех обращающихся выпусков эмитента."
+                            ),
+                            "Множитель Health Score": st.column_config.TextColumn(
+                                "Множитель Health Score",
+                                help="Влияние долгового стресса на итоговый инвестиционный балл акции."
+                            )
+                        }
+                    )
+            else:
+                st.info("Данные по корпоративным облигациям формируются...")
+
+            st.markdown("---")
+            b_col_funds, b_col_ipr = st.columns([3, 2])
+
+            with b_col_funds:
+                st.markdown("#### 🏛️ Радар институциональных фондов (БПИФ)")
+                st.caption("Позиции и раскрытия изменений весов в фондах Т-Капитал («Трендовые», «Дивидендные», «Второй эшелон»).")
+                if magellan_funds:
+                    f_rows = []
+                    for t, f in magellan_funds.items():
+                        if t in selected_tickers or not selected_tickers:
+                            f_rows.append({
+                                "Тикер": t,
+                                "Фонды-держатели": ", ".join(f.get("funds", [])),
+                                "Изм. веса, %": f.get("net_weight_change", 0.0),
+                                "Действие": f.get("action", "—"),
+                                "Объем в фондах, млн ₽": round(f.get("total_val_rub", 0) / 1_000_000.0, 1)
+                            })
+                    df_funds_ui = pd.DataFrame(f_rows)
+                    if not df_funds_ui.empty:
+                        st.dataframe(
+                            df_funds_ui.sort_values(by="Изм. веса, %", ascending=False),
+                            width="stretch",
+                            hide_index=True
+                        )
+                else:
+                    st.write("Данные БПИФ обновляются...")
+
+            with b_col_ipr:
+                st.markdown("#### ⚡ Инвестпрограммы сетевых компаний (ИПР)")
+                st.caption("Контроль капзатрат и дивидендов сетевых компаний по форме 19.")
+                if magellan_ipr:
+                    ipr_rows = [
+                        {"Тикер": t, "Компания": item.get("name"), "Статус дивидендов": item.get("div_status"), "Горизонт": item.get("nearest_year")}
+                        for t, item in magellan_ipr.items()
+                    ]
+                    st.dataframe(pd.DataFrame(ipr_rows), width="stretch", hide_index=True)
+                else:
+                    st.write("Данные ИПР обновляются...")
     else:
         st.error("Аварийная остановка: Ни один актив не прошел проверку качества.")
