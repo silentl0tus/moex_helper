@@ -19,6 +19,7 @@ from sentiment_scraper import (
     extract_meaningful_messages,
     extract_pulse_messages,
     extract_aggregated_messages,
+    filter_relevant_messages,
     generate_structured_summary,
     summarize_with_hf,
     FALLBACK_TICKERS,
@@ -57,6 +58,11 @@ with col1:
     filter_option = st.radio(
         "Показать сообщения:",
         options=["Все осмысленные", "Только 🟢 Позитив", "Только 🔴 Негатив", "Только 📊 Аналитика"]
+    )
+    strict_filter = st.checkbox(
+        "🎯 Скрывать спам (только о компании)",
+        value=True,
+        help="Отсекает общие макро-сводки и посты спам-ботов со списками из 10+ тикеров, в которых нет текста о выбранной компании."
     )
     
     st.markdown("---")
@@ -127,6 +133,9 @@ with col2:
     if not messages:
         st.warning(f"Не удалось найти осмысленных сообщений для тикера {ticker_to_search}.")
     else:
+        if strict_filter:
+            messages = filter_relevant_messages(messages, ticker_to_search)
+
         # Применяем фильтр
         filtered = []
         for m in messages:
@@ -164,18 +173,18 @@ with col2:
         hf_active = bool(hf_token_input and hf_token_input.strip())
         c_sum1, c_sum2 = st.columns([3, 1])
         with c_sum1:
-            st.caption("Анализирует обсуждения сообщества инвесторов из Т-Банк Пульс и Smart-Lab.")
+            st.caption(f"Анализирует обсуждения инвесторов строго по эмитенту **{ticker_to_search}**.")
         with c_sum2:
             run_ai = st.button("🤖 AI-выжимка (HF)", help="Запустить нейросетевую суммаризацию через Hugging Face Serverless API", disabled=not hf_active)
 
         if run_ai and hf_active:
             with st.spinner("Запрос к нейросети Hugging Face (IlyaGusev/rut5_base_sum_gazeta)..."):
-                hf_res = summarize_with_hf(filtered, ticker_to_search, hf_token=hf_token_input)
+                hf_res = summarize_with_hf(filtered, ticker=ticker_to_search, hf_token=hf_token_input)
                 if hf_res.get("ai_summary"):
                     st.success(f"**🤖 Нейросетевое резюме (`{hf_res.get('model', 'Hugging Face')}`):**\n\n{hf_res['ai_summary']}")
                 struct_data = hf_res.get("structured", {})
         else:
-            struct_data = generate_structured_summary(filtered)
+            struct_data = generate_structured_summary(filtered, ticker=ticker_to_search)
 
         pos_list = struct_data.get("pos", [])
         neg_list = struct_data.get("neg", [])

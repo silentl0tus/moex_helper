@@ -362,64 +362,183 @@ def extract_aggregated_messages(ticker, max_messages=50):
     return combined[:max_messages]
 
 
-def generate_structured_summary(messages: list) -> dict:
+TICKER_SYNONYMS = {
+    'SBER': ['сбер', 'sber', 'греф', 'сбербанк'],
+    'SBERP': ['сбер', 'sber', 'греф', 'сбербанк', 'сберпреф'],
+    'GAZP': ['газпром', 'gazp', 'миллер'],
+    'LKOH': ['лукойл', 'lkoh', 'алекперов'],
+    'ROSN': ['роснефть', 'rosn', 'сечин'],
+    'NVTK': ['новатэк', 'nvtk', 'михельсон'],
+    'GMKN': ['норникель', 'гмк', 'gmkn', 'потанин'],
+    'YDEX': ['яндекс', 'ydex', 'yndx'],
+    'YNDX': ['яндекс', 'ydex', 'yndx'],
+    'T': ['т-банк', 'тбанк', 'тинькофф', 'ткс'],
+    'TCSG': ['т-банк', 'тбанк', 'тинькофф', 'ткс'],
+    'MGNT': ['магнит', 'mgnt'],
+    'PLZL': ['полюс', 'plzl', 'золот'],
+    'CHMF': ['северсталь', 'chmf', 'мордашов'],
+    'NLMK': ['нлмк', 'nlmk', 'лисин'],
+    'MAGN': ['ммк', 'magn', 'рашников'],
+    'VTBR': ['втб', 'vtbr', 'костин'],
+    'TATN': ['татнефть', 'tatn'],
+    'TATNP': ['татнефть', 'tatn'],
+    'SNGS': ['сургут', 'sngs', 'богданов'],
+    'SNGSP': ['сургут', 'sngs', 'богданов'],
+    'ALRS': ['алроса', 'alrs', 'алмаз'],
+    'MOEX': ['мосбирж', 'moex'],
+    'AFKS': ['система', 'afks', 'евтушенков'],
+    'OZON': ['озон', 'ozon'],
+    'MTSS': ['мтс', 'mtss'],
+    'IRAO': ['интер рао', 'irao'],
+    'FLOT': ['совкомфлот', 'flot'],
+    'CBOM': ['мкб', 'cbom'],
+    'AFLT': ['аэрофлот', 'aflt'],
+    'TRNFP': ['транснефть', 'trnfp', 'токарев'],
+    'SVCB': ['совкомбанк', 'svcb'],
+    'HEAD': ['хэдхантер', 'hh', 'head'],
+    'POSI': ['позитив', 'posi'],
+}
+
+
+def get_ticker_keywords(ticker: str) -> list:
+    """Возвращает список синонимов, названий компании и тикеров для фильтрации."""
+    t = str(ticker).strip().upper()
+    kws = set(TICKER_SYNONYMS.get(t, []))
+    kws.add(t.lower())
+    kws.add(f"${t.lower()}")
+    return list(kws)
+
+
+def filter_relevant_messages(messages: list, ticker: str) -> list:
     """
-    Умный экстрактивный суммаризатор (работает автономно, без внешних API).
-    Анализирует все сообщения и формирует тезисы по 3 категориям:
+    Отсеивает сообщения новостных ботов и агрегаторов, где тикер упомянут только
+    в списке 10+ других хештегов, но в самом тексте о компании ничего нет.
+    """
+    if not ticker or not messages:
+        return messages
+    keywords = get_ticker_keywords(ticker)
+    filtered = []
+    for m in messages:
+        text_lower = m.get("text", "").lower()
+        source = m.get("source", "")
+        # Если форум Smart-Lab по тикеру, то ветка целевая
+        if source == "Smart-Lab":
+            filtered.append(m)
+            continue
+        # Для Пульса проверяем прямое упоминание в тексте
+        if any(k in text_lower for k in keywords):
+            filtered.append(m)
+    return filtered if filtered else messages
+
+
+def generate_structured_summary(messages: list, ticker: str = "") -> dict:
+    """
+    Умный экстрактивный суммаризатор, ориентированный строго на целевой тикер.
+    Анализирует сообщения и формирует тезисы по 3 категориям:
     - 🟢 Драйверы роста (бычий тезис)
     - 🔴 Риски и негатив (медвежий тезис)
     - 📊 Факты, отчеты и дивиденды
+    Отсеивает оффтоп, спам-ботов, чужие тикеры и макро-сводки.
     """
     pos_items = []
     neg_items = []
     an_items = []
     seen = set()
 
+    ticker_clean = ticker.strip().upper() if ticker else ""
+    keywords = get_ticker_keywords(ticker_clean) if ticker_clean else []
+
     for m in messages:
         raw = m.get("text", "")
-        parts = [p.strip() for p in re.split(r"(?<=[.!?\n])\s+", raw) if 30 <= len(p.strip()) <= 250]
+        source = m.get("source", "")
+        author = m.get("author", "")
+
+        parts = [p.strip() for p in re.split(r"(?<=[.!?\n])\s+", raw) if 30 <= len(p.strip()) <= 260]
         for p in parts:
             p_clean = re.sub(r"[\s\n]+", " ", p).strip()
-            norm = p_clean.lower()[:50]
+            p_lower = p_clean.lower()
+
+            # Фильтр спама ссылок, хэштегов и перечислений тикеров
+            if "http" in p_lower or "t.me" in p_lower or "[&" in p_clean:
+                continue
+            if p_clean.count("#") >= 2:
+                continue
+            tags = re.findall(r"\{\$[A-Za-z0-9_]+\}", p_clean)
+            if len(tags) >= 2:
+                continue
+            words = re.findall(r"[а-яА-Яa-zA-Z]{3,}", p_clean)
+            if len(words) < 5:
+                continue
+
+            # Проверка релевантности целевому эмитенту
+            if ticker_clean:
+                has_target = any(k in p_lower for k in keywords)
+                foreign_tags = [t.upper() for t in re.findall(r"\{\$([A-Za-z0-9_]+)\}", p_clean) if t.upper() != ticker_clean]
+                if foreign_tags and not has_target:
+                    continue
+                # Для постов из Пульса требуем явного упоминания компании
+                if source == "Пульс" and not has_target:
+                    continue
+
+            norm = p_lower[:50]
             if norm in seen:
                 continue
             seen.add(norm)
 
-            p_lower = p_clean.lower()
             has_pos = any(re.search(r"\b" + w + r"[а-я]*\b", p_lower) for w in POSITIVE_WORDS)
             has_neg = any(re.search(r"\b" + w + r"[а-я]*\b", p_lower) for w in NEGATIVE_WORDS)
             has_an = any(re.search(r"\b" + w + r"[а-я]*\b", p_lower) for w in ANALYTICS_WORDS) or bool(
                 re.search(r"\d+[\s,]?\d*\s*(?:млрд|трлн|млн|руб|₽|%)", p_lower)
             )
 
-            src = f"[{m.get('source', '')}] {m.get('author', '')}"
+            src = f"[{source}] {author}"
             formatted = f"{p_clean} *({src})*"
 
-            if has_pos and not has_neg:
+            if has_pos and not has_neg and len(pos_items) < 3:
                 pos_items.append(formatted)
-            elif has_neg and not has_pos:
+            elif has_neg and not has_pos and len(neg_items) < 3:
                 neg_items.append(formatted)
-            elif has_an:
+            elif has_an and len(an_items) < 3:
                 an_items.append(formatted)
 
     return {
-        "pos": pos_items[:3],
-        "neg": neg_items[:3],
-        "an": an_items[:3]
+        "pos": pos_items,
+        "neg": neg_items,
+        "an": an_items
     }
 
 
-def summarize_with_hf(messages: list, ticker: str, hf_token: str = None) -> dict:
+def summarize_with_hf(messages: list, ticker: str = "", hf_token: str = None) -> dict:
     """
     Генерирует суммаризацию через Serverless Hugging Face Inference API.
-    Если токен не задан или сервер недоступен, возвращает fallback на generate_structured_summary.
+    Фильтрует входящий текст строго по целевому эмитенту, чтобы нейросеть
+    не суммаризировала макро-сводки и чужие тикеры.
     """
-    fallback_summary = generate_structured_summary(messages)
+    fallback_summary = generate_structured_summary(messages, ticker=ticker)
     if not hf_token or not messages:
         return {"ai_summary": None, "structured": fallback_summary, "model": None}
 
-    clean_texts = [re.sub(r"[\s\n]+", " ", m.get("text", "")).strip() for m in messages if len(m.get("text", "")) > 40]
-    input_text = " ; ".join(clean_texts[:15])[:2500]
+    ticker_clean = ticker.strip().upper() if ticker else ""
+    keywords = get_ticker_keywords(ticker_clean) if ticker_clean else []
+
+    # Отбираем только релевантные фразы для отправки в нейросеть
+    relevant_chunks = []
+    for m in messages:
+        raw = m.get("text", "")
+        parts = [p.strip() for p in re.split(r"(?<=[.!?\n])\s+", raw) if 35 <= len(p.strip()) <= 300]
+        for p in parts:
+            p_clean = re.sub(r"[\s\n]+", " ", p).strip()
+            p_lower = p_clean.lower()
+            if "http" in p_lower or p_clean.count("#") >= 2 or len(re.findall(r"\{\$[A-Za-z0-9_]+\}", p_clean)) >= 2:
+                continue
+            if ticker_clean and not any(k in p_lower for k in keywords):
+                continue
+            relevant_chunks.append(p_clean)
+
+    if not relevant_chunks:
+        relevant_chunks = [re.sub(r"[\s\n]+", " ", m.get("text", "")).strip() for m in messages if len(m.get("text", "")) > 40]
+
+    input_text = f"Компания: {ticker_clean}. Мнения инвесторов: " + " ; ".join(relevant_chunks[:12])[:2500]
 
     headers = {
         "Authorization": f"Bearer {hf_token.strip()}",
