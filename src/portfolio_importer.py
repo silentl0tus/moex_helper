@@ -25,6 +25,99 @@ except ImportError:
     Ticker = None
 
 
+# Безопасный лимит размера файла брокерского отчета (DoS/OOM защита)
+MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024  # 25 МБ
+
+# Известные сплиты и консолидации акций на MOEX
+# format: {ticker: [(split_date, ratio)]}
+# ratio: во сколько раз изменилось количество акций
+# TRNFP: 1:100 сплит 14.02.2024 (1 старая акция -> 100 новых)
+# VTBR: 5000:1 консолидация 09.07.2024 (5000 старых акций -> 1 новая)
+STOCK_SPLITS: Dict[str, List[Tuple[pd.Timestamp, float]]] = {
+    "TRNFP": [(pd.to_datetime("2024-02-14"), 100.0)],
+    "VTBR": [(pd.to_datetime("2024-07-09"), 1.0 / 5000.0)],
+}
+
+def adjust_trade_for_splits(ticker: str, trade_date: pd.Timestamp, qty: float, price: float) -> Tuple[float, float]:
+    """
+    Корректирует историческое количество и цену сделки под сплиты акций,
+    сохраняя исходную сумму инвестиций (qty * price).
+    """
+    splits = STOCK_SPLITS.get(ticker.upper())
+    if not splits:
+        return qty, price
+
+    adj_qty = qty
+    adj_price = price
+    t_dt = pd.to_datetime(trade_date).tz_localize(None) if hasattr(trade_date, "tz_localize") else pd.to_datetime(trade_date)
+
+    for split_date, mult in splits:
+        s_dt = pd.to_datetime(split_date).tz_localize(None)
+        if t_dt < s_dt:
+            adj_qty = adj_qty * mult
+            adj_price = adj_price / mult if mult != 0 else adj_price
+
+    return adj_qty, adj_price
+
+
+def get_moex_fx_rates() -> Dict[str, float]:
+    """Загружает актуальные биржевые курсы валют (USD, EUR, CNY) с MOEX ISS."""
+    rates = {"RUB": 1.0, "RUR": 1.0, "SUR": 1.0, "CNY": 12.52, "USD": 85.0, "EUR": 100.0}
+    try:
+        url_rates = "https://iss.moex.com/iss/engines/currency/markets/selt/boards/CETS/securities.json"
+        resp = requests.get(
+            url_rates,
+            params={"iss.meta": "off", "iss.only": "marketdata", "marketdata.columns": "SECID,LAST"},
+            timeout=5
+        ).json()
+        for row in resp.get("marketdata", {}).get("data", []):
+            secid = str(row[0] or "")
+            last = row[1]
+            if last and float(last) > 0:
+                if secid == "CNYRUB_TOM":
+                    rates["CNY"] = float(last)
+                elif secid == "USD000UTSTOM":
+                    rates["USD"] = float(last)
+                elif secid == "EUR_RUB__TOM":
+                    rates["EUR"] = float(last)
+    except Exception:
+        pass
+    return rates
+
+
+def get_bond_rub_valuation(
+    ticker: str,
+    raw_price: float,
+    nominal: float = 1000.0,
+    nkd: float = 0.0,
+    currency: str = "RUB",
+    fx_rates: Optional[Dict[str, float]] = None
+) -> float:
+    """
+    Рассчитывает реальную рублевую стоимость одной облигации.
+    На Мосбирже котировка облигации raw_price указывается в % от номинала (Face Value).
+    Грязная цена (с накопленным купоном НКД) в валюте = (raw_price / 100) * nominal + nkd.
+    Итоговая стоимость одной облигации в рублях = Грязная цена * Курс валюты к рублю.
+    """
+    if fx_rates is None:
+        fx_rates = get_moex_fx_rates()
+
+    curr = str(currency or "RUB").strip().upper()
+    if curr in ["RUR", "SUR"]:
+        curr = "RUB"
+
+    fx = fx_rates.get(curr, 1.0)
+
+    # Если цена уже в рублях (например, больше 500 рублей за штуку)
+    if raw_price > 500.0:
+        return raw_price
+
+    nom = float(nominal if nominal > 0 else 1000.0)
+    clean_curr = (raw_price / 100.0) * nom
+    dirty_curr = clean_curr + float(nkd or 0.0)
+    return dirty_curr * fx
+
+
 # ==========================================
 # 1. МАТЕМАТИЧЕСКИЕ АЛГОРИТМЫ (XIRR & БЕНЧМАРКИ)
 # ==========================================
@@ -115,14 +208,17 @@ def resolve_izi_invest_portfolio_id(identifier: str) -> Optional[int]:
         return int(clean_id)
 
     # Если ссылка или слаг
-    match = re.search(r"izi-invest\.ru/([^/#?]+)", clean_id)
+    match = re.search(r"izi-invest\.ru/([a-zA-Z0-9_\-\.]+)", clean_id)
     if match:
         slug = match.group(1)
     else:
         # Предполагаем, что введен просто slug (например, 'maxgamer')
         slug = clean_id.split("#")[0].split("?")[0].strip()
 
-    # Делаем запрос к публичной странице для извлечения var portfolio_id=...
+    # Защита от SSRF / Path Traversal: slug должен содержать только безопасные алфавитно-цифровые символы
+    if not re.match(r"^[a-zA-Z0-9_\-\.]+$", slug):
+        return None
+
     url = f"https://izi-invest.ru/{slug}"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -131,18 +227,33 @@ def resolve_izi_invest_portfolio_id(identifier: str) -> Optional[int]:
     html_text = ""
     try:
         import httpx
-        with httpx.Client(headers=headers, follow_redirects=True, timeout=15.0) as client:
+        # follow_redirects=False для защиты от SSRF перенаправлений на метаданные облака или внутренние IP
+        with httpx.Client(headers=headers, follow_redirects=False, timeout=12.0) as client:
             resp = client.get(url)
             if resp.status_code == 200:
                 html_text = resp.text
+            elif resp.status_code in (301, 302, 307, 308):
+                loc = resp.headers.get("Location", "")
+                if loc.startswith("/") or loc.startswith("https://izi-invest.ru/"):
+                    safe_url = loc if loc.startswith("https://") else f"https://izi-invest.ru{loc}"
+                    resp2 = client.get(safe_url)
+                    if resp2.status_code == 200:
+                        html_text = resp2.text
     except Exception:
         pass
 
     if not html_text:
         try:
-            resp = requests.get(url, headers=headers, timeout=15)
+            resp = requests.get(url, headers=headers, allow_redirects=False, timeout=12)
             if resp.status_code == 200:
                 html_text = resp.text
+            elif resp.status_code in (301, 302):
+                loc = resp.headers.get("Location", "")
+                if loc.startswith("/") or loc.startswith("https://izi-invest.ru/"):
+                    safe_url = loc if loc.startswith("https://") else f"https://izi-invest.ru{loc}"
+                    resp2 = requests.get(safe_url, headers=headers, allow_redirects=False, timeout=12)
+                    if resp2.status_code == 200:
+                        html_text = resp2.text
         except Exception:
             pass
 
@@ -213,35 +324,51 @@ def reconstruct_positions_from_trades(trades_df: pd.DataFrame) -> pd.DataFrame:
         t = str(row.get("Тикер", "")).strip().upper()
         if not t or t in ["NAN", "NONE", "INPUT", "OUTPUT", "DOHOD", "NALOG", "COMMISSION"]:
             continue
+        trade_date = pd.to_datetime(row.get("Дата"))
         name = str(row.get("Название", t))
-        atype = str(row.get("Тип", "share"))
+        atype = str(row.get("Тип", "share")).lower()
+        curr = str(row.get("Валюта", "RUB")).upper()
+        fx_rates = get_moex_fx_rates()
+        fx = fx_rates.get(curr, 1.0)
+        is_bond = atype in ["bond", "облигация"] or t.startswith(("RU000", "SU", "XS"))
+
         qty = abs(float(row.get("Количество", 0.0)))
         price = float(row.get("Цена", 0.0))
         cost = abs(float(row.get("Сумма", 0.0)))
-        if cost == 0.0 and price > 0:
-            cost = qty * price
+
+        if is_bond:
+            if curr in ["CNY", "USD", "EUR"]:
+                cost = cost * fx
+            price_rub = get_bond_rub_valuation(t, price, 1000.0, 0.0, curr, fx_rates)
+        else:
+            # Корректировка на корпоративные сплиты (TRNFP 1:100, VTBR 1:5000)
+            qty, price = adjust_trade_for_splits(t, trade_date, qty, price)
+            price_rub = price
+
+        if cost == 0.0 and price_rub > 0:
+            cost = qty * price_rub
 
         op = str(row.get("Операция", "")).lower()
         is_buy = any(b in op for b in ["buy", "покупка", "приобретение"])
         is_sell = any(s in op for s in ["sell", "продажа", "списание"])
 
         if t not in holdings:
-            holdings[t] = {"qty": 0.0, "total_cost": 0.0, "name": name, "type": atype, "last_price": price}
+            holdings[t] = {"qty": 0.0, "total_cost": 0.0, "name": name, "type": atype, "last_price": price_rub}
 
         if is_buy:
             holdings[t]["qty"] += qty
             holdings[t]["total_cost"] += cost
-            if price > 0:
-                holdings[t]["last_price"] = price
+            if price_rub > 0:
+                holdings[t]["last_price"] = price_rub
         elif is_sell:
             curr_q = holdings[t]["qty"]
             if curr_q > 0:
                 avg_p = holdings[t]["total_cost"] / curr_q
                 sold_q = min(qty, curr_q)
                 holdings[t]["qty"] -= sold_q
-                holdings[t]["total_cost"] -= sold_q * avg_p
-            if price > 0:
-                holdings[t]["last_price"] = price
+                holdings[t]["total_cost"] = max(0.0, holdings[t]["total_cost"] - sold_q * avg_p)
+            if price_rub > 0:
+                holdings[t]["last_price"] = price_rub
 
     rows = []
     for t, data in holdings.items():
@@ -288,6 +415,12 @@ def parse_izi_invest_excel(file_bytes: bytes, source_id: str = "export", identif
     Парсит XLSX файл из izi-invest, Intelinvest, Snowball или отчётов брокеров.
     Автоматически сопоставляет вкладки и восстанавливает позиции, если вкладка отсутствует.
     """
+    if len(file_bytes) > MAX_FILE_SIZE_BYTES:
+        raise ValueError(
+            f"Файл слишком большой ({len(file_bytes) / (1024 * 1024):.1f} МБ). "
+            f"Максимальный допустимый размер для защиты сервера — {MAX_FILE_SIZE_BYTES // (1024 * 1024)} МБ."
+        )
+
     xls = pd.ExcelFile(io.BytesIO(file_bytes))
     sheet_names = xls.sheet_names
 
@@ -325,16 +458,22 @@ def parse_izi_invest_excel(file_bytes: bytes, source_id: str = "export", identif
 
             # Нормализация колонок
             for c in raw_trades.columns:
-                cl = str(c).lower()
-                if "количеств" in cl or "кол" in cl or "qty" in cl:
+                cl = str(c).lower().strip()
+                if "unnamed" in cl:
+                    continue
+                if any(k in cl for k in ["количеств", "кол", "qty"]):
                     t_df["Количество"] = pd.to_numeric(raw_trades[c], errors="coerce").fillna(0.0)
-                elif "цен" in cl or "price" in cl:
+                elif any(k in cl for k in ["цен", "price"]):
                     t_df["Цена"] = pd.to_numeric(raw_trades[c], errors="coerce").fillna(0.0)
-                elif "сумм" in cl or "объем" in cl or "sum" in cl or "volume" in cl:
+                elif any(k in cl for k in ["сумм", "объем", "sum", "volume"]):
                     t_df["Сумма"] = pd.to_numeric(raw_trades[c], errors="coerce").fillna(0.0)
-                elif "операц" in cl or "action" in cl or "вид" in cl or "тип" in cl:
+                elif any(k in cl for k in ["операц", "action", "вид сделки", "direction"]):
                     t_df["Операция"] = raw_trades[c].astype(str).str.lower()
-                elif "назван" in cl or "name" in cl or "эмитент" in cl:
+                elif cl in ["тип", "type", "вид актива", "asset_type"]:
+                    t_df["Тип"] = raw_trades[c].astype(str).str.lower()
+                elif any(k in cl for k in ["валют", "curr"]):
+                    t_df["Валюта"] = raw_trades[c].astype(str).str.upper()
+                elif any(k in cl for k in ["назван", "наименов", "эмитент"]) or cl == "name":
                     t_df["Название"] = raw_trades[c].astype(str)
 
             if "Операция" not in t_df.columns:
@@ -363,18 +502,60 @@ def parse_izi_invest_excel(file_bytes: bytes, source_id: str = "export", identif
             p_df["Тикер"] = p_df[ticker_col].astype(str).str.strip().str.upper()
 
             for c in raw_port.columns:
-                cl = str(c).lower()
-                if "количеств" in cl or "кол" in cl:
+                cl = str(c).lower().strip()
+                if "unnamed" in cl:
+                    continue
+                if any(k in cl for k in ["количеств", "кол"]):
                     p_df["Количество"] = pd.to_numeric(raw_port[c], errors="coerce").fillna(0.0)
                 elif "средняя" in cl:
                     p_df["Средняя цена"] = pd.to_numeric(raw_port[c], errors="coerce").fillna(0.0)
-                elif "цен" in cl:
+                elif any(k in cl for k in ["цен", "price"]):
                     p_df["Цена"] = pd.to_numeric(raw_port[c], errors="coerce").fillna(0.0)
-                elif "назван" in cl:
+                elif any(k in cl for k in ["назван", "наименов", "эмитент"]) or cl == "name":
                     p_df["Название"] = raw_port[c].astype(str)
+                elif cl in ["тип", "type"]:
+                    p_df["Тип"] = raw_port[c].astype(str).str.lower()
+                elif any(k in cl for k in ["валют", "curr"]):
+                    p_df["Валюта"] = raw_port[c].astype(str).str.upper()
+                elif any(k in cl for k in ["номинал", "facevalue", "par"]):
+                    p_df["Номинал"] = pd.to_numeric(raw_port[c], errors="coerce").fillna(1000.0)
+                elif any(k in cl for k in ["нкд", "accrued"]):
+                    p_df["НКД"] = pd.to_numeric(raw_port[c], errors="coerce").fillna(0.0)
 
-            p_df["Текущая цена"] = p_df.get("Цена", p_df.get("Средняя цена", 0.0)).astype(float)
-            p_df["Средняя цена"] = p_df.get("Средняя цена", p_df["Текущая цена"]).astype(float)
+            fx_rates = get_moex_fx_rates()
+            cur_prices_rub = []
+            avg_prices_rub = []
+
+            for _, row in p_df.iterrows():
+                t = str(row.get("Тикер", "")).upper()
+                typ = str(row.get("Тип", "")).lower()
+                curr = str(row.get("Валюта", "RUB")).upper()
+                raw_price = float(row.get("Цена", 0.0) or 0.0)
+                avg_price = float(row.get("Средняя цена", 0.0) or 0.0)
+                nominal = float(row.get("Номинал", 1000.0) or 1000.0)
+                nkd = float(row.get("НКД", 0.0) or 0.0)
+
+                is_bond = (
+                    typ in ["bond", "облигация"]
+                    or t.startswith(("RU000", "SU", "XS"))
+                    or (raw_price < 250.0 and avg_price > 500.0)
+                )
+
+                if is_bond:
+                    cur_p = get_bond_rub_valuation(t, raw_price, nominal, nkd, curr, fx_rates)
+                    if avg_price < 250.0 and nominal >= 1000.0:
+                        avg_p = get_bond_rub_valuation(t, avg_price, nominal, 0.0, curr, fx_rates)
+                    else:
+                        avg_p = avg_price
+                else:
+                    cur_p = raw_price if raw_price > 0 else avg_price
+                    avg_p = avg_price if avg_price > 0 else raw_price
+
+                cur_prices_rub.append(round(cur_p, 2))
+                avg_prices_rub.append(round(avg_p, 2))
+
+            p_df["Текущая цена"] = cur_prices_rub
+            p_df["Средняя цена"] = avg_prices_rub
             p_df["Количество"] = p_df.get("Количество", 0.0).astype(float)
 
             p_df["Текущая стоимость"] = p_df["Количество"] * p_df["Текущая цена"]
@@ -529,10 +710,21 @@ def parse_izi_invest_excel(file_bytes: bytes, source_id: str = "export", identif
     }
 
 
-def parse_broker_file(file_content: bytes, filename: str) -> Dict[str, Any]:
+def parse_broker_file(file_content: Any, filename: str) -> Dict[str, Any]:
     """
     Универсальный парсер для любых файлов отчетов брокера (XLSX, XLS, CSV).
     """
+    if hasattr(file_content, "read"):
+        file_content = file_content.read()
+    if not isinstance(file_content, (bytes, bytearray)):
+        file_content = bytes(file_content)
+
+    if len(file_content) > MAX_FILE_SIZE_BYTES:
+        raise ValueError(
+            f"Файл '{filename}' слишком большой ({len(file_content) / (1024 * 1024):.1f} МБ). "
+            f"Максимальный допустимый размер для защиты сервера — {MAX_FILE_SIZE_BYTES // (1024 * 1024)} МБ."
+        )
+
     fn = filename.lower()
     
     # 1. Если это XLSX или XLS
@@ -548,7 +740,7 @@ def parse_broker_file(file_content: bytes, filename: str) -> Dict[str, Any]:
             df = None
             for sep in [",", ";", "\t"]:
                 try:
-                    t_df = pd.read_csv(io.BytesIO(file_content), sep=sep)
+                    t_df = pd.read_csv(io.BytesIO(file_content), sep=sep, nrows=100000)
                     if len(t_df.columns) >= 3:
                         df = t_df
                         break
@@ -675,7 +867,8 @@ def calculate_mirror_benchmark_timeline(
     mirror_values = []
     
     all_dates = bench_prices.index
-    deposit_by_date = cash_moves.set_index("Дата")["Сумма"].to_dict()
+    # Агрегируем пополнения/выводы по дате, суммируя все движения одного дня (защита от потери повторных транзакций)
+    deposit_by_date = cash_moves.groupby("Дата")["Сумма"].sum().to_dict()
 
     # Сопоставляем ближайшие торговые дни
     sorted_deposit_dates = sorted(deposit_by_date.keys())
@@ -688,7 +881,7 @@ def calculate_mirror_benchmark_timeline(
     for d in all_dates:
         # Проверяем, были ли пополнения/снятия до или в этот день
         while dep_idx < len(sorted_deposit_dates) and sorted_deposit_dates[dep_idx] <= d:
-            amt = deposit_by_date[sorted_deposit_dates[dep_idx]]
+            amt = float(deposit_by_date[sorted_deposit_dates[dep_idx]])
             curr_bench_px = bench_prices.asof(d)
             if curr_bench_px > 0:
                 delta_units = amt / curr_bench_px
@@ -696,7 +889,9 @@ def calculate_mirror_benchmark_timeline(
                 accumulated_invested += amt
             dep_idx += 1
 
-        curr_bench_val = bench_units * bench_prices.loc[d]
+        px = bench_prices.loc[d]
+        curr_px_val = float(px.iloc[0] if isinstance(px, pd.Series) else px)
+        curr_bench_val = bench_units * curr_px_val
         invested_series.append(accumulated_invested)
         bench_series.append(curr_bench_val)
 

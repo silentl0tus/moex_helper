@@ -23,15 +23,19 @@ def _load_env_file():
 
 _load_env_file()
 
+# pyrefly: ignore [missing-import]
 try:
-    from datahub_api import DataHub
+    from datahub_api import DataHub  # type: ignore
 except ImportError:
     DataHub = None
 
-# Кешируем данные, чтобы не дергать API при каждом клике пользователя
-@st.cache_data(ttl=3600) # ttl=3600 значит обновлять данные раз в час
+@st.cache_data(ttl=3600)  # ttl=3600 значит обновлять данные раз в час
 def get_smartlab_data(ticker):
-    client = DataHub()
-    # Логика получения данных (зависит от того, что именно ты хочешь взять)
-    data = client.get_data(ticker) 
-    return pd.DataFrame(data)
+    if DataHub is None:
+        return pd.DataFrame()
+    try:
+        client = DataHub()
+        data = client.get_data(ticker)
+        return pd.DataFrame(data)
+    except Exception:
+        return pd.DataFrame()

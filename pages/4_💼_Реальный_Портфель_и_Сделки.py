@@ -109,13 +109,16 @@ if source_mode == "📂 Загрузить файл отчёта (XLSX / XLS / C
     )
 
     if uploaded_file is not None:
-        st.sidebar.success(f"Файл выбран: `{uploaded_file.name}`")
-        with st.spinner("Чтение и парсинг файла сделок..."):
-            try:
-                file_bytes = uploaded_file.read()
-                portfolio_data = parse_broker_file(file_bytes, uploaded_file.name)
-            except Exception as e:
-                load_error = str(e)
+        if uploaded_file.size > 25 * 1024 * 1024:
+            load_error = "Файл превышает безопасный лимит размера (25 МБ)."
+        else:
+            st.sidebar.success(f"Файл выбран: `{uploaded_file.name}`")
+            with st.spinner("Чтение и парсинг файла сделок..."):
+                try:
+                    file_bytes = uploaded_file.read()
+                    portfolio_data = parse_broker_file(file_bytes, uploaded_file.name)
+                except Exception as e:
+                    load_error = str(e)
     else:
         # Если пользователь еще не загрузил свой файл, предлагаем посмотреть пример
         use_sample = st.sidebar.checkbox(
@@ -146,7 +149,7 @@ else:
         load_btn = st.button("🔄 Загрузить по ссылке", type="primary", width="stretch")
     with col_btn2:
         if st.button("Сброс", width="stretch"):
-            st.cache_data.clear()
+            load_portfolio_from_url.clear()
             st.rerun()
 
     if url_input:

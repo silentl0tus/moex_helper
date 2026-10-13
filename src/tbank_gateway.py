@@ -132,19 +132,18 @@ class TBankGateway:
             print(f"Ошибка получения инструмента: {response.text}")
             return None
 
-# Использование:
-print(f"DEBUG: Пытаюсь считать TOKEN...")
-my_token = os.getenv("TOKEN")
-print(f"DEBUG: Результат os.getenv('TOKEN'): {my_token}")
+if __name__ == "__main__":
+    print(f"DEBUG: Пытаюсь считать TOKEN...")
+    my_token = os.getenv("TOKEN")
+    print(f"DEBUG: Результат os.getenv('TOKEN'): {my_token}")
 
-if not my_token:
-    print("ВНИМАНИЕ: Переменная TOKEN пуста!")
-
-gateway = TBankGateway(os.getenv("TOKEN"))
-figi = gateway.get_ticker_figi("SBERP")
-df = gateway.get_candles(figi)
-print(df.head())
-# info = gateway.get_fundamentals("SBER")
-# print(info)
-info = gateway.get_instrument_by_uid("e6123145-9665-43e0-8413-cd61b8aa9b13")
-print(info)
+    if not my_token:
+        print("ВНИМАНИЕ: Переменная TOKEN пуста!")
+    else:
+        gateway = TBankGateway(my_token)
+        figi = gateway.get_ticker_figi("SBERP")
+        if figi:
+            df = gateway.get_candles(figi)
+            print(df.head())
+        info = gateway.get_instrument_by_uid("e6123145-9665-43e0-8413-cd61b8aa9b13")
+        print(info)

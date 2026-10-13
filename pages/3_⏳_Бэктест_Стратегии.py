@@ -211,11 +211,19 @@ def calculate_performance_kpis(
     years = max(n_days / 365.25, 0.05)
 
     # 1. Total Return & CAGR
-    total_ret = ((pv.iloc[-1] / initial_capital) - 1.0) * 100.0
-    bench_ret = ((bv.iloc[-1] / bv.iloc[0]) - 1.0) * 100.0
+    fin_val = pv.iloc[-1]
+    total_ret = ((fin_val / initial_capital) - 1.0) * 100.0 if initial_capital > 0 else 0.0
+    bench_ret = ((bv.iloc[-1] / bv.iloc[0]) - 1.0) * 100.0 if bv.iloc[0] > 0 else 0.0
 
-    cagr = (((pv.iloc[-1] / initial_capital) ** (1.0 / years)) - 1.0) * 100.0
-    bench_cagr = (((bv.iloc[-1] / bv.iloc[0]) ** (1.0 / years)) - 1.0) * 100.0
+    if fin_val > 0 and initial_capital > 0:
+        cagr = (((fin_val / initial_capital) ** (1.0 / years)) - 1.0) * 100.0
+    else:
+        cagr = -100.0
+
+    if bv.iloc[-1] > 0 and bv.iloc[0] > 0:
+        bench_cagr = (((bv.iloc[-1] / bv.iloc[0]) ** (1.0 / years)) - 1.0) * 100.0
+    else:
+        bench_cagr = -100.0
 
     # 2. Daily returns
     daily_port_ret = pv.pct_change().dropna()

@@ -296,7 +296,9 @@ def fetch_bond_prices_moex():
     result = {}
     boards = [
         ("stock", "bonds", "TQOB"),   # ОФЗ
-        ("stock", "bonds", "TQCB"),   # корпоративные
+        ("stock", "bonds", "TQCB"),   # корпоративные в рублях
+        ("stock", "bonds", "TQOY"),   # юаневые облигации (CNY)
+        ("stock", "bonds", "TQOD"),   # валютные / замещающие облигации (USD/EUR)
     ]
     for engine, market, board in boards:
         try:
@@ -619,6 +621,13 @@ with st.sidebar:
     my_blocked_invested = 0.0
     cash_rub = 0.0
     
+    FX_RATES = {"USD": 95.0, "EUR": 103.0, "CNY": 13.5, "RUB": 1.0, "RUR": 1.0, "CASH": 1.0}
+
+    if uploaded_file is not None:
+        if uploaded_file.size > 25 * 1024 * 1024:
+            st.error("Размер файла превышает безопасный лимит (25 МБ).")
+            uploaded_file = None
+
     if uploaded_file is not None:
         my_reserves = {}
         my_blocked = {}
@@ -636,8 +645,12 @@ with st.sidebar:
                 if not sym: continue
                     
                 if sym in ['CASH', 'RUB', 'RUR', 'USD', 'EUR', 'CNY']:
+                    rate = FX_RATES.get(sym, 1.0)
+                    summa_val = abs(t.get('summa', 0)) * rate
                     if count > 0:
-                        cash_rub += abs(t.get('summa', 0))
+                        cash_rub += summa_val
+                    else:
+                        cash_rub = max(0.0, cash_rub - summa_val)
                     continue
                     
                 if sym in moex_tickers:
@@ -656,12 +669,13 @@ with st.sidebar:
                 else:
                     if target_dict[sym]['count'] - count > 0:
                         avg_p = target_dict[sym]['invested'] / (target_dict[sym]['count'] - count)
-                        target_dict[sym]['invested'] -= abs(count) * avg_p
+                        target_dict[sym]['invested'] = max(0.0, target_dict[sym]['invested'] - abs(count) * avg_p)
 
             for cb in data.get('cash-balances', []):
                 for cash_item in cb.get('cash', []):
-                    if cash_item.get('currency') == 'RUB':
-                        cash_rub += cash_item.get('value', 0)
+                    curr = cash_item.get('currency', 'RUB')
+                    rate = FX_RATES.get(curr, 1.0)
+                    cash_rub += cash_item.get('value', 0) * rate
 
         elif uploaded_file.name.endswith((".xlsx", ".csv")):
             # ISIN: 12-символьный код вида RU000A..., SU262..., XS... и т.п.
@@ -689,8 +703,10 @@ with st.sidebar:
                     ty_col = next((c for c in df_tr.columns if c.lower() == "тип"), None)
                     q_col  = next((c for c in df_tr.columns if c.lower() in ["количество", "qty", "кол-во", "кол."]), None)
                     s_col  = next((c for c in df_tr.columns if c.lower() in ["сумма", "sum", "summa"]), None)
+                    d_col  = next((c for c in df_tr.columns if any(k in c.lower() for k in ["дата", "date"])), None)
 
                     if t_col and op_col and q_col:
+                        from src.portfolio_importer import adjust_trade_for_splits
                         net_qty      = {}
                         net_invested = {}
                         net_type     = {}
@@ -699,6 +715,7 @@ with st.sidebar:
                             sym = str(row.get(t_col, "")).strip().upper()
                             op  = str(row.get(op_col, "")).strip().lower()
                             typ = str(row.get(ty_col, "")).strip().lower() if ty_col else ""
+                            trade_date = pd.to_datetime(row.get(d_col, datetime.now())) if d_col else datetime.now()
                             try:
                                 qty = float(row.get(q_col, 0) or 0)
                             except:
@@ -726,16 +743,21 @@ with st.sidebar:
                             # qty в журнале SIGNED: buy=+N, sell=-N.
                             # Всегда берём abs() — направление задаёт ветка is_buy/is_sell.
                             qty_abs = abs(qty)
+                            unit_price = (summa / qty_abs) if qty_abs > 0 and summa > 0 else 0.0
+                            qty_adj, _ = adjust_trade_for_splits(sym, trade_date, qty_abs, unit_price)
 
                             if is_buy:
-                                net_qty[sym]      += qty_abs
+                                net_qty[sym]      += qty_adj
                                 net_invested[sym] += summa
                             else:  # sell
                                 prev = net_qty[sym]
                                 if prev > 0:
                                     avg_p = net_invested[sym] / prev
-                                    net_invested[sym] -= qty_abs * avg_p
-                                net_qty[sym] -= qty_abs
+                                    sold_q = min(qty_adj, prev)
+                                    net_invested[sym] = max(0.0, net_invested[sym] - sold_q * avg_p)
+                                    net_qty[sym] = max(0.0, net_qty[sym] - sold_q)
+                                else:
+                                    net_qty[sym] = 0.0
 
                         for sym, qty in net_qty.items():
                             if qty < 0.01:
