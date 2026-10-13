@@ -597,7 +597,7 @@ with st.sidebar:
     if "ignore_liquidity" not in st.session_state:
         st.session_state.ignore_liquidity = False
         
-    if st.button("Переключить фильтр ликвидности", use_container_width=True):
+    if st.button("Переключить фильтр ликвидности", width="stretch"):
         st.session_state.ignore_liquidity = not st.session_state.ignore_liquidity
         
     ignore_liquidity = st.session_state.ignore_liquidity
@@ -1708,7 +1708,7 @@ with tab1:
             )
         
             chart = (points + text).interactive()
-            st.altair_chart(chart, use_container_width=True)
+            st.altair_chart(chart, width="stretch")
 
         with tab4:
             position_df = build_position_weights(

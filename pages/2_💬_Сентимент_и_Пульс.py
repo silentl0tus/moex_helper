@@ -44,7 +44,7 @@ with col1:
     if "force_reload" not in st.session_state:
         st.session_state.force_reload = False
         
-    if st.button("🔄 Загрузить свежие данные", type="primary", use_container_width=True):
+    if st.button("🔄 Загрузить свежие данные", type="primary", width="stretch"):
         st.session_state.force_reload = True
     else:
         st.session_state.force_reload = False

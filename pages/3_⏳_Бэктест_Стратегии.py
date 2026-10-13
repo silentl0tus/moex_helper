@@ -356,7 +356,7 @@ rebalance_code_map = {
 }
 rebalance_freq = rebalance_code_map[rebalance_mode_label]
 
-initial_cap = st.sidebar.number_input(
+initial_capital = st.sidebar.number_input(
     "Начальный капитал (₽):",
     min_value=50000,
     max_value=100000000,
@@ -572,7 +572,7 @@ with tab_curves:
         tooltip=["Дата:T", "Инструмент:N", alt.Tooltip("Значение:Q", format=",.1f")]
     ).properties(height=420).interactive()
 
-    st.altair_chart(curve_chart, use_container_width=True)
+    st.altair_chart(curve_chart, width="stretch")
 
     c_fee1, c_fee2 = st.columns(2)
     with c_fee1:
@@ -614,7 +614,7 @@ with tab_risks:
         tooltip=["Дата:T", "Индикатор:N", alt.Tooltip("Просадка, %:Q", format=".2f")]
     ).properties(height=320).interactive()
 
-    st.altair_chart(dd_chart, use_container_width=True)
+    st.altair_chart(dd_chart, width="stretch")
 
     st.markdown("#### 📋 Институциональные коэффициенты риска и устойчивости")
     rk1, rk2, rk3, rk4 = st.columns(4)
@@ -672,7 +672,7 @@ with tab_attribution:
             tooltip=["Тикер:N", "Вклад в портфель, %:Q", "Доходность акции, %:Q", "Вес в портфеле, %:Q"]
         ).properties(height=350)
 
-        st.altair_chart(attr_chart, use_container_width=True)
+        st.altair_chart(attr_chart, width="stretch")
 
         st.markdown("##### 📋 Детальная таблица результативности компонентов портфеля")
         st.dataframe(
