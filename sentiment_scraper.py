@@ -514,6 +514,9 @@ def generate_structured_summary(messages: list, ticker: str = "") -> dict:
 # Модель по умолчанию (только бесплатные варианты)
 DEFAULT_OPENROUTER_MODEL = "liquid/lfm-2.5-2.6b:free"
 
+# Максимальное количество токенов на ответ модели (до 3000 токенов для развернутых статей)
+MAX_SUMMARY_TOKENS = 3000
+
 # Список поддерживаемых бесплатных моделей OpenRouter (100% Free, $0.00 / 0 токенов)
 OPENROUTER_FREE_MODELS = [
     "liquid/lfm-2.5-2.6b:free",           # 💧 LiquidAI LFM 2.5 (быстрая, стабильная, без очередей)
@@ -565,7 +568,8 @@ def summarize_with_openrouter(messages: list, ticker: str = "", api_key: str = N
     if not relevant_chunks:
         relevant_chunks = [re.sub(r"[\s\n]+", " ", m.get("text", "")).strip() for m in messages if len(m.get("text", "")) > 40]
 
-    context_text = "\n".join([f"- {c}" for c in relevant_chunks[:15]])
+    # Формируем расширенный контекст для нейросети (до 35 релевантных фрагментов статей, до 12 000 символов)
+    context_text = "\n".join([f"- {c}" for c in relevant_chunks[:35]])[:12000]
 
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
@@ -582,25 +586,26 @@ def summarize_with_openrouter(messages: list, ticker: str = "", api_key: str = N
                 "role": "system",
                 "content": (
                     "Ты профессиональный финансовый аналитик Мосбиржи (MOEX). "
-                    "Проанализируй мнения и факты инвесторов из Т-Банк Пульс и Smart-Lab строго по заданной компании. "
-                    "Составь четкое, структурированное резюме на русском языке: "
-                    "1) Ключевой позитив / драйверы роста; "
-                    "2) Основные риски и опасения; "
-                    "3) Главный вывод/консенсус инвесторов. "
-                    "Пиши кратко, емко, только по делу, без общих фраз и без галлюцинаций."
+                    "Внимательно изучи мнения, статьи и факты инвесторов из Т-Банк Пульс и Smart-Lab строго по заданной компании. "
+                    "Составь подробное, глубокое и структурированное резюме на русском языке:\n"
+                    "1) 🟢 Ключевые драйверы роста и позитив (дивиденды, финансовые отчеты, рост прибыли);\n"
+                    "2) 🔴 Основные риски и опасения (ставка ЦБ, судебные иски, налоги, конкуренция);\n"
+                    "3) 📊 Ключевые цифры, котировки и факты из обсуждений;\n"
+                    "4) 🎯 Итоговый вывод и консенсус для частного инвестора.\n"
+                    "Пиши содержательно, опираясь на факты из статей, без лишней 'воды'."
                 )
             },
             {
                 "role": "user",
-                "content": f"Эмитент/тикер: {ticker_clean}\n\nВыдержки из обсуждений инвесторов:\n{context_text}"
+                "content": f"Эмитент/тикер: {ticker_clean}\n\nВыдержки из статей и обсуждений инвесторов:\n{context_text}"
             }
         ],
         "temperature": 0.3,
-        "max_tokens": 1200
+        "max_tokens": MAX_SUMMARY_TOKENS
     }
 
     try:
-        resp = requests.post(url, headers=headers, json=payload, timeout=35)
+        resp = requests.post(url, headers=headers, json=payload, timeout=45)
         if resp.status_code == 200:
             res_data = resp.json()
             choices = res_data.get("choices", [])
