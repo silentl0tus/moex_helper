@@ -1631,14 +1631,57 @@ with tab1:
                 pc3.metric("Индекс Здоровья (Beta)", f"{port_health:.2f}x", "Сильнее рынка" if port_health > 1.0 else "Слабее рынка")
                        
                 st.markdown("#### 🤖 Рекомендации Робо-Эдвайзера")
-                sells = df_port[df_port['Health_Score'] < 1.0]['ticker'].tolist()
-                if sells:
-                    st.error(f"**🔴 ПРОДАВАТЬ (Кандидаты на вылет):** {', '.join(sells)}. Эти бумаги фундаментально слабы и тянут портфель на дно.")
-                else:
-                    st.success("**🟢 Портфель очищен от мусора.** Кандидатов на срочную продажу нет.")
                 
+                # 1. Выявление критического риска (реальные кандидаты на вылет)
+                toxic_mask = df_port['ticker'].isin(TOXIC_TICKERS)
+                debt_crisis_mask = (df_port['Debt_EBITDA'] > 3.0) & (df_port['ROE_%'] < 8.0)
+                urgent_sells = df_port[toxic_mask | debt_crisis_mask]['ticker'].tolist()
+                
+                # 2. Выявление бумаг на дне цикла (цикличные металлурги, нефть, потребительский сектор с безопасным долгом)
+                cyclical_mask = df_port['ticker'].isin(CYCLICAL_TICKERS + CONSUMER_TICKERS + OIL_TICKERS)
+                safe_debt_mask = df_port['Debt_EBITDA'] <= 1.8
+                moderate_mask = (df_port['Health_Score'] < 1.2) & (~df_port['ticker'].isin(urgent_sells))
+                hold_cycle = df_port[moderate_mask & (cyclical_mask | safe_debt_mask)]['ticker'].tolist()
+                
+                # 3. Прочие слабые бумаги (низкий Health Score без защитного баланса)
+                weak_stocks = df_port[(df_port['Health_Score'] < 0.7) & (~df_port['ticker'].isin(urgent_sells)) & (~df_port['ticker'].isin(hold_cycle))]['ticker'].tolist()
+                
+                if urgent_sells:
+                    st.error(f"**🛑 СРОЧНЫЙ ПЕРЕСМОТР (Критический риск долга):** {', '.join(urgent_sells)}. Высокая долговая нагрузка (Debt/EBITDA > 3.0) при текущей ставке ЦБ сжигает чистую прибыль компании.")
+                
+                if hold_cycle:
+                    st.warning(
+                        f"**⏸️ ДНО ЦИКЛА / УДЕРЖАНИЕ БЕЗ ПРОДАЖИ:** {', '.join(hold_cycle)}. "
+                        "У этих компаний безопасный уровень долга (Debt/EBITDA ≤ 1.8x либо чистый кэш) и отсутствует риск дефолта. "
+                        "Временное сжатие прибыли LTM вызвано жесткой ставкой ЦБ или спадом цен на сырье. "
+                        "Продавать на дне цикла нерационально — удерживайте позицию, но свежие деньги направляйте в лидеров Health Score."
+                    )
+                
+                if weak_stocks:
+                    st.warning(f"**⚠️ КАНДИДАТЫ НА СОКРАЩЕНИЕ ДОЛИ:** {', '.join(weak_stocks)}. Отдача на капитал уступает среднерыночной.")
+                
+                if not urgent_sells and not weak_stocks:
+                    st.success("**🟢 Портфель защищен от дефолтного риска.** В составе нет предбанкротных компаний или токсичного долга.")
+                
+                # 4. Кандидаты на добавление (поиск из текущей выборки либо из общего рынка)
                 buys = df_ranked[(~df_ranked['ticker'].isin(portfolio_tickers_list)) & (~df_ranked['ticker'].isin(TOXIC_TICKERS))].head(3)['ticker'].tolist()
-                st.info(f"**🔵 ЦЕЛЕВЫЕ ПОКУПКИ (Кандидаты на добавление):** {', '.join(buys)}. Бумаги с высшим баллом, которых у вас еще нет.")
+                if not buys and not raw_fundamental_data.empty:
+                    ext_cands = raw_fundamental_data[
+                        (~raw_fundamental_data['ticker'].isin(portfolio_tickers_list)) & 
+                        (~raw_fundamental_data['ticker'].isin(TOXIC_TICKERS)) &
+                        (raw_fundamental_data['ROE_%'] > 12.0) &
+                        (raw_fundamental_data['P_E'] > 0) &
+                        (raw_fundamental_data['Debt_EBITDA'] <= 1.5)
+                    ].copy()
+                    if not ext_cands.empty:
+                        ext_cands['q_score'] = ext_cands['ROE_%'].clip(upper=40) / ext_cands['P_E']
+                        buys = ext_cands.sort_values(by='q_score', ascending=False).head(3)['ticker'].tolist()
+
+                if buys:
+                    st.info(f"**🔵 ЦЕЛЕВЫЕ ПОКУПКИ (Кандидаты на добавление):** {', '.join(buys)}. Бумаги с высшим баллом здоровья рынка, которых у вас еще нет.")
+                else:
+                    st.success("**🟢 Ваш портфель уже содержит главных фундаментальных лидеров рынка.** Рекомендуется ребалансировка притоком свежего капитала.")
+                
                 st.page_link("pages/3_⏳_Бэктест_Стратегии.py", label="⏳ Запустить исторический бэктест вашего портфеля vs IMOEX", icon="⏳")
             
                 df_ranked['Доля в портфеле (%)'] = (df_ranked['Текущая Стоимость'] / total_val * 100).fillna(0).round(1)
