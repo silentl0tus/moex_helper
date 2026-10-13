@@ -65,12 +65,29 @@ with col1:
     st.markdown("---")
     st.subheader("🤖 Hugging Face AI")
     default_hf_token = ""
-    try:
-        default_hf_token = st.secrets.get("HF_TOKEN", "")
-    except Exception:
-        pass
+    token_keys = ["HF_TOKEN", "HUGGINGFACE_TOKEN", "HugginFace", "HUGGING_FACE"]
+    
+    # 1. Проверяем Streamlit Secrets
+    for k in token_keys:
+        try:
+            if k in st.secrets and st.secrets[k]:
+                default_hf_token = str(st.secrets[k]).strip()
+                break
+        except Exception:
+            pass
+
+    # 2. Проверяем переменные окружения и .env
     if not default_hf_token:
-        default_hf_token = os.getenv("HF_TOKEN", "")
+        try:
+            from dotenv import load_dotenv
+            load_dotenv()
+        except Exception:
+            pass
+        for k in token_keys:
+            val = os.getenv(k)
+            if val and val.strip():
+                default_hf_token = val.strip()
+                break
 
     hf_token_input = st.text_input(
         "HF Access Token (Read):",
