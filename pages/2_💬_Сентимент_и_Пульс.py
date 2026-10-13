@@ -13,12 +13,15 @@ from sentiment_scraper import (
     extract_meaningful_messages,
     extract_pulse_messages,
     extract_aggregated_messages,
+    generate_structured_summary,
+    summarize_with_hf,
     FALLBACK_TICKERS,
     POSITIVE_WORDS,
     NEGATIVE_WORDS,
     ANALYTICS_WORDS
 )
 import re
+import os
 
 st.set_page_config(page_title="Сентимент и Пульс", page_icon="💬", layout="wide")
 
@@ -53,6 +56,25 @@ with col1:
     st.markdown("---")
     show_full = st.checkbox("Показывать полные сообщения", value=False)
     
+    st.markdown("---")
+    st.subheader("🤖 Hugging Face AI")
+    default_hf_token = ""
+    try:
+        default_hf_token = st.secrets.get("HF_TOKEN", "")
+    except Exception:
+        pass
+    if not default_hf_token:
+        default_hf_token = os.getenv("HF_TOKEN", "")
+
+    hf_token_input = st.text_input(
+        "HF Access Token (Read):",
+        value=default_hf_token,
+        type="password",
+        help="Бесплатный токен 'Read' с сайта huggingface.co/settings/tokens. Позволяет вызывать нейросеть-суммаризатор через API без нагрузки на память Streamlit."
+    )
+    if not hf_token_input:
+        st.caption("💡 *Без токена работает встроенная выжимка. С токеном доступна AI-генерация через нейросеть.*")
+
     if "force_reload" not in st.session_state:
         st.session_state.force_reload = False
         
@@ -69,34 +91,6 @@ def get_messages(ticker, source, force_reload=False):
         return extract_pulse_messages(ticker, max_messages=50)
     else:
         return extract_meaningful_messages(ticker, max_pages=2, max_messages=50)
-
-def generate_summary(messages):
-    sentences = []
-    for m in messages:
-        parts = re.split(r'(?<=[.!?\n])\s+', m["text"])
-        for p in parts:
-            p = p.strip()
-            if len(p) < 30 or len(p) > 200:
-                continue
-            
-            p_lower = p.lower()
-            
-            has_pos = any(re.search(r'\b' + w + r'[а-я]*\b', p_lower) for w in POSITIVE_WORDS)
-            has_neg = any(re.search(r'\b' + w + r'[а-я]*\b', p_lower) for w in NEGATIVE_WORDS)
-            has_an = any(re.search(r'\b' + w + r'[а-я]*\b', p_lower) for w in ANALYTICS_WORDS)
-            
-            if has_pos or has_neg or has_an:
-                icon = "🟢" if has_pos else "🔴" if has_neg else "📊"
-                sentences.append((icon, p))
-                
-    unique_sents = []
-    seen = set()
-    for icon, s in sentences:
-        if s not in seen:
-            seen.add(s)
-            unique_sents.append(f"{icon} {s}")
-            
-    return unique_sents[:7]
 
 with col2:
     st.subheader(f"Лента сообщений: {ticker_to_search}")
@@ -142,11 +136,53 @@ with col2:
         st.markdown(f"Отображено сообщений: **{len(filtered)}**")
         st.divider()
         
-        summary_sentences = generate_summary(filtered)
-        if summary_sentences:
-            st.info("**⚡ Ключевые тезисы из обсуждений (Выжимка):**\n\n" + "\n".join([f"- {s}" for s in summary_sentences]))
+        st.markdown("#### ⚡ Выжимка и ключевые тезисы")
+        
+        hf_active = bool(hf_token_input and hf_token_input.strip())
+        c_sum1, c_sum2 = st.columns([3, 1])
+        with c_sum1:
+            st.caption("Анализирует обсуждения сообщества инвесторов из Т-Банк Пульс и Smart-Lab.")
+        with c_sum2:
+            run_ai = st.button("🤖 AI-выжимка (HF)", help="Запустить нейросетевую суммаризацию через Hugging Face Serverless API", disabled=not hf_active)
+
+        if run_ai and hf_active:
+            with st.spinner("Запрос к нейросети Hugging Face (IlyaGusev/rut5_base_sum_gazeta)..."):
+                hf_res = summarize_with_hf(filtered, ticker_to_search, hf_token=hf_token_input)
+                if hf_res.get("ai_summary"):
+                    st.success(f"**🤖 Нейросетевое резюме (`{hf_res.get('model', 'Hugging Face')}`):**\n\n{hf_res['ai_summary']}")
+                struct_data = hf_res.get("structured", {})
         else:
-            st.info("**⚡ Ключевые тезисы из обсуждений (Выжимка):**\n\nНе удалось составить сводку.")
+            struct_data = generate_structured_summary(filtered)
+
+        pos_list = struct_data.get("pos", [])
+        neg_list = struct_data.get("neg", [])
+        an_list = struct_data.get("an", [])
+
+        if pos_list or neg_list or an_list:
+            s_col1, s_col2, s_col3 = st.columns(3)
+            with s_col1:
+                st.markdown("**🟢 Драйверы роста (Позитив)**")
+                if pos_list:
+                    for item in pos_list:
+                        st.markdown(f"- {item}")
+                else:
+                    st.caption("Явных позитивных тезисов не найдено.")
+            with s_col2:
+                st.markdown("**🔴 Риски и сомнения (Негатив)**")
+                if neg_list:
+                    for item in neg_list:
+                        st.markdown(f"- {item}")
+                else:
+                    st.caption("Явных негативных тезисов не найдено.")
+            with s_col3:
+                st.markdown("**📊 Факты, отчеты и цифры**")
+                if an_list:
+                    for item in an_list:
+                        st.markdown(f"- {item}")
+                else:
+                    st.caption("Фактических данных не выделено.")
+        else:
+            st.info("Не удалось составить сводку по текущей выборке сообщений.")
             
         st.divider()
         

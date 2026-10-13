@@ -316,6 +316,108 @@ def extract_aggregated_messages(ticker, max_messages=50):
     combined.sort(key=lambda m: str(m.get("time", "")), reverse=True)
     return combined[:max_messages]
 
+
+def generate_structured_summary(messages: list) -> dict:
+    """
+    Умный экстрактивный суммаризатор (работает автономно, без внешних API).
+    Анализирует все сообщения и формирует тезисы по 3 категориям:
+    - 🟢 Драйверы роста (бычий тезис)
+    - 🔴 Риски и негатив (медвежий тезис)
+    - 📊 Факты, отчеты и дивиденды
+    """
+    pos_items = []
+    neg_items = []
+    an_items = []
+    seen = set()
+
+    for m in messages:
+        raw = m.get("text", "")
+        parts = [p.strip() for p in re.split(r"(?<=[.!?\n])\s+", raw) if 30 <= len(p.strip()) <= 250]
+        for p in parts:
+            p_clean = re.sub(r"[\s\n]+", " ", p).strip()
+            norm = p_clean.lower()[:50]
+            if norm in seen:
+                continue
+            seen.add(norm)
+
+            p_lower = p_clean.lower()
+            has_pos = any(re.search(r"\b" + w + r"[а-я]*\b", p_lower) for w in POSITIVE_WORDS)
+            has_neg = any(re.search(r"\b" + w + r"[а-я]*\b", p_lower) for w in NEGATIVE_WORDS)
+            has_an = any(re.search(r"\b" + w + r"[а-я]*\b", p_lower) for w in ANALYTICS_WORDS) or bool(
+                re.search(r"\d+[\s,]?\d*\s*(?:млрд|трлн|млн|руб|₽|%)", p_lower)
+            )
+
+            src = f"[{m.get('source', '')}] {m.get('author', '')}"
+            formatted = f"{p_clean} *({src})*"
+
+            if has_pos and not has_neg:
+                pos_items.append(formatted)
+            elif has_neg and not has_pos:
+                neg_items.append(formatted)
+            elif has_an:
+                an_items.append(formatted)
+
+    return {
+        "pos": pos_items[:3],
+        "neg": neg_items[:3],
+        "an": an_items[:3]
+    }
+
+
+def summarize_with_hf(messages: list, ticker: str, hf_token: str = None) -> dict:
+    """
+    Генерирует суммаризацию через Serverless Hugging Face Inference API.
+    Если токен не задан или сервер недоступен, возвращает fallback на generate_structured_summary.
+    """
+    fallback_summary = generate_structured_summary(messages)
+    if not hf_token or not messages:
+        return {"ai_summary": None, "structured": fallback_summary, "model": None}
+
+    clean_texts = [re.sub(r"[\s\n]+", " ", m.get("text", "")).strip() for m in messages if len(m.get("text", "")) > 40]
+    input_text = " ; ".join(clean_texts[:15])[:2500]
+
+    headers = {
+        "Authorization": f"Bearer {hf_token.strip()}",
+        "Content-Type": "application/json"
+    }
+
+    model_name = "IlyaGusev/rut5_base_sum_gazeta"
+    url = f"https://router.huggingface.co/hf-inference/models/{model_name}"
+
+    try:
+        resp = requests.post(
+            url,
+            headers=headers,
+            json={"inputs": input_text, "parameters": {"max_length": 250, "min_length": 40}},
+            timeout=15
+        )
+        if resp.status_code == 200:
+            res_json = resp.json()
+            if isinstance(res_json, list) and len(res_json) > 0:
+                summary_txt = res_json[0].get("summary_text", "")
+                if summary_txt:
+                    return {
+                        "ai_summary": summary_txt,
+                        "structured": fallback_summary,
+                        "model": model_name
+                    }
+        elif resp.status_code == 503:
+            return {
+                "ai_summary": "⏳ Модель на сервере Hugging Face сейчас запускается (cold start). Повторите запрос через 15–20 секунд.",
+                "structured": fallback_summary,
+                "model": model_name
+            }
+        elif resp.status_code == 401:
+            return {
+                "ai_summary": "❌ Неверный токен Hugging Face (ошибка 401). Проверьте токен в настройках.",
+                "structured": fallback_summary,
+                "model": model_name
+            }
+    except Exception as exc:
+        print(f"HF Inference error: {exc}")
+
+    return {"ai_summary": None, "structured": fallback_summary, "model": None}
+
 def main():
     tickers = fetch_moex_tickers()
     print(f"Starting sentiment analysis for {len(tickers)} tickers...")
