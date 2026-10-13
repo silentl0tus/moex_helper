@@ -82,10 +82,9 @@ def parse_ticker(ticker: str) -> dict | None:
 
     df = tables[0]
 
-    # Удаляем LTM-колонку (экстраполяция, часто искажена)
-    ltm_cols = [c for c in df.columns if df[c].astype(str).str.contains("LTM", case=False).any()]
-    if ltm_cols:
-        df = df.drop(columns=ltm_cols)
+    # Раньше здесь удалялась колонка LTM. Теперь мы её оставляем,
+    # чтобы скрипт брал самые свежие квартальные данные (Last Twelve Months), а не только закрытые года.
+    # df = df.drop(columns=ltm_cols)
 
     df = df.rename(columns={df.columns[0]: "Metric"})
     df = df[[c for c in df.columns if c != "?"]]

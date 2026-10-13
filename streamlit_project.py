@@ -392,6 +392,60 @@ def fetch_smartlab_fundamentals(ticker_list):
     # Отдаём только те тикеры, которые запросил пользователь
     return df[df['ticker'].isin([t.upper() for t in ticker_list])].reset_index(drop=True)
 
+# -------------------------------------------------------------
+# ШЛЮЗЫ ВНЕШНЕЙ АНАЛИТИКИ (Russian Magellan PRO + TankerMap)
+# -------------------------------------------------------------
+@st.cache_data(ttl=300)
+def fetch_magellan_order_flow(period: str = "today") -> dict:
+    try:
+        from src.magellan_gateway import MagellanGateway
+        return MagellanGateway().get_order_flow(period)
+    except Exception as exc:
+        st.sidebar.warning(f"Ошибка загрузки Order Flow (Magellan): {exc}")
+        return {}
+
+@st.cache_data(ttl=1800)
+def fetch_magellan_banks_summary() -> dict:
+    try:
+        from src.magellan_gateway import MagellanGateway
+        return MagellanGateway().get_banks_summary()
+    except Exception as exc:
+        st.sidebar.warning(f"Ошибка загрузки банков (Magellan): {exc}")
+        return {}
+
+@st.cache_data(ttl=1800)
+def fetch_magellan_bank_details(ticker: str):
+    try:
+        from src.magellan_gateway import MagellanGateway
+        return MagellanGateway().get_bank_details(ticker)
+    except Exception:
+        return None
+
+@st.cache_data(ttl=900)
+def fetch_tankermap_export_stats() -> dict:
+    try:
+        from src.tankermap_gateway import TankerMapGateway
+        return TankerMapGateway().get_russian_export_analytics()
+    except Exception as exc:
+        st.sidebar.warning(f"Ошибка загрузки TankerMap: {exc}")
+        return {}
+
+@st.cache_data(ttl=1800)
+def fetch_tankermap_chokepoints() -> dict:
+    try:
+        from src.tankermap_gateway import TankerMapGateway
+        return TankerMapGateway().get_chokepoints_analytics()
+    except Exception:
+        return {}
+
+@st.cache_data(ttl=1800)
+def fetch_tankermap_news() -> list:
+    try:
+        from src.tankermap_gateway import TankerMapGateway
+        return TankerMapGateway().get_maritime_news()
+    except Exception:
+        return []
+
 # ==========================================
 # 3. БИЗНЕС-ЛОГИКА И РАСЧЕТЫ
 # ==========================================
@@ -770,6 +824,9 @@ with st.spinner("Считываю сигналы систем..."):
     tech_data = fetch_technical_indicators(selected_tickers)
     raw_fundamental_data = fetch_smartlab_fundamentals(selected_tickers)
     sentiment_data = load_sentiment_data(_cache_buster=_sentiment_mtime())
+    magellan_of = fetch_magellan_order_flow("today")
+    magellan_banks = fetch_magellan_banks_summary()
+    tanker_stats = fetch_tankermap_export_stats()
 
 
 index_level = market_context.get("IMOEX")
@@ -784,7 +841,15 @@ d_col2.metric("Ключевая ставка ЦБ", f"{market_context.get('KEY_R
 d_col3.metric("Индекс МосБиржи", f"{index_level:,.0f}" if index_level else "Н/Д")
 st.markdown("---")
 
-tab1, tab2, tab3, tab4 = st.tabs(["🏆 Рейтинг и Аналитика", "💼 Мой Портфель", "🗺️ Карта рынка", "⚖️ Ребалансировка"])
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    "🏆 Рейтинг и Аналитика",
+    "💼 Мой Портфель",
+    "🗺️ Карта рынка",
+    "⚖️ Ребалансировка",
+    "🌊 Order Flow (Magellan)",
+    "🏦 Банки ЦБ РФ (РСБУ)",
+    "🚢 Танкеры & Нефть (TankerMap)"
+])
 
 with tab1:
     with st.expander(f"Ликвидные тикеры MOEX ({len(moex_tickers)})"):
@@ -970,9 +1035,29 @@ with tab1:
         df_fund.loc[is_holding, "Health_Score"] = (((3.0 / df_fund.loc[is_holding, "P_BV"].clip(lower=0.1)) / (1 + safe_debt[is_holding])) * growth_multiplier[is_holding]).round(2)
         
         # Специфика Банков (Финансовый сектор): их оценивают по связке Капитала (P/BV) и Эффективности (ROE).
-        # Умножаем P_BV на 5.0, чтобы шкала оценки банка математически совпадала со шкалой P/E обычных компаний.
+        # Обогащение банков реальными данными ЦБ РФ (Форма 101/102 из Magellan)
         is_bank = df_fund['ticker'].isin(BANK_TICKERS)
+        for ticker in df_fund[is_bank]['ticker']:
+            b_details = fetch_magellan_bank_details(ticker)
+            if b_details and b_details.get("roe_ltm") is not None:
+                cb_roe = float(b_details["roe_ltm"])
+                df_fund.loc[df_fund['ticker'] == ticker, "ROE_%"] = cb_roe
+                df_fund.loc[df_fund['ticker'] == ticker, "ROE_norm"] = min(max(cb_roe, 5.0), 35.0)
+
         df_fund.loc[is_bank, "Health_Score"] = (((df_fund.loc[is_bank, "ROE_norm"] / (df_fund.loc[is_bank, "P_BV"].clip(lower=0.1) * 5.0)) / (1 + safe_debt[is_bank])) * growth_multiplier[is_bank]).round(2)
+
+        # Мультипликатор надежности капитала H1.0 из ЦБ РФ (Magellan)
+        for ticker in df_fund[is_bank]['ticker']:
+            b_details = fetch_magellan_bank_details(ticker)
+            if b_details and b_details.get("h1_0") is not None:
+                h1_0 = float(b_details["h1_0"])
+                if h1_0 >= 12.0:
+                    cap_mult = 1.15  # Избыток капитала (высокая дивидендная безопасность)
+                elif h1_0 < 9.5:
+                    cap_mult = 0.70  # Дефицит капитала (регуляторный риск / допэмиссия)
+                else:
+                    cap_mult = 1.0
+                df_fund.loc[df_fund['ticker'] == ticker, "Health_Score"] = (df_fund.loc[df_fund['ticker'] == ticker, "Health_Score"] * cap_mult).round(2)
         
         # Учет макро-контекста: корректировка нефтяников по текущей цене Urals
         urals_price = market_context.get("URALS")
@@ -985,6 +1070,24 @@ with tab1:
                 oil_multiplier = 1.0  # Нейтрально
             is_oil = df_fund['ticker'].isin(OIL_TICKERS)
             df_fund.loc[is_oil, "Health_Score"] = (df_fund.loc[is_oil, "Health_Score"] * oil_multiplier).round(2)
+
+        # Учет морской логистики экспорта TankerMap (для нефтяников и транспортного сектора)
+        port_distr = tanker_stats.get("port_distribution", {}) if isinstance(tanker_stats, dict) else {}
+        active_terminal_vessels = (
+            port_distr.get("Балтика (Urals)", 0) +
+            port_distr.get("Черное море (Urals / КТК)", 0) +
+            port_distr.get("Дальний Восток (ВСТО / ESPO)", 0)
+        )
+        is_port_transport = df_fund['ticker'].isin(['TRNFP', 'NMTP'])
+        if active_terminal_vessels >= 25:
+            # Высокая загрузка терминалов Новороссийска, Приморска, Козьмино -> премия к тарифам перевалки
+            df_fund.loc[is_port_transport, "Health_Score"] = (df_fund.loc[is_port_transport, "Health_Score"] * 1.12).round(2)
+        elif active_terminal_vessels < 10 and active_terminal_vessels > 0:
+            df_fund.loc[is_port_transport, "Health_Score"] = (df_fund.loc[is_port_transport, "Health_Score"] * 0.90).round(2)
+
+        is_flot = df_fund['ticker'] == 'FLOT'
+        if tanker_stats.get("total_ru_vessels", 0) >= 120:
+            df_fund.loc[is_flot, "Health_Score"] = (df_fund.loc[is_flot, "Health_Score"] * 1.10).round(2)
             
             # Учет макро-контекста: Сталевары
         steel_price = market_context.get("STEEL")
@@ -1081,6 +1184,37 @@ with tab1:
         # Прямой подход: позитивный сентимент дает бонус (до +5%), негативный - штраф (до -5%)
         sentiment_multiplier = 1 + (df_fund['Сентимент_Балл'] * 0.05)
         df_fund["Health_Score"] = (df_fund["Health_Score"] * sentiment_multiplier).round(2)
+
+        # Учет Order Flow (микроструктура рынка из Russian Magellan PRO)
+        def get_order_flow_multiplier(ticker):
+            of_info = magellan_of.get(ticker, {}) if isinstance(magellan_of, dict) else {}
+            reading_key = of_info.get("reading_key")
+            buy_ratio = of_info.get("buy_ratio", 50.0)
+            if reading_key == "accum":
+                return 1.15  # Накопление / Абсорбция крупными игроками
+            elif reading_key == "rev":
+                return 1.10  # Разворот спроса
+            elif reading_key == "distr":
+                return 0.85  # Скрытое распределение (продажа в стакан)
+            elif buy_ratio >= 65.0:
+                return 1.08  # Преобладание агрессивных покупок
+            elif buy_ratio <= 35.0:
+                return 0.92  # Преобладание агрессивных продаж
+            return 1.0
+
+        def get_of_badge(ticker):
+            of_info = magellan_of.get(ticker, {}) if isinstance(magellan_of, dict) else {}
+            label = of_info.get("reading_label")
+            delta_mln = of_info.get("delta", 0.0) / 1_000_000.0
+            if label and label != "—":
+                return f"{label} ({delta_mln:+.1f}M ₽)"
+            elif delta_mln != 0:
+                return f"Δ {delta_mln:+.1f}M ₽"
+            return "—"
+
+        df_fund['Поток (OrderFlow)'] = df_fund['ticker'].apply(get_of_badge)
+        df_fund['OF_Multiplier'] = df_fund['ticker'].apply(get_order_flow_multiplier)
+        df_fund["Health_Score"] = (df_fund["Health_Score"] * df_fund['OF_Multiplier']).round(2)
         
         # Интеграция Безрисковой Ставки (Key Rate / Cost of Money)
         key_rate_val = market_context.get("KEY_RATE", 16.0)
@@ -1309,7 +1443,7 @@ with tab1:
         
             st.page_link("pages/2_💬_Сентимент_и_Пульс.py", label="Открыть детальную ленту сообщений и сентимента (Smart-Lab)", icon="💬")
         
-            cols_to_show = ["ticker", "Health_Score", "Тренд", "RSI", "Сентимент", "Div_Yield_%", "Rev_Growth_%", "ROE_%", "P_E", "P_BV", "Debt_EBITDA"]
+            cols_to_show = ["ticker", "Health_Score", "Тренд", "Поток (OrderFlow)", "RSI", "Сентимент", "Div_Yield_%", "Rev_Growth_%", "ROE_%", "P_E", "P_BV", "Debt_EBITDA"]
             if my_portfolio:
                 cols_to_show.insert(2, "Доля в портфеле (%)")
                 cols_to_show.insert(3, "PnL (%)")
@@ -1321,11 +1455,15 @@ with tab1:
                 column_config={
                     "Health_Score": st.column_config.NumberColumn(
                         "Health_Score",
-                        help="Комплексный рейтинг здоровья бизнеса. База = 1.0. Умножается на коэффициенты за рентабельность, долг, дивиденды и тренд. Ниже 1.0 — кандидаты на продажу."
+                        help="Комплексный рейтинг здоровья бизнеса. База = 1.0. Умножается на коэффициенты за рентабельность, долг, дивиденды, Order Flow и тренд. Ниже 1.0 — кандидаты на продажу."
                     ),
                     "Тренд": st.column_config.TextColumn(
                         "Тренд",
                         help="🔪 Падающий нож (цена ниже SMA-50 и SMA-200).\n🚀 Восходящий тренд (пробой SMA-50).\nБоковик (нейтрально)."
+                    ),
+                    "Поток (OrderFlow)": st.column_config.TextColumn(
+                        "Поток (OrderFlow)",
+                        help="Микроструктура торгов (Russian Magellan PRO).\n🟢 Накопление/Абсорбция — крупный покупатель поглощает навес продавцов.\n🔴 Распределение — скрытый сброс объемов.\nΔ — чистая дельта покупок и продаж."
                     ),
                     "Сентимент": st.column_config.TextColumn(
                         "Сентимент",
@@ -1388,5 +1526,213 @@ with tab1:
             position_df["target_value_rub"] = (position_df["weight"] * capital).astype(int)
             st.caption(f"Топ-{n_assets} активов по Health Score | Акционерная доля: {rules['equity_target']*100:.0f}% от капитала")
             st.dataframe(position_df, width="stretch", hide_index=True)
+
+        with tab5:
+            # 🌊 ORDER FLOW (Russian Magellan PRO)
+            st.subheader("🌊 Микроструктура торгов: Order Flow & Умные деньги")
+            st.caption("Анализ агрессивных покупок/продаж и поглощения навесов в стакане по данным Russian Magellan PRO.")
+            
+            of_col_a, of_col_b = st.columns([3, 1])
+            with of_col_a:
+                st.markdown("Мониторинг показывает, **куда реально перетекает ликвидность**: крупный игрок может скрытно скупать бумагу при падающей цене (*Абсорбция / Накопление*) или распределять позицию толпе (*Скрытый сброс*).")
+            with of_col_b:
+                of_period = st.radio("Период Order Flow:", ["Сегодня (с открытия)", "Неделя (кумулятивно)"], horizontal=True)
+
+            active_period_code = "today" if of_period.startswith("Сегодня") else "week"
+            of_raw = fetch_magellan_order_flow(active_period_code)
+
+            if of_raw:
+                of_rows = []
+                for t, info in of_raw.items():
+                    if t in selected_tickers or not selected_tickers:
+                        bv_m = info.get("bv", 0) / 1_000_000.0
+                        sv_m = info.get("sv", 0) / 1_000_000.0
+                        delta_m = info.get("delta", 0) / 1_000_000.0
+                        total_m = bv_m + sv_m
+                        if total_m > 0:
+                            of_rows.append({
+                                "Тикер": t,
+                                "Цена, ₽": info.get("last_price"),
+                                "Изм, %": info.get("price_chng"),
+                                "Покупки, млн ₽": round(bv_m, 2),
+                                "Продажи, млн ₽": round(sv_m, 2),
+                                "Дельта, млн ₽": round(delta_m, 2),
+                                "Доля покупок, %": info.get("buy_ratio"),
+                                "Сигнал": info.get("reading_label", "—"),
+                                "Механика": info.get("reading_explain", ""),
+                                "key": info.get("reading_key", "na")
+                            })
+
+                df_of_table = pd.DataFrame(of_rows)
+                if not df_of_table.empty:
+                    total_buy = df_of_table["Покупки, млн ₽"].sum()
+                    total_sell = df_of_table["Продажи, млн ₽"].sum()
+                    net_delta = df_of_table["Дельта, млн ₽"].sum()
+                    avg_buy_pct = (total_buy / (total_buy + total_sell) * 100) if (total_buy + total_sell) > 0 else 50.0
+
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.metric("Суммарные покупки", f"{total_buy:,.1f} млн ₽")
+                    m2.metric("Суммарные продажи", f"{total_sell:,.1f} млн ₽")
+                    m3.metric("Чистая дельта (Buy - Sell)", f"{net_delta:+,.1f} млн ₽", "Перевес покупателей" if net_delta > 0 else "Давление продавцов")
+                    m4.metric("Доля агрессивных покупок", f"{avg_buy_pct:.1f}%")
+
+                    st.markdown("---")
+                    top_accum = df_of_table[df_of_table["key"] == "accum"].sort_values(by="Дельта, млн ₽", ascending=False).head(3)
+                    top_distr = df_of_table[df_of_table["key"] == "distr"].sort_values(by="Дельта, млн ₽", ascending=True).head(3)
+
+                    c_acc, c_dis = st.columns(2)
+                    with c_acc:
+                        st.success("🟢 **Лидеры накопления / поглощения продаж:**")
+                        if not top_accum.empty:
+                            for _, r in top_accum.iterrows():
+                                st.write(f"• **{r['Тикер']}**: Дельта {r['Дельта, млн ₽']:+,.1f}M ₽ (Покупки {r['Доля покупок, %']}%) — *{r['Сигнал']}*")
+                        else:
+                            st.write("На выбранном срезе выраженных накоплений не зафиксировано.")
+
+                    with c_dis:
+                        st.error("🔴 **Лидеры скрытого сброса (распределения):**")
+                        if not top_distr.empty:
+                            for _, r in top_distr.iterrows():
+                                st.write(f"• **{r['Тикер']}**: Дельта {r['Дельта, млн ₽']:+,.1f}M ₽ (Покупки {r['Доля покупок, %']}%) — *{r['Сигнал']}*")
+                        else:
+                            st.write("На выбранном срезе выраженных сбросов не зафиксировано.")
+
+                    st.markdown("##### 📋 Детальная лента объемов и сигналов микроструктуры")
+                    st.dataframe(
+                        df_of_table.drop(columns=["key"]).sort_values(by="Дельта, млн ₽", ascending=False),
+                        width="stretch",
+                        hide_index=True,
+                        column_config={
+                            "Дельта, млн ₽": st.column_config.NumberColumn(
+                                "Дельта, млн ₽",
+                                help="Разница между объемом покупок по цене ask и продаж по цене bid."
+                            ),
+                            "Механика": st.column_config.TextColumn(
+                                "Механика",
+                                help="Алгоритмическая интерпретация поведения маркетмейкеров и крупных игроков."
+                            )
+                        }
+                    )
+            else:
+                st.info("Данные Order Flow временно обновляются...")
+
+        with tab6:
+            # 🏦 БАНКИ ЦБ РФ (РСБУ)
+            st.subheader("🏦 Финансовый сектор по РСБУ (Формы 101/102 ЦБ РФ)")
+            st.caption("Помесячная отчетность банков из первоисточника Банка России через Russian Magellan PRO. Обновляется ежемесячно без ожидания квартальных МСФО.")
+
+            banks_summary = fetch_magellan_banks_summary()
+            if banks_summary:
+                b_cols = st.columns(min(len(banks_summary), 5))
+                for idx, (t, b) in enumerate(list(banks_summary.items())[:5]):
+                    with b_cols[idx]:
+                        ytd_mlrd = b.get("ytd_profit_rub", 0) / 1_000_000_000.0
+                        growth = b.get("ytd_growth_pct")
+                        st.metric(
+                            label=f"{b.get('name')} ({t})",
+                            value=f"{ytd_mlrd:,.1f} млрд ₽",
+                            delta=f"{growth:+.1f}% г/г" if growth is not None else None
+                        )
+
+                st.markdown("---")
+                sel_bank_ticker = st.selectbox(
+                    "Выберите банк для детального аудита нормативов и капитала:",
+                    options=list(banks_summary.keys()),
+                    index=0
+                )
+
+                bank_detail = fetch_magellan_bank_details(sel_bank_ticker)
+                if bank_detail:
+                    st.markdown(f"#### 🏛️ {bank_detail.get('name')} — Показатели на {bank_detail.get('last_month')}")
+                    kpi_c1, kpi_c2, kpi_c3, kpi_c4 = st.columns(4)
+
+                    roe_val = bank_detail.get("roe_ltm")
+                    kpi_c1.metric("ROE LTM (по ЦБ)", f"{roe_val}%" if roe_val else "Н/Д", "Норма > 15%" if (roe_val or 0) >= 15 else "Слабая рентабельность")
+
+                    h10_val = bank_detail.get("h1_0")
+                    h10_status = "🛡️ Избыток (>12%)" if (h10_val or 0) >= 12.0 else ("⚠️ В норме" if (h10_val or 0) >= 9.5 else "🚨 Риск дефицита")
+                    kpi_c2.metric("Достаточность H1.0", f"{h10_val:.2f}%" if h10_val else "Н/Д", h10_status)
+
+                    h11_val = bank_detail.get("h1_1")
+                    kpi_c3.metric("Базовый капитал H1.1", f"{h11_val:.2f}%" if h11_val else "Н/Д", "Норматив ЦБ: мин 4.5%")
+
+                    overdue = bank_detail.get("overdue_pct")
+                    cover = bank_detail.get("reserve_cover")
+                    kpi_c4.metric("Просрочка / Покрытие", f"{overdue}% / {cover}%" if overdue else "Н/Д")
+
+                    points = bank_detail.get("points", [])
+                    if points:
+                        df_pts = pd.DataFrame(points)
+                        df_pts["Чистая прибыль за месяц, млрд ₽"] = df_pts["monthly"].fillna(0) / 1_000_000.0
+                        st.markdown("##### 📈 Помесячная динамика чистой прибыли (Форма 102 ЦБ РФ)")
+                        st.bar_chart(df_pts, x="month", y="Чистая прибыль за месяц, млрд ₽")
+            else:
+                st.info("Данные по банковскому сектору формируются...")
+
+        with tab7:
+            # 🚢 НЕФТЯНОЙ ФЛОТ & ЛОГИСТИКА (TankerMap)
+            st.subheader("🚢 Нефтяной флот & Логистика танкерного экспорта (TankerMap)")
+            st.caption("Спутниковый трекинг AIS морского экспорта сырой нефти, нефтепродуктов и СПГ из портов РФ.")
+
+            t_col1, t_col2, t_col3, t_col4 = st.columns(4)
+            ru_vessels_cnt = tanker_stats.get("total_ru_vessels", 0)
+            crude_dwt_m = (tanker_stats.get("loaded_crude_dwt", 0)) / 1_000_000.0
+            prod_dwt_m = (tanker_stats.get("loaded_prod_dwt", 0)) / 1_000_000.0
+            sanctioned_cnt = tanker_stats.get("sanctioned_vessels_global", 0)
+
+            t_col1.metric("Танкеров на маршрутах РФ", f"{ru_vessels_cnt} судов", "Стабильный экспорт" if ru_vessels_cnt > 120 else "Замедление")
+            t_col2.metric("Сырая нефть в море", f"{crude_dwt_m:.2f} млн тонн", "Urals / ВСТО / КТК")
+            t_col3.metric("Нефтепродукты & СПГ", f"{prod_dwt_m:.2f} млн тонн", "Дизель / Мазут / LNG")
+            t_col4.metric("Теневой / Санкционный флот", f"{sanctioned_cnt} судов", "Глобальный мониторинг")
+
+            st.markdown("---")
+            port_col, choke_col = st.columns([1, 1])
+
+            with port_col:
+                st.markdown("##### ⚓ Активность в экспортных хабах РФ")
+                port_breakdown = tanker_stats.get("port_distribution", {})
+                if port_breakdown:
+                    df_ports = pd.DataFrame([
+                        {"Морской бассейн": k, "Танкеров": v} for k, v in port_breakdown.items()
+                    ])
+                    st.bar_chart(df_ports, x="Морской бассейн", y="Танкеров")
+                else:
+                    st.write("Данные распределения по портам обновляются...")
+
+            with choke_col:
+                st.markdown("##### 🌊 Мониторинг узких проливов (Chokepoints)")
+                choke_summary = fetch_tankermap_chokepoints()
+                if choke_summary:
+                    c_rows = []
+                    names_map = {
+                        "hormuz": "Ормузский пролив (Hormuz)",
+                        "suez": "Суэцкий канал (Suez)",
+                        "malacca": "Малаккский пролив (Malacca)",
+                        "bab_el_mandeb": "Баб-эль-Мандеб (Красное море)",
+                        "danish_straits": "Датские проливы (Балтика)"
+                    }
+                    for k, item in choke_summary.items():
+                        if k in names_map:
+                            c_rows.append({
+                                "Пролив": names_map[k],
+                                "Судов сейчас": item.get("live_count", 0),
+                                "В среднем / день": item.get("avg_daily", 0),
+                                "Тренд трафика": f"{item.get('trend_pct', 0):+.1f}%"
+                            })
+                    if c_rows:
+                        st.dataframe(pd.DataFrame(c_rows), width="stretch", hide_index=True)
+                else:
+                    st.write("Данные по проливам загружаются...")
+
+            st.markdown("---")
+            st.markdown("##### 📰 Морские новости и геополитические алерты (TankerMap Research)")
+            t_news = fetch_tankermap_news()
+            if t_news:
+                for n_item in t_news[:5]:
+                    with st.expander(f"📍 {n_item.get('published_at', '')[:10]} | {n_item.get('title')}", expanded=False):
+                        st.write(f"**Тематика:** `{n_item.get('primary_topic', 'shipping')}` │ **Тег:** `{n_item.get('tag', 'market')}`")
+                        st.write(n_item.get("excerpt", ""))
+            else:
+                st.write("Лента морских новостей обновляется...")
     else:
         st.error("Аварийная остановка: Ни один актив не прошел проверку качества.")
