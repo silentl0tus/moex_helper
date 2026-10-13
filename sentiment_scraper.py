@@ -3,6 +3,8 @@ import re
 import json
 import time
 from pathlib import Path
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Списки позитивных и негативных слов для лексического анализа
 POSITIVE_WORDS = [
@@ -178,7 +180,7 @@ def extract_meaningful_messages(ticker, max_pages=2, max_messages=50):
                     
                 # Получаем автора
                 author_tag = it.select_one('a[href*="/profile/"], a[href*="/my/"], .user_name, .author, .name')
-                author = author_tag.get_text(strip=True) if author_tag else "Аноним"
+                author = (author_tag.get_text(strip=True) if author_tag else "").strip() or "Инвестор"
                 
                 # Получаем время
                 time_tag = it.select_one('time, .time, .date')
@@ -207,6 +209,7 @@ def extract_meaningful_messages(ticker, max_pages=2, max_messages=50):
                 else: trend = "neutral"
                 
                 messages.append({
+                    "source": "Smart-Lab",
                     "author": author,
                     "time": time_str,
                     "text": raw_text,
@@ -237,7 +240,8 @@ def extract_pulse_messages(ticker, max_messages=50):
     
     messages = []
     try:
-        r = requests.get(url, headers=headers, timeout=10)
+        # Т-Банк использует российский корневой сертификат Минцифры, поэтому отключаем SSL-проверку для предотвращения SSLCertVerificationError
+        r = requests.get(url, headers=headers, timeout=10, verify=False)
         if r.status_code != 200:
             return messages
             
@@ -245,17 +249,16 @@ def extract_pulse_messages(ticker, max_messages=50):
         items = data.get("payload", {}).get("items", [])
         
         for item in items:
-            raw_text = item.get("content", {}).get("text", "")
-            if not raw_text or len(raw_text) < 30:
+            raw_text = item.get("content", {}).get("text", "") or item.get("text", "")
+            if not raw_text or len(raw_text) < 15:
                 continue
                 
-            author = item.get("nickname", "Аноним")
+            author = item.get("nickname") or item.get("owner", {}).get("nickname", "Аноним")
             
             # Парсинг времени (формат: 2026-09-02T11:14:03.794Z)
             time_str = item.get("inserted", "")
             if time_str:
                 try:
-                    # Попытка преобразовать в более читаемый вид
                     from datetime import datetime
                     dt = datetime.strptime(time_str.split('.')[0].replace('Z', ''), "%Y-%m-%dT%H:%M:%S")
                     time_str = dt.strftime("%Y-%m-%d %H:%M")
@@ -265,7 +268,6 @@ def extract_pulse_messages(ticker, max_messages=50):
             post_id = item.get("id", "")
             link = f"https://www.tbank.ru/invest/social/profile/{author}/{post_id}/" if author != "Аноним" and post_id else url
             
-            # Очищаем текст от базовых спецсимволов для анализа (Пульс отдает чистый текст, но могут быть смайлы)
             clean_txt = clean_html(raw_text)
             p, n = analyze_sentiment(clean_txt)
             a_count = sum(1 for word in ANALYTICS_WORDS if re.search(r'\b' + word + r'[а-я]*\b', clean_txt))
@@ -279,6 +281,7 @@ def extract_pulse_messages(ticker, max_messages=50):
             else: trend = "neutral"
             
             messages.append({
+                "source": "Пульс",
                 "author": author,
                 "time": time_str,
                 "text": raw_text,
@@ -293,6 +296,25 @@ def extract_pulse_messages(ticker, max_messages=50):
         print(f"Error fetching Pulse detailed {ticker}: {e}")
         
     return messages
+
+
+def extract_aggregated_messages(ticker, max_messages=50):
+    """
+    Одновременно агрегирует обсуждения из Т-Банк Пульс и Smart-Lab,
+    объединяет их и возвращает единую ленту сообщений.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    limit_per_source = max(15, max_messages // 2 + 5)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        f_pulse = executor.submit(extract_pulse_messages, ticker, limit_per_source)
+        f_smart = executor.submit(extract_meaningful_messages, ticker, 2, limit_per_source)
+        pulse_msgs = f_pulse.result() or []
+        smart_msgs = f_smart.result() or []
+
+    combined = pulse_msgs + smart_msgs
+    combined.sort(key=lambda m: str(m.get("time", "")), reverse=True)
+    return combined[:max_messages]
 
 def main():
     tickers = fetch_moex_tickers()

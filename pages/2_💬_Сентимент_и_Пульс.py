@@ -9,13 +9,21 @@ project_root = Path(__file__).parent.parent
 if str(project_root) not in sys.path:
     sys.path.append(str(project_root))
 
-from sentiment_scraper import extract_meaningful_messages, extract_pulse_messages, FALLBACK_TICKERS, POSITIVE_WORDS, NEGATIVE_WORDS, ANALYTICS_WORDS
+from sentiment_scraper import (
+    extract_meaningful_messages,
+    extract_pulse_messages,
+    extract_aggregated_messages,
+    FALLBACK_TICKERS,
+    POSITIVE_WORDS,
+    NEGATIVE_WORDS,
+    ANALYTICS_WORDS
+)
 import re
 
 st.set_page_config(page_title="Сентимент и Пульс", page_icon="💬", layout="wide")
 
-st.title("💬 Анализ сентимента (Smart-Lab)")
-st.markdown("Здесь вы можете просматривать последние осмысленные сообщения и аналитику по компаниям.")
+st.title("💬 Анализ сентимента (Пульс + Smart-Lab)")
+st.markdown("Здесь вы можете агрегировать последние осмысленные сообщения и аналитику инвесторов из **Т-Банк Пульс** и **Smart-Lab**.")
 
 col1, col2 = st.columns([1, 2])
 
@@ -32,7 +40,11 @@ with col1:
     
     st.markdown("---")
     st.subheader("Источник и Фильтры")
-    source_option = st.radio("Источник данных:", ["Smart-Lab (Форум)", "Тинькофф Пульс"])
+    source_option = st.radio(
+        "Источник данных:",
+        ["Все источники (Пульс + Smart-Lab)", "Т-Банк Пульс", "Smart-Lab (Форум)"],
+        index=0
+    )
     filter_option = st.radio(
         "Показать сообщения:",
         options=["Все осмысленные", "Только 🟢 Позитив", "Только 🔴 Негатив", "Только 📊 Аналитика"]
@@ -51,7 +63,9 @@ with col1:
 
 @st.cache_data(ttl=600, show_spinner=False)
 def get_messages(ticker, source, force_reload=False):
-    if source == "Тинькофф Пульс":
+    if source == "Все источники (Пульс + Smart-Lab)":
+        return extract_aggregated_messages(ticker, max_messages=60)
+    elif source == "Т-Банк Пульс":
         return extract_pulse_messages(ticker, max_messages=50)
     else:
         return extract_meaningful_messages(ticker, max_pages=2, max_messages=50)
@@ -112,9 +126,15 @@ with col2:
         pos_count = sum(1 for m in messages if m["trend"] == "positive")
         neg_count = sum(1 for m in messages if m["trend"] == "negative")
         an_count = sum(1 for m in messages if m["trend"] == "analytics" or m["analytics"] > 0)
+        pulse_count = sum(1 for m in messages if m.get("source") == "Пульс")
+        smart_count = sum(1 for m in messages if m.get("source") == "Smart-Lab")
         
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Всего", len(messages))
+        c1.metric(
+            "Всего сообщений",
+            len(messages),
+            f"🟣 Пульс: {pulse_count} │ 🔵 Смарт: {smart_count}" if pulse_count and smart_count else None
+        )
         c2.metric("🟢 Позитив", pos_count)
         c3.metric("🔴 Негатив", neg_count)
         c4.metric("📊 Аналитика", an_count)
@@ -135,7 +155,8 @@ with col2:
                 with st.container(border=True):
                     head_cols = st.columns([3, 1, 1])
                     with head_cols[0]:
-                        st.markdown(f"**👤 {m['author']}**")
+                        src_badge = "🟣 Пульс" if m.get("source") == "Пульс" else "🔵 Smart-Lab"
+                        st.markdown(f"**👤 {m['author']}** &nbsp; `{src_badge}`")
                     with head_cols[1]:
                         st.markdown(f"*{m['time']}*")
                     with head_cols[2]:
