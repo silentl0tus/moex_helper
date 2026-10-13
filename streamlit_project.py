@@ -421,6 +421,22 @@ def fetch_magellan_bank_details(ticker: str):
     except Exception:
         return None
 
+@st.cache_data(ttl=3600)
+def fetch_magellan_funds() -> list:
+    try:
+        from src.magellan_gateway import MagellanGateway
+        return MagellanGateway().get_funds_flow()
+    except Exception:
+        return []
+
+@st.cache_data(ttl=3600)
+def fetch_magellan_ipr() -> dict:
+    try:
+        from src.magellan_gateway import MagellanGateway
+        return MagellanGateway().get_ipr_plans()
+    except Exception:
+        return {}
+
 @st.cache_data(ttl=900)
 def fetch_tankermap_export_stats() -> dict:
     try:
@@ -449,6 +465,81 @@ def fetch_tankermap_news() -> list:
 # ==========================================
 # 3. БИЗНЕС-ЛОГИКА И РАСЧЕТЫ
 # ==========================================
+HEALTH_SCORE_EXPLANATION = """
+**Health Score** — это многофакторный математический рейтинг инвестиционной привлекательности компании, объединяющий фундаментал, макроэкономику, микроструктуру стакана и спутниковый трекинг физических товарных потоков.
+
+Рейтинг стартует с базового значения (**1.0**) и динамически масштабируется коэффициентами:
+
+---
+### 1. Фундаментальная рентабельность и оценка (Growth & Value)
+- `ROE > 15%` ➡️ бонус **+0.2** (Высокая отдача на капитал)
+- `ROE < 0%` ➡️ штраф **-0.5** (Убыточный бизнес)
+- `P/E < 8` ➡️ бонус **+0.2** (Недооценка рынком)
+- `P/E > 15` ➡️ штраф **-0.3** (Переоценка)
+- `Рост выручки > 10%` ➡️ бонус **+0.1** (Бизнес расширяется)
+- `Рост выручки < 0%` ➡️ штраф **-0.2** (Стагнация)
+
+---
+### 2. Дивидендная безопасность и Свободный Кэш (FCF & Payout)
+- Дивидендная доходность `> 8%` ➡️ бонус **+0.3**
+- `FCF Yield > 10%` ➡️ бонус **+0.2** (Cash is King: дивиденды обеспечены живыми деньгами)
+- `FCF Yield < 0%` ➡️ штраф **-0.3** (Бумажная прибыль, компания проедает оборотный капитал)
+- `Payout Ratio > 100%` ➡️ штраф **-0.2** (Выплата дивов в долг)
+
+---
+### 3. Долговая нагрузка и Защита от банкротства (Solvency)
+- `Debt/EBITDA > 3.0` ➡️ штраф **-0.4** (Критический риск при высокой ключевой ставке ЦБ)
+- Отрицательный чистый долг (Кубышка) ➡️ бонус до **+0.5**
+- Токсичные эмитенты (Черный список) ➡️ штраф **-0.3** и изоляция
+- `P/BV < 0.5` ➡️ бонус **+0.1** (Дисконт к балансовой стоимости активов)
+
+---
+### 4. 🌊 Микроструктура торгов и Order Flow (Russian Magellan PRO)
+- **Алгоритмический статус сделок:**
+  - `🟢 Накопление (Accumulation)` ➡️ мультипликатор **×1.15** (Скрытый выкуп предложения институционалами)
+  - `🔄 Разворот спроса (Reversal)` ➡️ мультипликатор **×1.10** (Перелом рыночного давления)
+  - `🔴 Скрытый сброс (Distribution)` ➡️ штраф **×0.85** (Крупные продажи в стакан)
+- **Баланс покупок:** Доля покупок `≥ 65%` ➡️ **×1.08**; `≤ 35%` ➡️ **×0.92**
+- **Крупные пакетные сделки ("Киты" / Big Volume):** При объеме крупных пакетов `> 30 млн ₽`, преобладание покупок китами дает дополнительный бонус **×1.05**, преобладание сброса — штраф **×0.95**.
+
+---
+### 5. 🏦 Банковский сектор по РСБУ (Формы 101/102 ЦБ РФ через Magellan)
+- **Реальный ROE LTM:** Замена расчетных оценок на факт чистой прибыли за последние 12 мес. из первоисточника Банка России.
+- **Достаточность совокупного капитала (Н1.0):**
+  - `H1.0 ≥ 12.0%` ➡️ премия **×1.15** (Существенный запас надежности и дивидендной базы)
+  - `H1.0 < 9.5%` ➡️ штраф **×0.70** (Близость к регуляторному минимуму 8.0%, риск допэмиссии)
+- **Качество кредитного портфеля (Просрочка):**
+  - Просрочка `overdue_pct < 3.5%` ➡️ бонус **×1.05** (Низкие расходы на создание резервов)
+  - Просрочка `overdue_pct > 6.0%` ➡️ штраф **×0.88** (Рост проблемных кредитов)
+- **Динамика чистой прибыли:** Рост прибыли YTD г/г `≥ 15%` ➡️ **×1.05**; падение `≤ -15%` ➡️ **×0.92**.
+
+---
+### 6. 🚢 Морская логистика и Физический экспорт (TankerMap live AIS)
+- **Нефтяные мейджоры (ROSN, LKOH, SIBN, TATN, SNGS, BANE):**
+  - При объеме сырой нефти в море `≥ 2.0 млн тонн DWT` и активных экспортных терминалах `≥ 20` ➡️ премия **×1.08** (Бесперебойная валютная выручка без заторов в портах)
+  - При падении флота `< 800 тыс. тонн DWT` ➡️ штраф **×0.90** (Логистический тромб)
+- **Порты и трубопроводы (TRNFP, NMTP):**
+  - Высокая загрузка терминалов Балтики, Черного моря и ВСТО `≥ 25` судов ➡️ премия **×1.12**
+  - Слабая загрузка `< 10` судов ➡️ штраф **×0.90**
+- **Танкерный флот (FLOT):**
+  - Активный флот на маршрутах РФ `≥ 120` танкеров ➡️ премия **×1.10**
+  - Заторы и обход критических проливов (Суэц / Баб-эль-Мандеб, тренд трафика `<-10%`) ➡️ дополнительная премия **×1.05** (Рост тонно-миль и спотовых фрахтовых ставок)
+- **СПГ-экспорт (NVTK):** Активные отгрузки СПГ с терминалов Сабетта/Арктика ➡️ премия **×1.05**.
+
+---
+### 7. Инфляционный радар и Альтернативная доходность
+- Если доходность компании (ROE и Earnings Yield) ниже ключевой ставки ЦБ ➡️ штраф **×0.70**.
+- Если реальная див. доходность и ROE ниже реальной инфляции ➡️ статус **"Сжигатель капитала ⚠️"** (штраф **×0.60**).
+
+---
+### 8. Технический тренд, Сентимент и Макро-часы
+- Положение цены относительно `SMA-50` и `SMA-200`, перепроданность `RSI < 30`.
+- Настроения инвесторов SmartLab (бонус/штраф до **±5%**).
+- Отраслевая ротация по Фазам Инвестиционных Часов (Рефляция, Восстановление, Перегрев, Стагфляция).
+
+*Активы с итоговым счетом **ниже 1.0** признаются слабыми (кандидаты на фиксацию). Сильные фавориты рынка получают оценку **> 1.5**.*
+"""
+
 def build_portfolio_rules(index_level, usd_rate):
     if index_level is None: index_level = 2600
     if usd_rate is None: usd_rate = 80
@@ -929,47 +1020,7 @@ with tab1:
     st.subheader("Фундаментальные мультипликаторы и Отбраковка")
 
     with st.expander("ℹ️ Как рассчитывается Health Score (Алгоритм оценки)?"):
-        st.markdown("""
-        **Health Score** — это комплексный математический рейтинг, который показывает "здоровье" и инвестиционную привлекательность компании.
-        Рейтинг начинается с базовой единицы (**1.0**) и умножается на ряд коэффициентов:
-    
-        1. **Рентабельность и Рост (Growth):**
-           - `ROE > 15%` ➡️ бонус **+0.2** (Эффективный бизнес)
-           - `ROE < 0%` ➡️ штраф **-0.5** (Убыточный бизнес)
-           - `P/E < 8` ➡️ бонус **+0.2** (Недооценка)
-           - `P/E > 15` ➡️ штраф **-0.3** (Переоценка)
-           - `Рост Выручки > 10%` ➡️ бонус **+0.1**
-           - `Рост Выручки < 0%` ➡️ штраф **-0.2** (Стагнация)
-       
-        2. **Дивидендная Безопасность (Dividends):**
-           - Див. доходность `> 8%` ➡️ бонус **+0.3**
-           - `FCF Yield > Div Yield` ➡️ бонус **+0.1** (Дивиденды выплачиваются из свободного кэша, а не в долг)
-       
-        3. **Долговая нагрузка и Риски (Risk):**
-           - `Debt/EBITDA > 3` ➡️ штраф **-0.4** (Риск банкротства при жесткой ДКП ЦБ)
-           - Токсичные тикеры (ЧС) ➡️ штраф **-0.3** (Проблемы с листингом или корп. управлением)
-           - `P/BV < 0.5` ➡️ бонус **+0.1** (Торгуется ниже балансовой стоимости)
-       
-        4. **Инфляционный радар (Inflation):**
-           - Если реальная див. доходность и реальный ROE отрицательные (ниже инфляции на 4%+) ➡️ жесткий штраф **-0.5**.
-             *(Такие акции получают статус **"Сжигатель капитала ⚠️"** — бизнес приносит доходность сильно ниже инфляции, вы теряете реальную покупательную способность).*
-           - Если реальная див. доходность обгоняет инфляцию ➡️ бонус **+0.1** (Статус **"Защитник капитала 🛡️"**).
-       
-        5. **Технический Анализ (Trend):**
-           - Цена ниже `SMA-50` и `SMA-200` ➡️ штраф **-0.2**.
-             *(Статус **"Падающий нож 🔪"** — попытка купить дно на падающем тренде может привести к двойному убытку).*
-           - Цена выше `SMA-50`, но ниже `SMA-200` ➡️ бонус **+0.2** (Статус **"Восходящий тренд 🚀"**).
-           - Перепроданность (`RSI < 30`) ➡️ бонус **+0.1**.
-       
-        6. **Настроения SmartLab (Sentiment):**
-           - Сильный позитив (`Score > 30`) ➡️ бонус **+0.1**
-           - Глубокий негатив (`Score < -10`) ➡️ штраф **-0.1**
-       
-        7. **Макро-Фаза (Macro Clock):**
-           - Дополнительные ротационные бонусы `+0.2` и штрафы `-0.1` в зависимости от стадии Инвестиционных Часов (Рефляция, Перегрев и т.д.).
-       
-        *Акции с итоговым счетом **ниже 1.0** помечаются как "слабые" (Кандидаты на продажу). Лидеры рынка уходят выше 1.5.*
-        """)
+        st.markdown(HEALTH_SCORE_EXPLANATION)
 
     df_fund = pd.DataFrame()
     if not raw_fundamental_data.empty:
@@ -1046,18 +1097,39 @@ with tab1:
 
         df_fund.loc[is_bank, "Health_Score"] = (((df_fund.loc[is_bank, "ROE_norm"] / (df_fund.loc[is_bank, "P_BV"].clip(lower=0.1) * 5.0)) / (1 + safe_debt[is_bank])) * growth_multiplier[is_bank]).round(2)
 
-        # Мультипликатор надежности капитала H1.0 из ЦБ РФ (Magellan)
+        # Мультипликаторы банковского сектора по форме 101/102 ЦБ РФ (H1.0, просрочка, чистая прибыль)
         for ticker in df_fund[is_bank]['ticker']:
             b_details = fetch_magellan_bank_details(ticker)
-            if b_details and b_details.get("h1_0") is not None:
-                h1_0 = float(b_details["h1_0"])
-                if h1_0 >= 12.0:
-                    cap_mult = 1.15  # Избыток капитала (высокая дивидендная безопасность)
-                elif h1_0 < 9.5:
-                    cap_mult = 0.70  # Дефицит капитала (регуляторный риск / допэмиссия)
-                else:
-                    cap_mult = 1.0
-                df_fund.loc[df_fund['ticker'] == ticker, "Health_Score"] = (df_fund.loc[df_fund['ticker'] == ticker, "Health_Score"] * cap_mult).round(2)
+            b_sum = magellan_banks.get(ticker, {}) if isinstance(magellan_banks, dict) else {}
+            bank_mult = 1.0
+            if b_details:
+                # 1. Норматив достаточности капитала H1.0 (норматив ЦБ >= 8.0%)
+                if b_details.get("h1_0") is not None:
+                    h1_0 = float(b_details["h1_0"])
+                    if h1_0 >= 12.0:
+                        bank_mult *= 1.15  # Избыток капитала (высокая дивидендная безопасность)
+                    elif h1_0 < 9.5:
+                        bank_mult *= 0.70  # Дефицит капитала (регуляторный риск / допэмиссия)
+
+                # 2. Качество кредитного портфеля по счетам 101 формы (просрочка)
+                if b_details.get("overdue_pct") is not None:
+                    overdue = float(b_details["overdue_pct"])
+                    if overdue < 3.5:
+                        bank_mult *= 1.05  # Эталонное кредитное качество, минимальные резервы
+                    elif overdue > 6.0:
+                        bank_mult *= 0.88  # Высокая просрочка (давление резервов на чистую прибыль)
+
+            # 3. Динамика прибыли банка YTD г/г по форме 102
+            if b_sum and b_sum.get("ytd_growth_pct") is not None:
+                ytd_g = float(b_sum["ytd_growth_pct"])
+                if ytd_g >= 15.0:
+                    bank_mult *= 1.05  # Рост прибыли банка
+                elif ytd_g <= -15.0:
+                    bank_mult *= 0.92  # Падение прибыли банка
+
+            df_fund.loc[df_fund['ticker'] == ticker, "Health_Score"] = (
+                df_fund.loc[df_fund['ticker'] == ticker, "Health_Score"] * bank_mult
+            ).round(2)
         
         # Учет макро-контекста: корректировка нефтяников по текущей цене Urals
         urals_price = market_context.get("URALS")
@@ -1071,13 +1143,26 @@ with tab1:
             is_oil = df_fund['ticker'].isin(OIL_TICKERS)
             df_fund.loc[is_oil, "Health_Score"] = (df_fund.loc[is_oil, "Health_Score"] * oil_multiplier).round(2)
 
-        # Учет морской логистики экспорта TankerMap (для нефтяников и транспортного сектора)
+        # Учет физической морской логистики экспорта TankerMap live AIS (для нефтяников и транспорта)
         port_distr = tanker_stats.get("port_distribution", {}) if isinstance(tanker_stats, dict) else {}
         active_terminal_vessels = (
             port_distr.get("Балтика (Urals)", 0) +
             port_distr.get("Черное море (Urals / КТК)", 0) +
             port_distr.get("Дальний Восток (ВСТО / ESPO)", 0)
         )
+        crude_dwt = tanker_stats.get("loaded_crude_dwt", 0) if isinstance(tanker_stats, dict) else 0
+        total_ru_vessels = tanker_stats.get("total_ru_vessels", 0) if isinstance(tanker_stats, dict) else 0
+
+        # Влияние физического танкерного экспорта на нефтяных мейджоров (ROSN, LKOH, SIBN, TATN, SNGS, BANE)
+        is_oil = df_fund['ticker'].isin(OIL_TICKERS)
+        if crude_dwt >= 2_000_000 or (total_ru_vessels >= 120 and active_terminal_vessels >= 20):
+            # Высокая загрузка морских танкеров и открытые терминалы -> валютная выручка стабильна
+            df_fund.loc[is_oil, "Health_Score"] = (df_fund.loc[is_oil, "Health_Score"] * 1.08).round(2)
+        elif crude_dwt < 800_000 and total_ru_vessels < 50 and total_ru_vessels > 0:
+            # Сжатие танкерного флота / логистический тромб в портах -> штраф к экспортной выручке
+            df_fund.loc[is_oil, "Health_Score"] = (df_fund.loc[is_oil, "Health_Score"] * 0.90).round(2)
+
+        # Портовая перевалка и прокачка (TRNFP, NMTP)
         is_port_transport = df_fund['ticker'].isin(['TRNFP', 'NMTP'])
         if active_terminal_vessels >= 25:
             # Высокая загрузка терминалов Новороссийска, Приморска, Козьмино -> премия к тарифам перевалки
@@ -1085,9 +1170,25 @@ with tab1:
         elif active_terminal_vessels < 10 and active_terminal_vessels > 0:
             df_fund.loc[is_port_transport, "Health_Score"] = (df_fund.loc[is_port_transport, "Health_Score"] * 0.90).round(2)
 
+        # Танкерный перевозчик Совкомфлот (FLOT)
         is_flot = df_fund['ticker'] == 'FLOT'
-        if tanker_stats.get("total_ru_vessels", 0) >= 120:
-            df_fund.loc[is_flot, "Health_Score"] = (df_fund.loc[is_flot, "Health_Score"] * 1.10).round(2)
+        flot_mult = 1.0
+        if total_ru_vessels >= 120:
+            flot_mult *= 1.10
+        chokepoints = fetch_tankermap_chokepoints()
+        suez_info = chokepoints.get("suez", {}) if isinstance(chokepoints, dict) else {}
+        suez_trend = float(suez_info.get("trend_pct", 0) or 0)
+        if suez_trend < -10:
+            # Заторы в Суэце / Красном море удлиняют плечо доставки и разгоняют спотовые ставки фрахта
+            flot_mult *= 1.05
+        df_fund.loc[is_flot, "Health_Score"] = (df_fund.loc[is_flot, "Health_Score"] * flot_mult).round(2)
+
+        # СПГ-логистика для НОВАТЭК (NVTK)
+        is_nvtk = df_fund['ticker'] == 'NVTK'
+        loaded_lng = tanker_stats.get("loaded_lng_dwt", 0) if isinstance(tanker_stats, dict) else 0
+        arctic_ports = port_distr.get("Арктика (Варандей / СПГ)", 0)
+        if loaded_lng >= 80_000 or arctic_ports >= 2:
+            df_fund.loc[is_nvtk, "Health_Score"] = (df_fund.loc[is_nvtk, "Health_Score"] * 1.05).round(2)
             
             # Учет макро-контекста: Сталевары
         steel_price = market_context.get("STEEL")
@@ -1190,17 +1291,29 @@ with tab1:
             of_info = magellan_of.get(ticker, {}) if isinstance(magellan_of, dict) else {}
             reading_key = of_info.get("reading_key")
             buy_ratio = of_info.get("buy_ratio", 50.0)
+            mult = 1.0
             if reading_key == "accum":
-                return 1.15  # Накопление / Абсорбция крупными игроками
+                mult = 1.15  # Накопление / Абсорбция крупными игроками
             elif reading_key == "rev":
-                return 1.10  # Разворот спроса
+                mult = 1.10  # Разворот спроса
             elif reading_key == "distr":
-                return 0.85  # Скрытое распределение (продажа в стакан)
+                mult = 0.85  # Скрытое распределение (продажа в стакан)
             elif buy_ratio >= 65.0:
-                return 1.08  # Преобладание агрессивных покупок
+                mult = 1.08  # Преобладание агрессивных покупок
             elif buy_ratio <= 35.0:
-                return 0.92  # Преобладание агрессивных продаж
-            return 1.0
+                mult = 0.92  # Преобладание агрессивных продаж
+
+            # Институциональные крупные пакеты ("киты" / Big Volume)
+            big_bv = of_info.get("big_bv", 0.0)
+            big_sv = of_info.get("big_sv", 0.0)
+            big_total = big_bv + big_sv
+            if big_total >= 30_000_000:  # Объем крупных пакетов более 30 млн ₽
+                big_buy_pct = (big_bv / big_total) * 100
+                if big_buy_pct >= 65.0:
+                    mult *= 1.05  # Крупные участники скупают объем
+                elif big_buy_pct <= 35.0:
+                    mult *= 0.95  # Крупные участники сливают объем
+            return round(mult, 3)
 
         def get_of_badge(ticker):
             of_info = magellan_of.get(ticker, {}) if isinstance(magellan_of, dict) else {}
@@ -1549,6 +1662,9 @@ with tab1:
                         sv_m = info.get("sv", 0) / 1_000_000.0
                         delta_m = info.get("delta", 0) / 1_000_000.0
                         total_m = bv_m + sv_m
+                        big_bv = info.get("big_bv", 0.0)
+                        big_sv = info.get("big_sv", 0.0)
+                        big_delta_m = (big_bv - big_sv) / 1_000_000.0
                         if total_m > 0:
                             of_rows.append({
                                 "Тикер": t,
@@ -1557,6 +1673,7 @@ with tab1:
                                 "Покупки, млн ₽": round(bv_m, 2),
                                 "Продажи, млн ₽": round(sv_m, 2),
                                 "Дельта, млн ₽": round(delta_m, 2),
+                                "Киты дельта, млн ₽": round(big_delta_m, 2),
                                 "Доля покупок, %": info.get("buy_ratio"),
                                 "Сигнал": info.get("reading_label", "—"),
                                 "Механика": info.get("reading_explain", ""),
@@ -1660,6 +1777,8 @@ with tab1:
                     cover = bank_detail.get("reserve_cover")
                     kpi_c4.metric("Просрочка / Покрытие", f"{overdue}% / {cover}%" if overdue else "Н/Д")
 
+                    st.info(f"💡 **Влияние на Health Score:** Банк оценивается по форме 101/102 ЦБ РФ. Норматив H1.0 = {h10_val:.2f}% ({h10_status}), просрочка = {overdue}%. При H1.0 ≥ 12% и просрочке < 3.5% банк получает совокупную премию к дивидендному здоровью до +20%. При дефиците капитала (H1.0 < 9.5%) начисляется штраф -30%.")
+
                     points = bank_detail.get("points", [])
                     if points:
                         df_pts = pd.DataFrame(points)
@@ -1684,6 +1803,8 @@ with tab1:
             t_col2.metric("Сырая нефть в море", f"{crude_dwt_m:.2f} млн тонн", "Urals / ВСТО / КТК")
             t_col3.metric("Нефтепродукты & СПГ", f"{prod_dwt_m:.2f} млн тонн", "Дизель / Мазут / LNG")
             t_col4.metric("Теневой / Санкционный флот", f"{sanctioned_cnt} судов", "Глобальный мониторинг")
+
+            st.info(f"💡 **Влияние на Health Score:** Спутниковый трекинг AIS отслеживает {ru_vessels_cnt} танкеров на маршрутах экспорта РФ и {crude_dwt_m:.2f} млн тонн сырой нефти в море. Экспортный коридор стабилен ➡️ Нефтяные мейджоры (ROSN, LKOH, SIBN, TATN, SNGS, BANE) получают премию +8% к Health Score за надежность сбыта; портовые терминалы (TRNFP, NMTP) — премию +12%; танкерный перевозчик (FLOT) — премию до +15% (с учетом обхода Суэца вокруг Африки).")
 
             st.markdown("---")
             port_col, choke_col = st.columns([1, 1])
