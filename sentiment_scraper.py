@@ -508,11 +508,136 @@ def generate_structured_summary(messages: list, ticker: str = "") -> dict:
     }
 
 
+# =====================================================================
+# КОНФИГУРАЦИЯ НЕЙРОСЕТЕЙ (OPENROUTER AI)
+# =====================================================================
+# Модель по умолчанию (только бесплатные варианты)
+DEFAULT_OPENROUTER_MODEL = "openrouter/free"
+
+# Список поддерживаемых бесплатных моделей OpenRouter (100% Free, $0.00 / 0 токенов)
+OPENROUTER_FREE_MODELS = [
+    "openrouter/free",                    # 🔄 Автовыбор наилучшей свободной бесплатной модели
+    "google/gemma-4-31b-it:free",         # 🧠 Google Gemma 4 31B (DeepMind, высокая точность)
+    "google/gemma-4-26b-a4b-it:free",     # ⚡ Google Gemma 4 26B (быстрая и качественная)
+    "nvidia/nemotron-3.5-lightning:free", # 🚀 NVIDIA Nemotron 3.5 Lightning (сверхбыстрая)
+    "liquid/lfm-2.5-2.6b:free",           # 💧 LiquidAI LFM 2.5
+]
+
+
+def summarize_with_openrouter(messages: list, ticker: str = "", api_key: str = None, model: str = None) -> dict:
+    """
+    Генерирует связную аналитическую выжимку через OpenRouter API.
+    ГАРАНТИЯ БЕСПЛАТНОСТИ: Работает исключительно с бесплатными моделями OpenRouter (:free или openrouter/free).
+    """
+    fallback_summary = generate_structured_summary(messages, ticker=ticker)
+    if not api_key or not messages:
+        return {"ai_summary": None, "structured": fallback_summary, "model": None}
+
+    ticker_clean = ticker.strip().upper() if ticker else ""
+    keywords = get_ticker_keywords(ticker_clean) if ticker_clean else []
+
+    chosen_model = (model or DEFAULT_OPENROUTER_MODEL).strip()
+
+    # Защита от списания средств: разрешаем только модели :free или openrouter/free
+    if not (chosen_model.endswith(":free") or chosen_model == "openrouter/free"):
+        return {
+            "ai_summary": f"⚠️ Блокировка платной модели: разрешены только бесплатные модели OpenRouter (с суффиксом ':free' или 'openrouter/free'). Выбрана: {chosen_model}",
+            "structured": fallback_summary,
+            "model": chosen_model
+        }
+
+    # Отбираем только релевантные фразы строго по целевой компании
+    relevant_chunks = []
+    for m in messages:
+        raw = m.get("text", "")
+        parts = [p.strip() for p in re.split(r"(?<=[.!?\n])\s+", raw) if 35 <= len(p.strip()) <= 300]
+        for p in parts:
+            p_clean = re.sub(r"[\s\n]+", " ", p).strip()
+            p_lower = p_clean.lower()
+            if "http" in p_lower or p_clean.count("#") >= 2 or len(re.findall(r"\{\$[A-Za-z0-9_]+\}", p_clean)) >= 2:
+                continue
+            if ticker_clean and not any(k in p_lower for k in keywords):
+                continue
+            relevant_chunks.append(p_clean)
+
+    if not relevant_chunks:
+        relevant_chunks = [re.sub(r"[\s\n]+", " ", m.get("text", "")).strip() for m in messages if len(m.get("text", "")) > 40]
+
+    context_text = "\n".join([f"- {c}" for c in relevant_chunks[:15]])
+
+    url = "https://openrouter.ai/api/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key.strip()}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://moexhelperdash.streamlit.app",
+        "X-Title": "MOEX Helper Dash"
+    }
+
+    payload = {
+        "model": chosen_model,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "Ты профессиональный финансовый аналитик Мосбиржи (MOEX). "
+                    "Проанализируй мнения и факты инвесторов из Т-Банк Пульс и Smart-Lab строго по заданной компании. "
+                    "Составь четкое, структурированное резюме на русском языке: "
+                    "1) Ключевой позитив / драйверы роста; "
+                    "2) Основные риски и опасения; "
+                    "3) Главный вывод/консенсус инвесторов. "
+                    "Пиши кратко, емко, только по делу, без общих фраз и без галлюцинаций."
+                )
+            },
+            {
+                "role": "user",
+                "content": f"Эмитент/тикер: {ticker_clean}\n\nВыдержки из обсуждений инвесторов:\n{context_text}"
+            }
+        ],
+        "temperature": 0.3,
+        "max_tokens": 500
+    }
+
+    try:
+        resp = requests.post(url, headers=headers, json=payload, timeout=25)
+        if resp.status_code == 200:
+            res_data = resp.json()
+            choices = res_data.get("choices", [])
+            if choices:
+                ai_text = choices[0].get("message", {}).get("content", "").strip()
+                if ai_text:
+                    return {
+                        "ai_summary": ai_text,
+                        "structured": fallback_summary,
+                        "model": chosen_model
+                    }
+        elif resp.status_code == 401:
+            return {
+                "ai_summary": "❌ Неверный ключ OpenRouter API (ошибка 401). Проверьте ключ в настройках (формат sk-or-v1-...).",
+                "structured": fallback_summary,
+                "model": chosen_model
+            }
+        elif resp.status_code == 429:
+            return {
+                "ai_summary": f"⏳ Превышен лимит запросов к бесплатной модели {chosen_model} (ошибка 429: Rate Limit). Попробуйте переключить модель на другую бесплатную в списке или повторите через 30–60 секунд.",
+                "structured": fallback_summary,
+                "model": chosen_model
+            }
+        else:
+            err_msg = resp.text[:150]
+            return {
+                "ai_summary": f"⚠️ Ошибка OpenRouter ({resp.status_code}): {err_msg}",
+                "structured": fallback_summary,
+                "model": chosen_model
+            }
+    except Exception as exc:
+        print(f"OpenRouter API error: {exc}")
+
+    return {"ai_summary": None, "structured": fallback_summary, "model": None}
+
+
 def summarize_with_hf(messages: list, ticker: str = "", hf_token: str = None) -> dict:
     """
-    Генерирует суммаризацию через Serverless Hugging Face Inference API.
-    Фильтрует входящий текст строго по целевому эмитенту, чтобы нейросеть
-    не суммаризировала макро-сводки и чужие тикеры.
+    Генерирует суммаризацию через Serverless Hugging Face Inference API (legacy fallback).
     """
     fallback_summary = generate_structured_summary(messages, ticker=ticker)
     if not hf_token or not messages:
@@ -521,7 +646,6 @@ def summarize_with_hf(messages: list, ticker: str = "", hf_token: str = None) ->
     ticker_clean = ticker.strip().upper() if ticker else ""
     keywords = get_ticker_keywords(ticker_clean) if ticker_clean else []
 
-    # Отбираем только релевантные фразы для отправки в нейросеть
     relevant_chunks = []
     for m in messages:
         raw = m.get("text", "")

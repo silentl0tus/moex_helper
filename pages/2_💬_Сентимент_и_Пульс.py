@@ -21,7 +21,10 @@ from sentiment_scraper import (
     extract_aggregated_messages,
     filter_relevant_messages,
     generate_structured_summary,
+    summarize_with_openrouter,
     summarize_with_hf,
+    DEFAULT_OPENROUTER_MODEL,
+    OPENROUTER_FREE_MODELS,
     FALLBACK_TICKERS,
     POSITIVE_WORDS,
     NEGATIVE_WORDS,
@@ -69,40 +72,48 @@ with col1:
     show_full = st.checkbox("Показывать полные сообщения", value=False)
     
     st.markdown("---")
-    st.subheader("🤖 Hugging Face AI")
-    default_hf_token = ""
-    token_keys = ["HF_TOKEN", "HUGGINGFACE_TOKEN", "HugginFace", "HUGGING_FACE"]
+    st.subheader("🤖 OpenRouter AI (Бесплатно)")
+    default_openrouter_key = ""
+    openrouter_keys = ["OPENROUTER_API_KEY", "OPENROUTER_KEY", "OPENROUTER_TOKEN"]
     
     # 1. Проверяем Streamlit Secrets
-    for k in token_keys:
+    for k in openrouter_keys:
         try:
             if k in st.secrets and st.secrets[k]:
-                default_hf_token = str(st.secrets[k]).strip()
+                default_openrouter_key = str(st.secrets[k]).strip()
                 break
         except Exception:
             pass
 
     # 2. Проверяем переменные окружения и .env
-    if not default_hf_token:
+    if not default_openrouter_key:
         try:
             from dotenv import load_dotenv
             load_dotenv()
         except Exception:
             pass
-        for k in token_keys:
+        for k in openrouter_keys:
             val = os.getenv(k)
             if val and val.strip():
-                default_hf_token = val.strip()
+                default_openrouter_key = val.strip()
                 break
 
-    hf_token_input = st.text_input(
-        "HF Access Token (Read):",
-        value=default_hf_token,
+    openrouter_key_input = st.text_input(
+        "OpenRouter API Key (sk-or-v1-...):",
+        value=default_openrouter_key,
         type="password",
-        help="Бесплатный токен 'Read' с сайта huggingface.co/settings/tokens. Позволяет вызывать нейросеть-суммаризатор через API без нагрузки на память Streamlit."
+        help="Бесплатный ключ с сайта openrouter.ai/settings/keys. Запросы отправляются только к бесплатным моделям (:free)."
     )
-    if not hf_token_input:
-        st.caption("💡 *Без токена работает встроенная выжимка. С токеном доступна AI-генерация через нейросеть.*")
+
+    selected_openrouter_model = st.selectbox(
+        "Бесплатная модель OpenRouter:",
+        options=OPENROUTER_FREE_MODELS,
+        index=0,
+        help="Модели с суффиксом ':free' и 'openrouter/free' работают без списания средств ($0.00)."
+    )
+
+    if not openrouter_key_input:
+        st.caption("💡 *Без ключа работает встроенная 3-колоночная выжимка. С ключом доступна генерация аналитического резюме через бесплатную нейросеть.*")
 
     if "force_reload" not in st.session_state:
         st.session_state.force_reload = False
@@ -170,19 +181,28 @@ with col2:
         
         st.markdown("#### ⚡ Выжимка и ключевые тезисы")
         
-        hf_active = bool(hf_token_input and hf_token_input.strip())
+        openrouter_active = bool(openrouter_key_input and openrouter_key_input.strip())
         c_sum1, c_sum2 = st.columns([3, 1])
         with c_sum1:
             st.caption(f"Анализирует обсуждения инвесторов строго по эмитенту **{ticker_to_search}**.")
         with c_sum2:
-            run_ai = st.button("🤖 AI-выжимка (HF)", help="Запустить нейросетевую суммаризацию через Hugging Face Serverless API", disabled=not hf_active)
+            run_ai = st.button("🤖 AI-выжимка (OpenRouter)", help=f"Запустить аналитическое резюме через бесплатную модель {selected_openrouter_model}", disabled=not openrouter_active)
 
-        if run_ai and hf_active:
-            with st.spinner("Запрос к нейросети Hugging Face (IlyaGusev/rut5_base_sum_gazeta)..."):
-                hf_res = summarize_with_hf(filtered, ticker=ticker_to_search, hf_token=hf_token_input)
-                if hf_res.get("ai_summary"):
-                    st.success(f"**🤖 Нейросетевое резюме (`{hf_res.get('model', 'Hugging Face')}`):**\n\n{hf_res['ai_summary']}")
-                struct_data = hf_res.get("structured", {})
+        if run_ai and openrouter_active:
+            with st.spinner(f"Запрос к бесплатной нейросети ({selected_openrouter_model})..."):
+                ai_res = summarize_with_openrouter(
+                    filtered,
+                    ticker=ticker_to_search,
+                    api_key=openrouter_key_input,
+                    model=selected_openrouter_model
+                )
+                ai_summary_text = ai_res.get("ai_summary")
+                if ai_summary_text:
+                    if ai_summary_text.startswith("⚠️") or ai_summary_text.startswith("❌") or ai_summary_text.startswith("⏳"):
+                        st.warning(ai_summary_text)
+                    else:
+                        st.success(f"**🤖 Нейросетевое резюме (`{ai_res.get('model', selected_openrouter_model)}`):**\n\n{ai_summary_text}")
+                struct_data = ai_res.get("structured", {})
         else:
             struct_data = generate_structured_summary(filtered, ticker=ticker_to_search)
 
