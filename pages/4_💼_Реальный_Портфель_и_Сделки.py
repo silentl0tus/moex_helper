@@ -11,6 +11,7 @@
 """
 
 import io
+import os
 from datetime import datetime
 import altair as alt
 import numpy as np
@@ -84,13 +85,19 @@ def load_portfolio_from_url(url_or_id: str):
 st.sidebar.title("💼 Учёт сделок и Портфель")
 st.sidebar.caption("Анализ позиций от реальной цены покупки и история операций.")
 
+DEFAULT_LOCAL_PATH = "/home/silent/Downloads/Ликвидная часть-13.10.2026.xlsx"
+has_local_file = os.path.exists(DEFAULT_LOCAL_PATH)
+
+source_options = [
+    "🌐 Сервис izi-invest.ru (онлайн)",
+    "💻 Локальный файл из Downloads",
+    "📂 Загрузить файл через браузер (XLSX / CSV)"
+]
+
 source_mode = st.sidebar.radio(
     "Источник данных:",
-    options=[
-        "🌐 Сервис izi-invest.ru (онлайн)",
-        "📂 Загрузить файл отчёта (XLSX / CSV)"
-    ],
-    index=0
+    options=source_options,
+    index=1 if has_local_file else 0
 )
 
 portfolio_data = None
@@ -118,6 +125,32 @@ if source_mode == "🌐 Сервис izi-invest.ru (онлайн)":
                 portfolio_data = load_portfolio_from_url(url_input)
             except Exception as e:
                 load_error = str(e)
+
+elif source_mode == "💻 Локальный файл из Downloads":
+    local_path = st.sidebar.text_input(
+        "Путь к файлу на диске:",
+        value=DEFAULT_LOCAL_PATH,
+        help="Локальный путь к выгруженному файлу отчета."
+    )
+    col_btn1, col_btn2 = st.sidebar.columns([3, 1])
+    with col_btn1:
+        load_local_btn = st.button("🔄 Прочитать файл", type="primary", width="stretch")
+    with col_btn2:
+        if st.button("Сброс", width="stretch", key="reset_local"):
+            st.cache_data.clear()
+            st.rerun()
+
+    if local_path and os.path.exists(local_path):
+        st.sidebar.success(f"Файл найден: `{os.path.basename(local_path)}` ({os.path.getsize(local_path)/1024:.0f} КБ)")
+        with st.spinner("Чтение локального файла и листа 'Сделки'..."):
+            try:
+                with open(local_path, "rb") as f:
+                    file_bytes = f.read()
+                portfolio_data = parse_broker_file(file_bytes, os.path.basename(local_path))
+            except Exception as e:
+                load_error = str(e)
+    else:
+        load_error = f"Файл не найден по пути: {local_path}"
 
 else:
     uploaded_file = st.sidebar.file_uploader(
