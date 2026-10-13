@@ -512,15 +512,17 @@ def generate_structured_summary(messages: list, ticker: str = "") -> dict:
 # КОНФИГУРАЦИЯ НЕЙРОСЕТЕЙ (OPENROUTER AI)
 # =====================================================================
 # Модель по умолчанию (только бесплатные варианты)
-DEFAULT_OPENROUTER_MODEL = "openrouter/free"
+DEFAULT_OPENROUTER_MODEL = "liquid/lfm-2.5-2.6b:free"
 
 # Список поддерживаемых бесплатных моделей OpenRouter (100% Free, $0.00 / 0 токенов)
 OPENROUTER_FREE_MODELS = [
-    "openrouter/free",                    # 🔄 Автовыбор наилучшей свободной бесплатной модели
-    "google/gemma-4-31b-it:free",         # 🧠 Google Gemma 4 31B (DeepMind, высокая точность)
-    "google/gemma-4-26b-a4b-it:free",     # ⚡ Google Gemma 4 26B (быстрая и качественная)
-    "nvidia/nemotron-3.5-lightning:free", # 🚀 NVIDIA Nemotron 3.5 Lightning (сверхбыстрая)
-    "liquid/lfm-2.5-2.6b:free",           # 💧 LiquidAI LFM 2.5
+    "liquid/lfm-2.5-2.6b:free",           # 💧 LiquidAI LFM 2.5 (быстрая, стабильная, без очередей)
+    "openrouter/free",                    # 🔄 Автовыбор свободной бесплатной модели
+    "dots-studio/dots-3-note-preview:free", # 📝 Dots Studio 3-Note Preview
+    "apodex/apodex-1.1-mini:free",        # ⚡ Apodex 1.1 Mini
+    "google/gemma-4-31b-it:free",         # 🧠 Google Gemma 4 31B (DeepMind)
+    "google/gemma-4-26b-a4b-it:free",     # ⚡ Google Gemma 4 26B
+    "nvidia/nemotron-3.5-lightning:free", # 🚀 NVIDIA Nemotron 3.5 Lightning
 ]
 
 
@@ -603,7 +605,7 @@ def summarize_with_openrouter(messages: list, ticker: str = "", api_key: str = N
             res_data = resp.json()
             choices = res_data.get("choices", [])
             if choices:
-                ai_text = choices[0].get("message", {}).get("content", "").strip()
+                ai_text = str(choices[0].get("message", {}).get("content") or "").strip()
                 if ai_text:
                     return {
                         "ai_summary": ai_text,
