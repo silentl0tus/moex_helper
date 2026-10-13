@@ -864,6 +864,7 @@ with st.sidebar:
         my_blocked_invested  = blocked_total
 
     if my_portfolio:
+        st.session_state["my_portfolio"] = my_portfolio
         portfolio_tickers_list = list(my_portfolio.keys())
         st.success(f"Загружено {len(portfolio_tickers_list)} акций из портфеля")
         if my_reserves_invested > 0:
@@ -1616,6 +1617,7 @@ with tab1:
                 
                 buys = df_ranked[(~df_ranked['ticker'].isin(portfolio_tickers_list)) & (~df_ranked['ticker'].isin(TOXIC_TICKERS))].head(3)['ticker'].tolist()
                 st.info(f"**🔵 ЦЕЛЕВЫЕ ПОКУПКИ (Кандидаты на добавление):** {', '.join(buys)}. Бумаги с высшим баллом, которых у вас еще нет.")
+                st.page_link("pages/3_⏳_Бэктест_Стратегии.py", label="⏳ Запустить исторический бэктест вашего портфеля vs IMOEX", icon="⏳")
             
                 df_ranked['Доля в портфеле (%)'] = (df_ranked['Текущая Стоимость'] / total_val * 100).fillna(0).round(1)
                 df_ranked['PnL (%)'] = ((df_ranked['Текущая Стоимость'] - df_ranked['Вложено']) / df_ranked['Вложено'] * 100).fillna(0).round(1)
@@ -1716,6 +1718,7 @@ with tab1:
             position_df["target_value_rub"] = (position_df["weight"] * capital).astype(int)
             st.caption(f"Топ-{n_assets} активов по Health Score | Акционерная доля: {rules['equity_target']*100:.0f}% от капитала")
             st.dataframe(position_df, width="stretch", hide_index=True)
+            st.page_link("pages/3_⏳_Бэктест_Стратегии.py", label="⏳ Протестировать эффективность ребалансировки на исторических данных MOEX", icon="⏳")
 
         with tab5:
             # 🌊 ORDER FLOW (Russian Magellan PRO)
