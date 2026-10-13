@@ -483,10 +483,16 @@ with tab3:
 
                 with col_link:
                     st.write("")
+                    if st.button(f"🔍 Открыть сентимент {ticker} ↗", key=f"btn_nav_sent_{ticker}"):
+                        st.session_state["selected_sentiment_ticker"] = ticker
+                        try:
+                            st.switch_page("pages/2_💬_Сентимент_и_Пульс.py")
+                        except Exception:
+                            pass
                     try:
                         st.page_link(
                             "pages/2_💬_Сентимент_и_Пульс.py",
-                            label=f"Открыть Сентимент {ticker} ↗",
+                            label=f"Ссылка на Сентимент {ticker}",
                             icon="💬"
                         )
                     except Exception:

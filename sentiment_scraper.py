@@ -26,13 +26,196 @@ PORTFOLIO_TICKERS = [
     "SNGS", "TRNFP", "GAZP"
 ]
 
-# Резервный список (если MOEX API недоступен)
+# Резервный список (все основные ликвидные компании MOEX)
 FALLBACK_TICKERS = [
-    "SBER", "SBERP", "LKOH", "GAZP", "ROSN", "NVTK", "YNDX", "YDEX", "T", "TCSG", 
-    "PLZL", "MGNT", "CHMF", "NLMK", "SNGS", "SNGSP", "MTSS", "TATN", "TRNFP", 
-    "SVCB", "HEAD", "ASTR", "DIAS", "DATA", "POSI", "OZON", "MOEX", "AFKS", 
-    "FLOT", "ALRS", "BANE", "BANEP", "RNFT", "SOFL", "VKCO", "MAGN", "PIKK"
+    "SBER", "SBERP", "LKOH", "GAZP", "ROSN", "NVTK", "YDEX", "YNDX", "T", "TCSG",
+    "PLZL", "MGNT", "CHMF", "NLMK", "SNGS", "SNGSP", "MTSS", "TATN", "TATNP", "TRNFP",
+    "SVCB", "HEAD", "ASTR", "DIAS", "DATA", "POSI", "OZON", "MOEX", "AFKS",
+    "FLOT", "ALRS", "BANE", "BANEP", "RNFT", "SOFL", "VKCO", "MAGN", "PIKK",
+    "CNRU", "CIAN", "BELU", "BSPB", "DOMRF", "ENPG", "FEES", "IVAT", "MDMG",
+    "MTLR", "NMTP", "OZPH", "PHOR", "PRMD", "RAGR", "RENI", "RTKM", "RUAL",
+    "SELG", "SFIN", "SGZH", "SIBN", "SMLT", "TRMK", "UGLD", "UGC", "UPRO",
+    "VTBR", "WUSH", "X5", "AQUA", "HYDR", "IRAO", "CBOM", "AFLT"
 ]
+
+COMPANY_NAMES = {
+    "SBER": "Сбербанк",
+    "SBERP": "Сбербанк (преф)",
+    "GAZP": "Газпром",
+    "LKOH": "ЛУКОЙЛ",
+    "ROSN": "Роснефть",
+    "NVTK": "НОВАТЭК",
+    "GMKN": "ГМК Норильский никель",
+    "YDEX": "Яндекс",
+    "YNDX": "Яндекс",
+    "T": "Т-Банк",
+    "TCSG": "Т-Банк (ТКС Холдинг)",
+    "PLZL": "Полюс Золото",
+    "MGNT": "Магнит",
+    "CHMF": "Северсталь",
+    "NLMK": "НЛМК",
+    "MAGN": "ММК",
+    "VTBR": "ВТБ",
+    "TATN": "Татнефть",
+    "TATNP": "Татнефть (преф)",
+    "SNGS": "Сургутнефтегаз",
+    "SNGSP": "Сургутнефтегаз (преф)",
+    "ALRS": "АЛРОСА",
+    "MOEX": "Московская Биржа",
+    "AFKS": "АФК Система",
+    "OZON": "Озон",
+    "MTSS": "МТС",
+    "IRAO": "Интер РАО",
+    "FLOT": "Совкомфлот",
+    "CBOM": "МКБ",
+    "AFLT": "Аэрофлот",
+    "TRNFP": "Транснефть (преф)",
+    "SVCB": "Совкомбанк",
+    "HEAD": "Хэдхантер",
+    "POSI": "Группа Позитив",
+    "ASTR": "Группа Астра",
+    "DIAS": "Диасофт",
+    "DATA": "Аренадата",
+    "SOFL": "Софтлайн",
+    "VKCO": "ВК (VK)",
+    "PIKK": "ПИК",
+    "SMLT": "Самолёт",
+    "EUTR": "ЕвроТранс",
+    "BELU": "НоваБев Групп (Белуга)",
+    "BSPB": "Банк Санкт-Петербург",
+    "CNRU": "Циан",
+    "CIAN": "Циан",
+    "DOMRF": "Дом.РФ",
+    "ENPG": "Эн+ Груп",
+    "FEES": "ФСК-Россети",
+    "IVAT": "Ива (IVA Technologies)",
+    "MDMG": "Мать и дитя",
+    "MTLR": "Мечел",
+    "NMTP": "НМТП",
+    "OZPH": "Озон Фармацевтика",
+    "PHOR": "ФосАгро",
+    "PRMD": "Промомед",
+    "RAGR": "Русагро",
+    "RENI": "Ренессанс Страхование",
+    "RNFT": "РуссНефть",
+    "RTKM": "Ростелеком",
+    "RUAL": "РУСАЛ",
+    "SELG": "Селигдар",
+    "SFIN": "ЭсЭфАй (SFI)",
+    "SGZH": "Сегежа Групп",
+    "SIBN": "Газпром нефть",
+    "TRMK": "ТМК",
+    "UGLD": "ЮГК (Южуралзолото)",
+    "UGC": "Южуралзолото",
+    "UPRO": "Юнипро",
+    "WUSH": "Whoosh (Вуш)",
+    "X5": "X5 Group (ИКС 5)",
+    "FIVE": "X5 Group",
+    "AQUA": "Инарктика",
+    "BANE": "Башнефть",
+    "BANEP": "Башнефть (преф)",
+    "HYDR": "РусГидро",
+    "MSNG": "Мосэнерго",
+    "LSNG": "Ленэнерго",
+    "LSNGP": "Ленэнерго (преф)",
+    "RASP": "Распадская",
+    "QIWI": "Киви (QIWI)"
+}
+
+TICKER_ALIASES = {
+    'CIAN': 'CNRU',
+    'ЦИАН': 'CNRU',
+    'YNDX': 'YDEX',
+    'ЯНДЕКС': 'YDEX',
+    'TCSG': 'T',
+    'Т-БАНК': 'T',
+    'ТБАНК': 'T',
+    'ТИНЬКОФФ': 'T',
+    'ТКС': 'T',
+    'UGC': 'UGLD',
+    'ЮГК': 'UGLD',
+    'ЮЖУРАЛЗОЛОТО': 'UGLD',
+    'FIVE': 'X5',
+    'ПЯТЕРОЧКА': 'X5',
+    'ИКС5': 'X5',
+    'NOVA': 'BELU',
+    'БЕЛУГА': 'BELU',
+    'НОВАБЕВ': 'BELU',
+    'СБЕР': 'SBER',
+    'СБЕРБАНК': 'SBER',
+    'ЛУКОЙЛ': 'LKOH',
+    'ГАЗПРОМ': 'GAZP',
+    'РОСНЕФТЬ': 'ROSN',
+    'НОВАТЭК': 'NVTK',
+    'НОРНИКЕЛЬ': 'GMKN',
+    'САМОЛЕТ': 'SMLT',
+    'МАГНИТ': 'MGNT',
+    'ФОСАГРО': 'PHOR',
+    'РУСАЛ': 'RUAL',
+    'СЕВЕРСТАЛЬ': 'CHMF',
+    'НЛМК': 'NLMK',
+    'ММК': 'MAGN',
+    'ПОЛЮС': 'PLZL',
+    'ТАТНЕФТЬ': 'TATN',
+    'СУРГУТ': 'SNGS',
+    'АЛРОСА': 'ALRS',
+    'АЭРОФЛОТ': 'AFLT',
+    'ОЗОН': 'OZON',
+    'МТС': 'MTSS',
+    'ВТБ': 'VTBR',
+    'СОВКОМБАНК': 'SVCB',
+    'ХЭДХАНТЕР': 'HEAD',
+    'ПОЗИТИВ': 'POSI',
+    'АСТРА': 'ASTR',
+    'ДИАСОФТ': 'DIAS',
+    'СОВКОМФЛОТ': 'FLOT',
+    'НМТП': 'NMTP',
+    'МЕЧЕЛ': 'MTLR',
+    'РОСТЕЛЕКОМ': 'RTKM',
+    'СЕГЕЖА': 'SGZH',
+    'ВУШ': 'WUSH',
+    'WHOOSH': 'WUSH',
+    'ТМК': 'TRMK',
+    'РУССНЕФТЬ': 'RNFT',
+    'ИНТЕР РАО': 'IRAO',
+    'РУСГИДРО': 'HYDR',
+    'ЮНИПРО': 'UPRO',
+    'ДОМРФ': 'DOMRF',
+    'ДОМ.РФ': 'DOMRF',
+    'ИВА': 'IVAT',
+    'ПРОМОМЕД': 'PRMD',
+    'МАТЬ И ДИТЯ': 'MDMG'
+}
+
+SMARTLAB_FORUM_MAP = {
+    'CIAN': 'CNRU',
+    'YNDX': 'YDEX',
+    'TCSG': 'T',
+    'FIVE': 'X5',
+    'UGC': 'UGLD',
+    'NOVA': 'BELU'
+}
+
+PULSE_ALIASES = {
+    'CNRU': ['CIAN'],
+    'CIAN': ['CNRU'],
+    'YDEX': ['YNDX'],
+    'YNDX': ['YDEX'],
+    'T': ['TCSG'],
+    'TCSG': ['T'],
+    'X5': ['FIVE'],
+    'FIVE': ['X5'],
+    'UGLD': ['UGC'],
+    'UGC': ['UGLD'],
+    'BELU': ['NOVA']
+}
+
+def resolve_ticker(raw_ticker: str) -> str:
+    """Нормализует введенный тикер или название компании к официальному тикеру MOEX."""
+    if not raw_ticker:
+        return ""
+    cleaned = str(raw_ticker).strip().upper()
+    return TICKER_ALIASES.get(cleaned, cleaned)
 
 MIN_DAILY_TURNOVER_RUB = 50_000_000
 MOEX_TQBR_URL = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities.json"
@@ -76,6 +259,27 @@ def fetch_moex_tickers():
     except Exception as e:
         print(f"Failed to fetch MOEX tickers: {e}. Using fallback list.")
         return sorted(set(FALLBACK_TICKERS + PORTFOLIO_TICKERS))
+
+def get_all_supported_tickers():
+    """Возвращает полный отсортированный список всех поддерживаемых тикеров без дублей и технических фондов."""
+    base_set = set(FALLBACK_TICKERS + PORTFOLIO_TICKERS)
+    try:
+        moex = fetch_moex_tickers()
+        base_set.update(moex)
+    except Exception:
+        pass
+    try:
+        cache_path = Path(__file__).parent / "fundamentals_cache.csv"
+        if cache_path.exists():
+            import pandas as pd
+            df_c = pd.read_csv(cache_path)
+            base_set.update(df_c['ticker'].dropna().unique().tolist())
+    except Exception:
+        pass
+    # Исключаем технические БПИФы денежного рынка
+    skip_prefixes = ("AKM", "AKF", "AMF", "AMN", "BCS", "FIX", "SBMM", "LQDT")
+    filtered = [t for t in base_set if not t.startswith(skip_prefixes)]
+    return sorted(set(filtered))
 
 ANALYTICS_WORDS = [
     "отчет", "выручка", "прибыль", "дивиденд", "дивы", "ставка", "цб", "таргет",
@@ -143,6 +347,8 @@ def fetch_forum_sentiment(ticker):
 def extract_meaningful_messages(ticker, max_pages=2, max_messages=50):
     from bs4 import BeautifulSoup
     
+    resolved = resolve_ticker(ticker)
+    forum_ticker = SMARTLAB_FORUM_MAP.get(resolved, resolved)
     messages = []
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -150,9 +356,9 @@ def extract_meaningful_messages(ticker, max_pages=2, max_messages=50):
     
     for page in range(1, max_pages + 1):
         if page == 1:
-            url = f"https://smart-lab.ru/forum/{ticker}"
+            url = f"https://smart-lab.ru/forum/{forum_ticker}"
         else:
-            url = f"https://smart-lab.ru/forum/{ticker}/page{page}/"
+            url = f"https://smart-lab.ru/forum/{forum_ticker}/page{page}/"
             
         try:
             r = requests.get(url, headers=headers, timeout=10)
@@ -232,70 +438,95 @@ def extract_meaningful_messages(ticker, max_pages=2, max_messages=50):
     return messages
 
 def extract_pulse_messages(ticker, max_messages=50):
-    url = f"https://www.tbank.ru/api/invest-gw/social/v1/post/instrument/{ticker}?limit={max_messages}"
+    resolved = resolve_ticker(ticker)
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "application/json"
     }
     
+    tickers_to_query = [resolved]
+    for alt in PULSE_ALIASES.get(resolved, []):
+        if alt not in tickers_to_query:
+            tickers_to_query.append(alt)
+
     messages = []
-    try:
-        # Т-Банк использует российский корневой сертификат Минцифры, поэтому отключаем SSL-проверку для предотвращения SSLCertVerificationError
-        r = requests.get(url, headers=headers, timeout=10, verify=False)
-        if r.status_code != 200:
-            return messages
-            
-        data = r.json()
-        items = data.get("payload", {}).get("items", [])
-        
-        for item in items:
-            raw_text = item.get("content", {}).get("text", "") or item.get("text", "")
-            if not raw_text or len(raw_text) < 15:
+    seen_ids = set()
+    seen_texts = set()
+
+    for current_t in tickers_to_query:
+        if len(messages) >= max_messages:
+            break
+        limit_needed = max_messages - len(messages)
+        url = f"https://www.tbank.ru/api/invest-gw/social/v1/post/instrument/{current_t}?limit={limit_needed}"
+        try:
+            # Т-Банк использует российский корневой сертификат Минцифры, поэтому отключаем SSL-проверку для предотвращения SSLCertVerificationError
+            r = requests.get(url, headers=headers, timeout=10, verify=False)
+            if r.status_code != 200:
                 continue
                 
-            author = item.get("nickname") or item.get("owner", {}).get("nickname", "Аноним")
+            data = r.json()
+            items = data.get("payload", {}).get("items", [])
             
-            # Парсинг времени (формат: 2026-09-02T11:14:03.794Z)
-            time_str = item.get("inserted", "")
-            if time_str:
-                try:
-                    from datetime import datetime
-                    dt = datetime.strptime(time_str.split('.')[0].replace('Z', ''), "%Y-%m-%dT%H:%M:%S")
-                    time_str = dt.strftime("%Y-%m-%d %H:%M")
-                except:
-                    pass
-            
-            post_id = item.get("id", "")
-            link = f"https://www.tbank.ru/invest/social/profile/{author}/{post_id}/" if author != "Аноним" and post_id else url
-            
-            clean_txt = clean_html(raw_text)
-            p, n = analyze_sentiment(clean_txt)
-            a_count = sum(1 for word in ANALYTICS_WORDS if re.search(r'\b' + word + r'[а-я]*\b', clean_txt))
-            
-            if p == 0 and n == 0 and a_count == 0 and len(raw_text) < 10:
-                continue
+            for item in items:
+                post_id = item.get("id", "")
+                if post_id and post_id in seen_ids:
+                    continue
+                if post_id:
+                    seen_ids.add(post_id)
+
+                raw_text = item.get("content", {}).get("text", "") or item.get("text", "")
+                if not raw_text or len(raw_text) < 15:
+                    continue
+                    
+                snippet = raw_text[:60]
+                if snippet in seen_texts:
+                    continue
+                seen_texts.add(snippet)
+
+                author = item.get("nickname") or item.get("owner", {}).get("nickname", "Аноним")
                 
-            if p > n: trend = "positive"
-            elif n > p: trend = "negative"
-            elif a_count > 0: trend = "analytics"
-            else: trend = "neutral"
+                # Парсинг времени (формат: 2026-09-02T11:14:03.794Z)
+                time_str = item.get("inserted", "")
+                if time_str:
+                    try:
+                        from datetime import datetime
+                        dt = datetime.strptime(time_str.split('.')[0].replace('Z', ''), "%Y-%m-%dT%H:%M:%S")
+                        time_str = dt.strftime("%Y-%m-%d %H:%M")
+                    except:
+                        pass
+                
+                link = f"https://www.tbank.ru/invest/social/profile/{author}/{post_id}/" if author != "Аноним" and post_id else url
+                
+                clean_txt = clean_html(raw_text)
+                p, n = analyze_sentiment(clean_txt)
+                a_count = sum(1 for word in ANALYTICS_WORDS if re.search(r'\b' + word + r'[а-я]*\b', clean_txt))
+                
+                if p == 0 and n == 0 and a_count == 0 and len(raw_text) < 10:
+                    continue
+                    
+                if p > n: trend = "positive"
+                elif n > p: trend = "negative"
+                elif a_count > 0: trend = "analytics"
+                else: trend = "neutral"
+                
+                messages.append({
+                    "source": "Пульс",
+                    "author": author,
+                    "time": time_str,
+                    "text": raw_text,
+                    "link": link,
+                    "pos": p,
+                    "neg": n,
+                    "analytics": a_count,
+                    "trend": trend
+                })
+                if len(messages) >= max_messages:
+                    break
+        except Exception as e:
+            print(f"Error fetching Pulse detailed {current_t}: {e}")
             
-            messages.append({
-                "source": "Пульс",
-                "author": author,
-                "time": time_str,
-                "text": raw_text,
-                "link": link,
-                "pos": p,
-                "neg": n,
-                "analytics": a_count,
-                "trend": trend
-            })
-            
-    except Exception as e:
-        print(f"Error fetching Pulse detailed {ticker}: {e}")
-        
     return messages
+
 
 
 RU_MONTHS = {
@@ -372,8 +603,8 @@ TICKER_SYNONYMS = {
     'GMKN': ['норникель', 'гмк', 'gmkn', 'потанин'],
     'YDEX': ['яндекс', 'ydex', 'yndx'],
     'YNDX': ['яндекс', 'ydex', 'yndx'],
-    'T': ['т-банк', 'тбанк', 'тинькофф', 'ткс'],
-    'TCSG': ['т-банк', 'тбанк', 'тинькофф', 'ткс'],
+    'T': ['т-банк', 'тбанк', 'тинькофф', 'ткс', 'tcsg'],
+    'TCSG': ['т-банк', 'тбанк', 'тинькофф', 'ткс', 'tcsg'],
     'MGNT': ['магнит', 'mgnt'],
     'PLZL': ['полюс', 'plzl', 'золот'],
     'CHMF': ['северсталь', 'chmf', 'мордашов'],
@@ -381,9 +612,9 @@ TICKER_SYNONYMS = {
     'MAGN': ['ммк', 'magn', 'рашников'],
     'VTBR': ['втб', 'vtbr', 'костин'],
     'TATN': ['татнефть', 'tatn'],
-    'TATNP': ['татнефть', 'tatn'],
-    'SNGS': ['сургут', 'sngs', 'богданов'],
-    'SNGSP': ['сургут', 'sngs', 'богданов'],
+    'TATNP': ['татнефть', 'tatn', 'татнефтьпреф'],
+    'SNGS': ['сургут', 'sngs', 'богданов', 'сургутнефтегаз'],
+    'SNGSP': ['сургут', 'sngs', 'богданов', 'сургутнефтегаз', 'преф'],
     'ALRS': ['алроса', 'alrs', 'алмаз'],
     'MOEX': ['мосбирж', 'moex'],
     'AFKS': ['система', 'afks', 'евтушенков'],
@@ -397,15 +628,66 @@ TICKER_SYNONYMS = {
     'SVCB': ['совкомбанк', 'svcb'],
     'HEAD': ['хэдхантер', 'hh', 'head'],
     'POSI': ['позитив', 'posi'],
+    'ASTR': ['астра', 'astr'],
+    'DIAS': ['диасофт', 'dias'],
+    'DATA': ['аренадата', 'data'],
+    'SOFL': ['софтлайн', 'sofl'],
+    'VKCO': ['вк', 'vkco', 'вконтакте'],
+    'PIKK': ['пик', 'pikk'],
+    'SMLT': ['самолет', 'smlt'],
+    'EUTR': ['евротранс', 'eutr', 'трасса'],
+    'BELU': ['белуг', 'новабев', 'belu', 'novabev'],
+    'BSPB': ['бспб', 'bspb', 'банк спб', 'санкт-петербург'],
+    'CNRU': ['циан', 'cian', 'cnru', 'циана', 'циану', 'cian.ru', 'cyan'],
+    'CIAN': ['циан', 'cian', 'cnru', 'циана', 'циану', 'cian.ru', 'cyan'],
+    'DOMRF': ['домрф', 'дом.рф', 'domrf', 'дом рф'],
+    'ENPG': ['эн+', 'enpg', 'эн плюс', 'en+'],
+    'FEES': ['россети', 'fees', 'фск', 'фск-россети'],
+    'IVAT': ['ива', 'ivat', 'iva'],
+    'MDMG': ['мать и дитя', 'mdmg', 'курцер', 'мд медикал'],
+    'MTLR': ['мечел', 'mtlr', 'зюзин'],
+    'NMTP': ['нмтп', 'nmtp', 'новороссийск'],
+    'OZPH': ['озон фарма', 'ozph', 'озон фармацевтика'],
+    'PHOR': ['фосагро', 'phor', 'гурьев'],
+    'PRMD': ['промомед', 'prmd'],
+    'RAGR': ['русагро', 'ragr', 'мошкович'],
+    'RENI': ['ренессанс', 'reni'],
+    'RNFT': ['русснефть', 'rnft', 'гуцериев'],
+    'RTKM': ['ростелеком', 'rtkm', 'осеевский'],
+    'RUAL': ['русал', 'rual', 'дерипаск'],
+    'SELG': ['селигдар', 'selg'],
+    'SFIN': ['эсэфай', 'sfin', 'сфи'],
+    'SGZH': ['сегежа', 'sgzh', 'шамолин'],
+    'SIBN': ['газпром нефть', 'газпромнефть', 'sibn', 'дюков'],
+    'TRMK': ['тмк', 'trmk', 'пумпянский'],
+    'UGLD': ['югк', 'ugld', 'ugc', 'струков', 'южуралзолото'],
+    'UGC': ['югк', 'ugld', 'ugc', 'струков', 'южуралзолото'],
+    'UPRO': ['юнипро', 'upro'],
+    'WUSH': ['вуш', 'whoosh', 'wush'],
+    'X5': ['х5', 'x5', 'пятерочк', 'перекресток', 'five'],
+    'FIVE': ['х5', 'x5', 'пятерочк', 'перекресток', 'five'],
+    'AQUA': ['инарктик', 'aqua', 'русская аквакультура'],
+    'BANE': ['башнефть', 'bane'],
+    'BANEP': ['башнефть', 'banep'],
+    'HYDR': ['русгидро', 'hydr'],
+    'QIWI': ['киви', 'qiwi']
 }
 
 
 def get_ticker_keywords(ticker: str) -> list:
     """Возвращает список синонимов, названий компании и тикеров для фильтрации."""
-    t = str(ticker).strip().upper()
-    kws = set(TICKER_SYNONYMS.get(t, []))
-    kws.add(t.lower())
-    kws.add(f"${t.lower()}")
+    raw = str(ticker).strip().upper()
+    resolved = resolve_ticker(raw)
+    kws = set()
+    for t in [raw, resolved]:
+        if t:
+            kws.update(TICKER_SYNONYMS.get(t, []))
+            kws.add(t.lower())
+            kws.add(f"${t.lower()}")
+    for alt in PULSE_ALIASES.get(resolved, []):
+        kws.update(TICKER_SYNONYMS.get(alt, []))
+        kws.add(alt.lower())
+        kws.add(f"${alt.lower()}")
     return list(kws)
 
 

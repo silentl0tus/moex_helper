@@ -26,6 +26,10 @@ from sentiment_scraper import (
     DEFAULT_OPENROUTER_MODEL,
     OPENROUTER_FREE_MODELS,
     FALLBACK_TICKERS,
+    COMPANY_NAMES,
+    TICKER_ALIASES,
+    resolve_ticker,
+    get_all_supported_tickers,
     POSITIVE_WORDS,
     NEGATIVE_WORDS,
     ANALYTICS_WORDS
@@ -42,14 +46,38 @@ col1, col2 = st.columns([1, 2])
 
 with col1:
     st.subheader("Выбор компании")
+
+    available_tickers = get_all_supported_tickers()
+    if not available_tickers:
+        available_tickers = sorted(FALLBACK_TICKERS)
+
+    # Предзагрузка тикера из query_params или session_state (из Мастера отбора)
+    url_ticker = st.query_params.get("ticker", "").upper().strip()
+    session_ticker = str(st.session_state.get("selected_sentiment_ticker", "")).upper().strip()
+    preset_raw = url_ticker or session_ticker
+    preset_ticker = resolve_ticker(preset_raw) if preset_raw else ""
+
+    default_idx = 0
+    if preset_ticker and preset_ticker in available_tickers:
+        default_idx = available_tickers.index(preset_ticker)
+    elif "SBER" in available_tickers:
+        default_idx = available_tickers.index("SBER")
+
     selected_ticker = st.selectbox(
-        "Выберите тикер из списка",
-        options=FALLBACK_TICKERS,
-        index=0
+        "Выберите компанию из списка (поиск по тикеру или названию):",
+        options=available_tickers,
+        index=default_idx,
+        format_func=lambda t: f"{t} — {COMPANY_NAMES.get(t, t)}"
     )
-    custom_ticker = st.text_input("Или введите свой тикер (например, GAZP):").upper()
+    custom_ticker_input = st.text_input("Или введите свой тикер / название (например, CIAN, Циан, SBER):").strip()
     
-    ticker_to_search = custom_ticker if custom_ticker else selected_ticker
+    if custom_ticker_input:
+        resolved = resolve_ticker(custom_ticker_input)
+        if resolved != custom_ticker_input.upper():
+            st.info(f"💡 Запрос **'{custom_ticker_input}'** сопоставлен с тикером MOEX: **{resolved}** ({COMPANY_NAMES.get(resolved, '')})")
+        ticker_to_search = resolved
+    else:
+        ticker_to_search = selected_ticker
     
     st.markdown("---")
     st.subheader("Источник и Фильтры")
@@ -133,7 +161,9 @@ def get_messages(ticker, source, force_reload=False):
         return extract_meaningful_messages(ticker, max_pages=2, max_messages=50)
 
 with col2:
-    st.subheader(f"Лента сообщений: {ticker_to_search}")
+    comp_name = COMPANY_NAMES.get(ticker_to_search, "")
+    comp_suffix = f" — {comp_name}" if comp_name else ""
+    st.subheader(f"Лента сообщений: {ticker_to_search}{comp_suffix}")
     
     if st.session_state.force_reload:
         get_messages.clear()
