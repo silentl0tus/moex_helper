@@ -67,8 +67,8 @@ CYCLICAL_TICKERS = ['CHMF', 'NLMK', 'MAGN', 'ALRS', 'PLZL', 'UGC', 'MTLR', 'RASP
 # Холдинги: P/E искажён переоценками дочек/кубышки — оцениваем по P/BV
 HOLDING_TICKERS  = ['SNGS', 'SNGSP', 'AFKS', 'SFIN', 'ENPG', 'GAZP']
 ZERO_DEBT_TICKERS = ['SNGS', 'SNGSP']  # отрицательный чистый долг
-# Чёрный список: предбанкроты, уход с биржи, плохое корп. управление
-TOXIC_TICKERS    = ['PIKK', 'SMLT', 'EUTR', 'QIWI', 'POLY', 'ORUP', 'OBUV', 'RUGR', 'FIXP', 'CBOM']
+# Чёрный список: предбанкроты, уход с биржи, плохое корп. управление, дистресс-активы
+TOXIC_TICKERS    = ['PIKK', 'SMLT', 'EUTR', 'QIWI', 'POLY', 'ORUP', 'OBUV', 'RUGR', 'FIXP', 'CBOM', 'SGZH', 'MTLR', 'MTLRP']
 
 # ==========================================
 # 2. ФУНКЦИИ СБОРА ДАННЫХ
@@ -1126,7 +1126,10 @@ with tab1:
         safe_debt = df_fund["Debt_EBITDA"].clip(lower=-0.5)
         
         # Используем ROE_norm вместо сырого ROE_% и умножаем на мультипликатор роста
-        df_fund["Health_Score"] = (((df_fund["ROE_norm"] / df_fund["P_E"]) / (1 + safe_debt)) * growth_multiplier).round(2)
+        df_fund["Health_Score"] = (((df_fund["ROE_norm"] / df_fund["P_E"].clip(lower=0.5)) / (1 + safe_debt)) * growth_multiplier).round(2)
+        # Убыточные компании (P/E <= 0) и токсичные предбанкроты получают скор 0.0
+        df_fund.loc[df_fund['P_E'] <= 0, "Health_Score"] = 0.0
+        df_fund.loc[df_fund['ticker'].isin(TOXIC_TICKERS), "Health_Score"] = 0.0
         
         # Специфика Сургутнефтегаза и Холдингов: их P/E искажен переоценками кубышки/дочек. Оцениваем по P/BV.
         # GAZP добавлен сюда как холдинг (владеет Газпром нефтью, Газпромбанком), торгующийся глубоко ниже капитала.
