@@ -1,5 +1,6 @@
 import streamlit as st
 import os
+import json
 import pandas as pd
 from pathlib import Path
 
@@ -731,9 +732,20 @@ with tab3:
         <h3 style="margin-top:0;">💬 Защита от скрытых рисков (Новости, Пульс, Smart-Lab, AI)</h3>
         <p style="margin-bottom:0; color:#CBD5E1;">
             Фундаментальные мультипликаторы смотрят в прошлое. Сентимент и анализ инфополя защищают вас от непредвиденных новостей: судебных исков, внезапных допэмиссий (SPO), срывов дивидендов и санкционных ограничений.
+            <br>⏱️ <b>Внимание:</b> Анализ сообщений инвесторов строго ограничивается <b>1 месяцем (30 дней от запроса)</b>. Если за последний месяц сообщений не было — в отчете так и пишется, а инфополе считается нейтральным.
         </p>
     </div>
     """, unsafe_allow_html=True)
+
+    # Загрузка актуального кэша сентимента
+    sentiment_cache_file = Path(os.path.abspath(__file__)).parent.parent / "sentiment.json"
+    sent_dict = {}
+    if sentiment_cache_file.exists():
+        try:
+            with open(sentiment_cache_file, "r", encoding="utf-8") as f:
+                sent_dict = json.load(f)
+        except Exception:
+            pass
 
     if not current_basket:
         st.warning("⚠️ В вашей корзине пока нет бумаг. Вернитесь на вкладку «2. Фундаментальный скринер» и выберите 2–5 тикеров.")
@@ -746,12 +758,24 @@ with tab3:
             is_checked = st.session_state["wizard_sentiment_flags"].get(ticker, False)
             current_note = st.session_state["wizard_notes"].get(ticker, "")
 
+            # Сентимент за месяц из sentiment.json
+            s_data = sent_dict.get(ticker, {})
+            has_posts = s_data.get("posts_analyzed", 0) > 0 and s_data.get("has_recent_posts") is not False
+            if has_posts:
+                s_score = s_data.get("score", 0.0)
+                if s_score > 0.1: s_badge = f"🟢 +{s_score:.2f} (позитив)"
+                elif s_score < -0.1: s_badge = f"🔴 {s_score:.2f} (негатив)"
+                else: s_badge = f"⚪ {s_score:.2f} (нейтрально)"
+                sent_label = f"💬 Сентимент за месяц: **{s_badge}**"
+            else:
+                sent_label = "💬 Сентимент за месяц: *Нет сообщений (нейтрально)*"
+
             with st.container(border=True):
                 col_info, col_link, col_check = st.columns([2.5, 2, 2.5])
                 with col_info:
                     status_icon = "🟢" if is_checked else "⚪"
                     st.markdown(f"### {status_icon} **{ticker}** — {c_name}")
-                    st.caption(f"Сектор: **{sector}**")
+                    st.caption(f"Сектор: **{sector}** │ {sent_label}")
 
                 with col_link:
                     st.write("")
@@ -769,7 +793,7 @@ with tab3:
                         )
                     except Exception:
                         pass
-                    st.caption("Проверьте драйверы и риски в Пульсе")
+                    st.caption("Проверьте драйверы и риски за месяц")
 
                 with col_check:
                     st.write("")

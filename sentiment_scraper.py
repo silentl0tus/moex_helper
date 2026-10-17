@@ -299,7 +299,7 @@ def analyze_sentiment(text):
     
     return pos_count, neg_count
 
-def fetch_forum_sentiment(ticker):
+def fetch_forum_sentiment(ticker, max_age_days=30):
     url = f"https://smart-lab.ru/forum/{ticker}"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
@@ -310,42 +310,77 @@ def fetch_forum_sentiment(ticker):
         if response.status_code != 200:
             return None
             
-        posts = re.findall(r'class="comment_body[^>]*>(.*?)</div>', response.text, re.DOTALL | re.IGNORECASE)
-        if not posts:
-            posts = re.findall(r'<div class="text[^>]*>(.*?)</div>', response.text, re.DOTALL | re.IGNORECASE)
-            
-        if not posts:
-            return None
-            
+        from bs4 import BeautifulSoup
+        import datetime
+        soup = BeautifulSoup(response.text, 'html.parser')
+        items = soup.select('li.cm_wrap, div.post')
+        if not items:
+            items = soup.select('div.comment_body, div.text')
+
+        if not items:
+            return {
+                "score": 0.0,
+                "pos_words": 0,
+                "neg_words": 0,
+                "posts_analyzed": 0,
+                "has_recent_posts": False,
+                "message": "Нет сообщений за последний месяц",
+                "timestamp": time.time()
+            }
+
+        cutoff = datetime.datetime.now() - datetime.timedelta(days=max_age_days)
         total_pos = 0
         total_neg = 0
-        
-        for post in posts[:20]: # Берем последние 20 постов
-            clean_text = clean_html(post)
+        recent_posts_count = 0
+
+        for it in items[:30]:
+            time_tag = it.select_one('time, .time, .date')
+            time_str = ""
+            if time_tag:
+                time_str = time_tag.get('datetime') or time_tag.get_text(strip=True)
+            
+            dt = parse_time_to_dt(time_str)
+            # Отсекаем сообщения старше 30 дней от запроса
+            if dt != datetime.datetime.min and dt < cutoff:
+                continue
+
+            text_tag = it.select_one('.text') or it.select_one('.comment_body') or it
+            clean_text = clean_html(text_tag.get_text(separator=' ', strip=True))
+            if len(clean_text) < 15:
+                continue
+
             p, n = analyze_sentiment(clean_text)
             total_pos += p
             total_neg += n
-            
-        # Нормализация скора от -1.0 до 1.0
-        if total_pos == 0 and total_neg == 0:
-            score = 0.0
-        else:
-            score = (total_pos - total_neg) / (total_pos + total_neg + 1) # +1 чтобы избежать деления на 0 и сгладить редкие посты
-            
+            recent_posts_count += 1
+
+        if recent_posts_count == 0:
+            return {
+                "score": 0.0,
+                "pos_words": 0,
+                "neg_words": 0,
+                "posts_analyzed": 0,
+                "has_recent_posts": False,
+                "message": "Нет сообщений за последний месяц",
+                "timestamp": time.time()
+            }
+
+        score = (total_pos - total_neg) / (total_pos + total_neg + 1)
         return {
             "score": round(score, 2),
             "pos_words": total_pos,
             "neg_words": total_neg,
-            "posts_analyzed": len(posts[:20]),
+            "posts_analyzed": recent_posts_count,
+            "has_recent_posts": True,
             "timestamp": time.time()
         }
-        
     except Exception as e:
         print(f"Error fetching {ticker}: {e}")
         return None
 
-def extract_meaningful_messages(ticker, max_pages=2, max_messages=50):
+def extract_meaningful_messages(ticker, max_pages=2, max_messages=50, max_age_days=30):
     from bs4 import BeautifulSoup
+    import datetime
     
     resolved = resolve_ticker(ticker)
     forum_ticker = SMARTLAB_FORUM_MAP.get(resolved, resolved)
@@ -353,6 +388,7 @@ def extract_meaningful_messages(ticker, max_pages=2, max_messages=50):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
+    cutoff = datetime.datetime.now() - datetime.timedelta(days=max_age_days) if max_age_days else None
     
     for page in range(1, max_pages + 1):
         if page == 1:
@@ -390,9 +426,17 @@ def extract_meaningful_messages(ticker, max_pages=2, max_messages=50):
                 
                 # Получаем время
                 time_tag = it.select_one('time, .time, .date')
-                time_str = time_tag.get_text(strip=True) if time_tag else ""
-                if not time_str and time_tag and time_tag.get('datetime'):
-                    time_str = time_tag.get('datetime')
+                time_str = ""
+                if time_tag:
+                    time_str = time_tag.get('datetime') or time_tag.get_text(strip=True)
+                
+                dt = parse_time_to_dt(time_str)
+                # Отсекаем сообщения старше месяца (max_age_days) от момента запроса
+                if cutoff and dt != datetime.datetime.min:
+                    if dt < cutoff:
+                        continue
+
+                display_time = dt.strftime("%Y-%m-%d %H:%M") if dt != datetime.datetime.min else time_str
                     
                 # Получаем ссылку на коммент
                 data_id = it.get('data-id')
@@ -417,7 +461,8 @@ def extract_meaningful_messages(ticker, max_pages=2, max_messages=50):
                 messages.append({
                     "source": "Smart-Lab",
                     "author": author,
-                    "time": time_str,
+                    "time": display_time,
+                    "dt": dt,
                     "text": raw_text,
                     "link": link,
                     "pos": p,
@@ -437,12 +482,14 @@ def extract_meaningful_messages(ticker, max_pages=2, max_messages=50):
         
     return messages
 
-def extract_pulse_messages(ticker, max_messages=50):
+def extract_pulse_messages(ticker, max_messages=50, max_age_days=30):
+    import datetime
     resolved = resolve_ticker(ticker)
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "application/json"
     }
+    cutoff = datetime.datetime.now() - datetime.timedelta(days=max_age_days) if max_age_days else None
     
     tickers_to_query = [resolved]
     for alt in PULSE_ALIASES.get(resolved, []):
@@ -487,14 +534,13 @@ def extract_pulse_messages(ticker, max_messages=50):
                 
                 # Парсинг времени (формат: 2026-09-02T11:14:03.794Z)
                 time_str = item.get("inserted", "")
-                if time_str:
-                    try:
-                        from datetime import datetime
-                        dt = datetime.strptime(time_str.split('.')[0].replace('Z', ''), "%Y-%m-%dT%H:%M:%S")
-                        time_str = dt.strftime("%Y-%m-%d %H:%M")
-                    except:
-                        pass
-                
+                dt = parse_time_to_dt(time_str)
+                # Отсекаем сообщения старше месяца (max_age_days) от момента запроса
+                if cutoff and dt != datetime.datetime.min:
+                    if dt < cutoff:
+                        continue
+
+                display_time = dt.strftime("%Y-%m-%d %H:%M") if dt != datetime.datetime.min else time_str
                 link = f"https://www.tbank.ru/invest/social/profile/{author}/{post_id}/" if author != "Аноним" and post_id else url
                 
                 clean_txt = clean_html(raw_text)
@@ -512,7 +558,8 @@ def extract_pulse_messages(ticker, max_messages=50):
                 messages.append({
                     "source": "Пульс",
                     "author": author,
-                    "time": time_str,
+                    "time": display_time,
+                    "dt": dt,
                     "text": raw_text,
                     "link": link,
                     "pos": p,
@@ -536,30 +583,75 @@ RU_MONTHS = {
 
 
 def parse_time_to_dt(time_str: str):
-    """Преобразует различные форматы дат из Пульса и Smart-Lab в объект datetime для корректной сортировки."""
+    """
+    Преобразует различные форматы дат из Пульса и Smart-Lab в объект datetime
+    для фильтрации по периоду от момента запроса и корректной сортировки.
+    """
     import datetime
     if not time_str:
         return datetime.datetime.min
     now = datetime.datetime.now()
-    s = str(time_str).strip().lower()
+    raw = str(time_str).strip()
+    s = raw.lower()
+
+    # 1. ISO-8601 формат (Smart-Lab datetime атрибут или inserted из Пульса)
     try:
+        iso_s = raw.replace('Z', '+00:00')
+        dt = datetime.datetime.fromisoformat(iso_s)
+        if dt.tzinfo is not None:
+            dt = dt.replace(tzinfo=None)
+        return dt
+    except Exception:
+        pass
+
+    try:
+        # 2. Относительное время: "X минут/часов/дней назад"
+        rel_m = re.search(r'(\d+)\s*(мин|час|дн|сек)', s)
+        if rel_m and 'назад' in s:
+            num = int(rel_m.group(1))
+            unit = rel_m.group(2)
+            if 'сек' in unit:
+                return now - datetime.timedelta(seconds=num)
+            elif 'мин' in unit:
+                return now - datetime.timedelta(minutes=num)
+            elif 'час' in unit:
+                return now - datetime.timedelta(hours=num)
+            elif 'дн' in unit:
+                return now - datetime.timedelta(days=num)
+
+        # 3. "сегодня, 14:20" / "вчера, 22:15"
         if 'сегодня' in s:
             parts = s.split(',')
             if len(parts) > 1:
                 t = parts[1].strip()
                 h, m = map(int, t.split(':')[:2])
                 return now.replace(hour=h, minute=m, second=0, microsecond=0)
+            return now
         elif 'вчера' in s:
             parts = s.split(',')
+            yest = now - datetime.timedelta(days=1)
             if len(parts) > 1:
                 t = parts[1].strip()
                 h, m = map(int, t.split(':')[:2])
-                yest = now - datetime.timedelta(days=1)
                 return yest.replace(hour=h, minute=m, second=0, microsecond=0)
+            return yest
 
+        # 4. "YYYY-MM-DD HH:MM"
         if re.match(r'^\d{4}-\d{2}-\d{2}', s):
             return datetime.datetime.strptime(s[:16], '%Y-%m-%d %H:%M')
 
+        # 5. "DD.MM.YYYY HH:MM" или "DD.MM.YY"
+        dot_m = re.search(r'(\d{1,2})\.(\d{1,2})\.(\d{2,4})(?:[ ,]+(\d{1,2}):(\d{2}))?', s)
+        if dot_m:
+            day = int(dot_m.group(1))
+            month = int(dot_m.group(2))
+            yr = int(dot_m.group(3))
+            year = yr if yr > 100 else 2000 + yr
+            hour = int(dot_m.group(4)) if dot_m.group(4) else 0
+            minute = int(dot_m.group(5)) if dot_m.group(5) else 0
+            return datetime.datetime(year, month, day, hour, minute)
+
+        # 6. Текстовые даты Smart-Lab: "15 октября 2026 10:30" или "15 окт, 10:30"
         m = re.search(r'(\d{1,2})\s+([а-я]{3,8})(?:\s+(\d{4}))?.*?(\d{1,2}):(\d{2})', s)
         if m:
             day = int(m.group(1))
@@ -574,21 +666,40 @@ def parse_time_to_dt(time_str: str):
     return datetime.datetime.min
 
 
-def extract_aggregated_messages(ticker, max_messages=50):
+def filter_messages_by_date(messages: list, max_age_days: int = 30) -> list:
+    """
+    Оставляет только сообщения за последние max_age_days (по умолчанию 30 дней от момента запроса).
+    """
+    if not messages:
+        return []
+    import datetime
+    cutoff = datetime.datetime.now() - datetime.timedelta(days=max_age_days)
+    result = []
+    for m in messages:
+        dt = m.get("dt") or parse_time_to_dt(m.get("time", ""))
+        if dt != datetime.datetime.min and dt >= cutoff:
+            result.append(m)
+    return result
+
+
+def extract_aggregated_messages(ticker, max_messages=50, max_age_days=30):
     """
     Одновременно агрегирует обсуждения из Т-Банк Пульс и Smart-Lab,
+    ограничивая выборку последними max_age_days (30 дней от момента запроса),
     объединяет их и возвращает единую ленту сообщений.
     """
     from concurrent.futures import ThreadPoolExecutor
     limit_per_source = max(15, max_messages // 2 + 5)
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        f_pulse = executor.submit(extract_pulse_messages, ticker, limit_per_source)
-        f_smart = executor.submit(extract_meaningful_messages, ticker, 2, limit_per_source)
+        f_pulse = executor.submit(extract_pulse_messages, ticker, limit_per_source, max_age_days)
+        f_smart = executor.submit(extract_meaningful_messages, ticker, 2, limit_per_source, max_age_days)
         pulse_msgs = f_pulse.result() or []
         smart_msgs = f_smart.result() or []
 
     combined = pulse_msgs + smart_msgs
+    if max_age_days:
+        combined = filter_messages_by_date(combined, max_age_days=max_age_days)
     combined.sort(key=lambda m: parse_time_to_dt(m.get("time", "")), reverse=True)
     return combined[:max_messages]
 

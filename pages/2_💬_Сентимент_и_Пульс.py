@@ -20,6 +20,8 @@ from sentiment_scraper import (
     extract_pulse_messages,
     extract_aggregated_messages,
     filter_relevant_messages,
+    filter_messages_by_date,
+    parse_time_to_dt,
     generate_structured_summary,
     summarize_with_openrouter,
     summarize_with_hf,
@@ -97,6 +99,22 @@ with col1:
     )
     
     st.markdown("---")
+    st.subheader("Период анализа")
+    period_option = st.selectbox(
+        "Окно анализа сообщений:",
+        ["За последний месяц (30 дней)", "За 2 недели (14 дней)", "За 3 месяца (90 дней)", "Все доступные сообщения"],
+        index=0,
+        help="По умолчанию анализ сентимента строго ограничен последними 30 днями от момента запроса."
+    )
+    days_map = {
+        "За последний месяц (30 дней)": 30,
+        "За 2 недели (14 дней)": 14,
+        "За 3 месяца (90 дней)": 90,
+        "Все доступные сообщения": 3650
+    }
+    max_age_days = days_map.get(period_option, 30)
+
+    st.markdown("---")
     show_full = st.checkbox("Показывать полные сообщения", value=False)
     
     st.markdown("---")
@@ -152,27 +170,45 @@ with col1:
         st.session_state.force_reload = False
 
 @st.cache_data(ttl=600, show_spinner=False)
-def get_messages(ticker, source, force_reload=False):
+def get_messages(ticker, source, max_age_days=30, force_reload=False):
     if source == "Все источники (Пульс + Smart-Lab)":
-        return extract_aggregated_messages(ticker, max_messages=60)
+        return extract_aggregated_messages(ticker, max_messages=60, max_age_days=max_age_days)
     elif source == "Т-Банк Пульс":
-        return extract_pulse_messages(ticker, max_messages=50)
+        return extract_pulse_messages(ticker, max_messages=50, max_age_days=max_age_days)
     else:
-        return extract_meaningful_messages(ticker, max_pages=2, max_messages=50)
+        return extract_meaningful_messages(ticker, max_pages=2, max_messages=50, max_age_days=max_age_days)
 
 with col2:
+    import datetime
+    now_dt = datetime.datetime.now()
+    start_dt = now_dt - datetime.timedelta(days=max_age_days)
+    date_range_str = f"с {start_dt.strftime('%d.%m.%Y')} по {now_dt.strftime('%d.%m.%Y')}"
+
     comp_name = COMPANY_NAMES.get(ticker_to_search, "")
     comp_suffix = f" — {comp_name}" if comp_name else ""
     st.subheader(f"Лента сообщений: {ticker_to_search}{comp_suffix}")
+    st.caption(f"⏱️ Окно анализа сообщений: **{period_option}** ({date_range_str})")
     
     if st.session_state.force_reload:
         get_messages.clear()
         
     with st.spinner("Загрузка данных..."):
-        messages = get_messages(ticker_to_search, source_option, st.session_state.force_reload)
+        messages = get_messages(ticker_to_search, source_option, max_age_days=max_age_days, force_reload=st.session_state.force_reload)
+        if max_age_days:
+            messages = filter_messages_by_date(messages, max_age_days=max_age_days)
         
     if not messages:
-        st.warning(f"Не удалось найти осмысленных сообщений для тикера {ticker_to_search}.")
+        if max_age_days <= 31:
+            st.info(f"ℹ️ **За последний месяц ({date_range_str}) новых сообщений и обсуждений по компании {ticker_to_search} не найдено.**")
+        else:
+            st.info(f"ℹ️ **За выбранный период ({date_range_str}) сообщений по компании {ticker_to_search} не найдено.**")
+
+        st.markdown("""
+        > **Что это означает для инвестора:**
+        > * По эмитенту сейчас **информационный штиль**: нет острых новостных поводов, корпоративных скандалов, судебных исков или срывов дивидендов.
+        > * Сентимент инфополя оценивается как **нейтральный (0.0)**.
+        > * Для принятия инвестиционного решения используйте фундаментальные мультипликаторы (P/E, P/B, ROE, долг) на странице **Инструкция**.
+        """)
     else:
         if strict_filter:
             messages = filter_relevant_messages(messages, ticker_to_search)
@@ -208,88 +244,91 @@ with col2:
         
         st.markdown(f"Отображено сообщений: **{len(filtered)}**")
         st.divider()
-        
-        st.markdown("#### ⚡ Выжимка и ключевые тезисы")
-        
-        openrouter_active = bool(openrouter_key_input and openrouter_key_input.strip())
-        c_sum1, c_sum2 = st.columns([3, 1])
-        with c_sum1:
-            st.caption(f"Анализирует обсуждения инвесторов строго по эмитенту **{ticker_to_search}**.")
-        with c_sum2:
-            run_ai = st.button("🤖 AI-выжимка (OpenRouter)", help=f"Запустить аналитическое резюме через бесплатную модель {selected_openrouter_model}", disabled=not openrouter_active)
 
-        if run_ai and openrouter_active:
-            with st.spinner(f"Запрос к бесплатной нейросети ({selected_openrouter_model})..."):
-                ai_res = summarize_with_openrouter(
-                    filtered,
-                    ticker=ticker_to_search,
-                    api_key=openrouter_key_input,
-                    model=selected_openrouter_model
-                )
-                ai_summary_text = ai_res.get("ai_summary")
-                if ai_summary_text:
-                    if ai_summary_text.startswith("⚠️") or ai_summary_text.startswith("❌") or ai_summary_text.startswith("⏳"):
-                        st.warning(ai_summary_text)
-                    else:
-                        st.success(f"**🤖 Нейросетевое резюме (`{ai_res.get('model', selected_openrouter_model)}`):**\n\n{ai_summary_text}")
-                struct_data = ai_res.get("structured", {})
+        if not filtered:
+            st.info(f"ℹ️ За выбранный период сообщений с категорией «{filter_option}» не найдено (всего сообщений за период: {len(messages)}).")
         else:
-            struct_data = generate_structured_summary(filtered, ticker=ticker_to_search)
-
-        pos_list = struct_data.get("pos", [])
-        neg_list = struct_data.get("neg", [])
-        an_list = struct_data.get("an", [])
-
-        if pos_list or neg_list or an_list:
-            s_col1, s_col2, s_col3 = st.columns(3)
-            with s_col1:
-                st.markdown("**🟢 Драйверы роста (Позитив)**")
-                if pos_list:
-                    for item in pos_list:
-                        st.markdown(f"- {item}")
-                else:
-                    st.caption("Явных позитивных тезисов не найдено.")
-            with s_col2:
-                st.markdown("**🔴 Риски и сомнения (Негатив)**")
-                if neg_list:
-                    for item in neg_list:
-                        st.markdown(f"- {item}")
-                else:
-                    st.caption("Явных негативных тезисов не найдено.")
-            with s_col3:
-                st.markdown("**📊 Факты, отчеты и цифры**")
-                if an_list:
-                    for item in an_list:
-                        st.markdown(f"- {item}")
-                else:
-                    st.caption("Фактических данных не выделено.")
-        else:
-            st.info("Не удалось составить сводку по текущей выборке сообщений.")
+            st.markdown("#### ⚡ Выжимка и ключевые тезисы")
             
-        st.divider()
-        
-        if show_full:
-            for i, m in enumerate(filtered):
-                with st.container(border=True):
-                    head_cols = st.columns([3, 1, 1])
-                    with head_cols[0]:
-                        src_badge = "🟣 Пульс" if m.get("source") == "Пульс" else "🔵 Smart-Lab"
-                        st.markdown(f"**👤 {m['author']}** &nbsp; `{src_badge}`")
-                    with head_cols[1]:
-                        st.markdown(f"*{m['time']}*")
-                    with head_cols[2]:
-                        if m['trend'] == 'positive': badge = "🟢 Позитив"
-                        elif m['trend'] == 'negative': badge = "🔴 Негатив"
-                        elif m['trend'] == 'analytics': badge = "📊 Аналитика"
-                        else: badge = "⚪ Нейтрально"
-                        st.markdown(badge)
+            openrouter_active = bool(openrouter_key_input and openrouter_key_input.strip())
+            c_sum1, c_sum2 = st.columns([3, 1])
+            with c_sum1:
+                st.caption(f"Анализирует обсуждения инвесторов строго по эмитенту **{ticker_to_search}** ({date_range_str}).")
+            with c_sum2:
+                run_ai = st.button("🤖 AI-выжимка (OpenRouter)", help=f"Запустить аналитическое резюме через бесплатную модель {selected_openrouter_model}", disabled=not openrouter_active)
+
+            if run_ai and openrouter_active:
+                with st.spinner(f"Запрос к бесплатной нейросети ({selected_openrouter_model})..."):
+                    ai_res = summarize_with_openrouter(
+                        filtered,
+                        ticker=ticker_to_search,
+                        api_key=openrouter_key_input,
+                        model=selected_openrouter_model
+                    )
+                    ai_summary_text = ai_res.get("ai_summary")
+                    if ai_summary_text:
+                        if ai_summary_text.startswith("⚠️") or ai_summary_text.startswith("❌") or ai_summary_text.startswith("⏳"):
+                            st.warning(ai_summary_text)
+                        else:
+                            st.success(f"**🤖 Нейросетевое резюме (`{ai_res.get('model', selected_openrouter_model)}`):**\n\n{ai_summary_text}")
+                    struct_data = ai_res.get("structured", {})
+            else:
+                struct_data = generate_structured_summary(filtered, ticker=ticker_to_search)
+
+            pos_list = struct_data.get("pos", [])
+            neg_list = struct_data.get("neg", [])
+            an_list = struct_data.get("an", [])
+
+            if pos_list or neg_list or an_list:
+                s_col1, s_col2, s_col3 = st.columns(3)
+                with s_col1:
+                    st.markdown("**🟢 Драйверы роста (Позитив)**")
+                    if pos_list:
+                        for item in pos_list:
+                            st.markdown(f"- {item}")
+                    else:
+                        st.caption("Явных позитивных тезисов не найдено.")
+                with s_col2:
+                    st.markdown("**🔴 Риски и сомнения (Негатив)**")
+                    if neg_list:
+                        for item in neg_list:
+                            st.markdown(f"- {item}")
+                    else:
+                        st.caption("Явных негативных тезисов не найдено.")
+                with s_col3:
+                    st.markdown("**📊 Факты, отчеты и цифры**")
+                    if an_list:
+                        for item in an_list:
+                            st.markdown(f"- {item}")
+                    else:
+                        st.caption("Фактических данных не выделено.")
+            else:
+                st.info("Не удалось составить сводку по текущей выборке сообщений.")
+                
+            st.divider()
+            
+            if show_full:
+                for i, m in enumerate(filtered):
+                    with st.container(border=True):
+                        head_cols = st.columns([3, 1, 1])
+                        with head_cols[0]:
+                            src_badge = "🟣 Пульс" if m.get("source") == "Пульс" else "🔵 Smart-Lab"
+                            st.markdown(f"**👤 {m['author']}** &nbsp; `{src_badge}`")
+                        with head_cols[1]:
+                            st.markdown(f"*{m['time']}*")
+                        with head_cols[2]:
+                            if m['trend'] == 'positive': badge = "🟢 Позитив"
+                            elif m['trend'] == 'negative': badge = "🔴 Негатив"
+                            elif m['trend'] == 'analytics': badge = "📊 Аналитика"
+                            else: badge = "⚪ Нейтрально"
+                            st.markdown(badge)
+                            
+                        st.markdown(m['text'])
                         
-                    st.markdown(m['text'])
-                    
-                    foot_cols = st.columns([4, 1])
-                    with foot_cols[0]:
-                        st.caption(f"Слова: поз: {m['pos']} | нег: {m['neg']} | ан: {m['analytics']}")
-                    with foot_cols[1]:
-                        st.markdown(f"[🔗 Источник]({m['link']})")
-        else:
-            st.caption("Полные карточки сообщений скрыты. Включите галочку **'Показывать полные сообщения'** в левом меню, чтобы их увидеть.")
+                        foot_cols = st.columns([4, 1])
+                        with foot_cols[0]:
+                            st.caption(f"Слова: поз: {m['pos']} | нег: {m['neg']} | ан: {m['analytics']}")
+                        with foot_cols[1]:
+                            st.markdown(f"[🔗 Источник]({m['link']})")
+            else:
+                st.caption("Полные карточки сообщений скрыты. Включите галочку **'Показывать полные сообщения'** в левом меню, чтобы их увидеть.")

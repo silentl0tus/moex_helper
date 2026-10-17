@@ -1320,18 +1320,34 @@ with tab1:
         
         df_fund["Health_Score"] = (df_fund["Health_Score"] * div_multiplier).round(2)
             
-        # Интеграция Sentiment Analysis (Настроения толпы)
-        def get_sentiment_score(ticker):
+        # Интеграция Sentiment Analysis (Настроения толпы за последний месяц / 30 дней)
+        def get_sentiment_info(ticker):
             data = sentiment_data.get(str(ticker).upper().strip())
-            return data["score"] if data else 0.0
-            
-        def format_sentiment(score):
-            if score > 0.1: return f"🟢 +{score:.2f}"
-            elif score < -0.1: return f"🔴 {score:.2f}"
-            else: return f"⚪ {score:.2f}"
-            
+            if not data:
+                return 0.0, False
+            posts = data.get("posts_analyzed", 0)
+            has_recent = data.get("has_recent_posts", posts > 0)
+            if not has_recent or posts == 0:
+                return 0.0, False
+            return data.get("score", 0.0), True
+
+        def get_sentiment_score(ticker):
+            score, _ = get_sentiment_info(ticker)
+            return score
+
+        def format_sentiment(ticker):
+            score, has_posts = get_sentiment_info(ticker)
+            if not has_posts:
+                return "⚪ Нет сообщений за месяц"
+            if score > 0.1:
+                return f"🟢 +{score:.2f}"
+            elif score < -0.1:
+                return f"🔴 {score:.2f}"
+            else:
+                return f"⚪ {score:.2f}"
+
         df_fund['Сентимент_Балл'] = df_fund['ticker'].apply(get_sentiment_score)
-        df_fund['Сентимент'] = df_fund['Сентимент_Балл'].apply(format_sentiment)
+        df_fund['Сентимент'] = df_fund['ticker'].apply(format_sentiment)
         
         # Прямой подход: позитивный сентимент дает бонус (до +5%), негативный - штраф (до -5%)
         sentiment_multiplier = 1 + (df_fund['Сентимент_Балл'] * 0.05)
@@ -1727,7 +1743,7 @@ with tab1:
                     ),
                     "Сентимент": st.column_config.TextColumn(
                         "Сентимент",
-                        help="Настроения на SmartLab.\n🟢 Позитив (дает бонус)\n🔴 Негатив (штраф)"
+                        help="Сентимент мнений за последний месяц (30 дней от момента запроса).\n🟢 Позитив (дает бонус к здоровью компании)\n🔴 Негатив (штраф)\n⚪ Нет сообщений за месяц — информационный штиль (нейтрально 0.0)"
                     ),
                     "Div_Yield_%": st.column_config.NumberColumn(
                         "Div_Yield_%",
