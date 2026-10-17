@@ -185,7 +185,7 @@ if "wizard_max_debt" not in st.session_state:
 # ЗАГРУЗКА И РАСЧЕТ HEALTH SCORE
 # =====================================================================
 @st.cache_data(ttl=3600)
-def load_screener_data():
+def load_screener_data(cache_version: str = "v2_multipliers"):
     cache_path = Path(os.path.abspath(__file__)).parent.parent / "fundamentals_cache.csv"
     if not cache_path.exists():
         return pd.DataFrame()
@@ -498,10 +498,15 @@ with tab2:
             """)
 
         # Таблица результатов с расширенными мультипликаторами и отраслевой подсветкой
-        display_df = filtered[[
+        cols_to_extract = [
             'ticker', 'Компания', 'Сектор', 'Статус', 'Health_Score',
-            'P/E', 'P_BV', 'ROE_%', 'Debt_EBITDA', 'FCF_Yield_%', 'Rev_Growth_%', 'H1_0_%', 'Div_RUB'
-        ]].copy()
+            'P_E', 'P_BV', 'ROE_%', 'Debt_EBITDA', 'FCF_Yield_%', 'Rev_Growth_%', 'H1_0_%', 'Div_RUB'
+        ]
+        for col_name in cols_to_extract:
+            if col_name not in filtered.columns:
+                filtered[col_name] = None
+
+        display_df = filtered[cols_to_extract].copy()
         display_df.columns = [
             'Тикер', 'Компания', 'Сектор', 'Статус', 'Health Score',
             'P/E', 'P/BV', 'ROE %', 'Debt/EBITDA', 'FCF Yield %', 'Рост выручки %', 'Н1.0 (ЦБ) %', 'Дивиденд ₽'
