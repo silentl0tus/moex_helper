@@ -3,6 +3,11 @@ import os
 import json
 import pandas as pd
 from pathlib import Path
+import sys
+
+project_root = Path(__file__).resolve().parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 
 st.set_page_config(
     page_title="Мастер подбора активов | MOEX Helper",
@@ -497,6 +502,21 @@ with tab2:
                 index=0,
                 help="Выделяет ключевые мультипликаторы для каждого сектора (например, P/B (P on B), ROE и Н1.0 для Банков, FCF Yield для Нефти)"
             )
+
+        with st.expander("🗺️ Тепловая карта рынка MOEX (динамика за 1D, 1W, 1M, 3M, YTD)", expanded=False):
+            try:
+                from src.market_screener import (
+                    fetch_market_screener_data,
+                    fetch_commodities_barometer,
+                    render_market_view_component
+                )
+                with st.spinner("Загрузка котировок рынка..."):
+                    m_df = fetch_market_screener_data()
+                    m_comm = fetch_commodities_barometer()
+                if not m_df.empty:
+                    render_market_view_component(m_df, m_comm, my_portfolio_tickers=current_basket)
+            except Exception as m_err:
+                st.caption(f"Тепловая карта доступна на вкладке «Вид рынка» на главной странице: {m_err}")
 
         with st.expander("💡 Отраслевой компас: почему для каждого сектора важны свои мультипликаторы?", expanded=False):
             st.markdown("""

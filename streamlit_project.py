@@ -30,6 +30,11 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 from moexalgo import Ticker
+from src.market_screener import (
+    fetch_market_screener_data,
+    fetch_commodities_barometer,
+    render_market_view_component
+)
 
 PORTFOLIO_TICKERS = [
     "MGNT", "SBER", "ROSN", "NMTP", "SVCB",
@@ -998,7 +1003,7 @@ st.markdown("---")
 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "🏆 Рейтинг и Аналитика",
     "💼 Мой Портфель",
-    "🗺️ Карта рынка",
+    "🗺️ Вид рынка (Скринер & Карта)",
     "⚖️ Ребалансировка",
     "🌊 Order Flow (Magellan)",
     "🏦 Банки ЦБ РФ (РСБУ)",
@@ -1777,42 +1782,56 @@ with tab1:
             )
             
         with tab3:
-            st.caption("По оси X — **Оценка (P/E)**: левее = дешевле. По оси Y — **Эффективность (ROE)**: выше = лучше. Размер точки пропорционален общему **Health Score**. Ваш портфель выделен отдельным цветом.")
-        
-            map_df = df_ranked.copy()
-            map_df['Категория'] = map_df['ticker'].apply(lambda t: "Мой портфель" if t in PORTFOLIO_TICKERS else "Кандидаты с рынка")
-            # Ограничиваем выбросы P/E для наглядности карты
-            map_df['P/E (масштабированный)'] = map_df['P_E'].clip(lower=-40, upper=40)
-            # Размер точки (только положительные значения)
-            map_df['Здоровье'] = map_df['Health_Score'].clip(lower=0.1) * 10 
-        
-            # Жестко задаем контрастные цвета: яркий красный для вашего портфеля, приглушенный синий для остальных
-            domain = ['Мой портфель', 'Кандидаты с рынка']
-            range_ = ['#FF3366', '#1E88E5'] 
-        
-            base = alt.Chart(map_df).encode(
-                x=alt.X('P/E (масштабированный):Q', title='P/E (Оценка)'),
-                y=alt.Y('ROE_%:Q', title='ROE (Эффективность)'),
-                color=alt.Color('Категория:N', scale=alt.Scale(domain=domain, range=range_)),
-                tooltip=['ticker', 'Health_Score', 'P_E', 'ROE_%', 'Категория']
-            )
-        
-            points = base.mark_circle().encode(
-                size=alt.Size('Здоровье:Q', legend=None)
-            )
-        
-            text = base.mark_text(
-                align='left',
-                baseline='middle',
-                dx=9,
-                fontSize=11,
-                fontWeight='bold'
-            ).encode(
-                text='ticker:N'
-            )
-        
-            chart = (points + text).interactive()
-            st.altair_chart(chart, width="stretch")
+            with st.spinner("Загрузка котировок и динамики рынка (1D, 1W, 1M, 3M, YTD)..."):
+                screener_market_df = fetch_market_screener_data()
+                commodities_data = fetch_commodities_barometer()
+            
+            if not screener_market_df.empty:
+                render_market_view_component(
+                    screener_market_df,
+                    commodities_data,
+                    my_portfolio_tickers=portfolio_tickers_list if my_portfolio else PORTFOLIO_TICKERS
+                )
+            else:
+                st.warning("Не удалось загрузить котировки рынка с MOEX.")
+
+            with st.expander("🎯 Альтернативный вид: Матрица фундаментальной оценки (ROE vs P/E scatter plot)", expanded=False):
+                st.caption("По оси X — **Оценка (P/E)**: левее = дешевле. По оси Y — **Эффективность (ROE)**: выше = лучше. Размер точки пропорционален общему **Health Score**. Ваш портфель выделен отдельным цветом.")
+            
+                map_df = df_ranked.copy()
+                map_df['Категория'] = map_df['ticker'].apply(lambda t: "Мой портфель" if t in PORTFOLIO_TICKERS else "Кандидаты с рынка")
+                # Ограничиваем выбросы P/E для наглядности карты
+                map_df['P/E (масштабированный)'] = map_df['P_E'].clip(lower=-40, upper=40)
+                # Размер точки (только положительные значения)
+                map_df['Здоровье'] = map_df['Health_Score'].clip(lower=0.1) * 10 
+            
+                # Жестко задаем контрастные цвета: яркий красный для вашего портфеля, приглушенный синий для остальных
+                domain = ['Мой портфель', 'Кандидаты с рынка']
+                range_ = ['#FF3366', '#1E88E5'] 
+            
+                base = alt.Chart(map_df).encode(
+                    x=alt.X('P/E (масштабированный):Q', title='P/E (Оценка)'),
+                    y=alt.Y('ROE_%:Q', title='ROE (Эффективность)'),
+                    color=alt.Color('Категория:N', scale=alt.Scale(domain=domain, range=range_)),
+                    tooltip=['ticker', 'Health_Score', 'P_E', 'ROE_%', 'Категория']
+                )
+            
+                points = base.mark_circle().encode(
+                    size=alt.Size('Здоровье:Q', legend=None)
+                )
+            
+                text = base.mark_text(
+                    align='left',
+                    baseline='middle',
+                    dx=9,
+                    fontSize=11,
+                    fontWeight='bold'
+                ).encode(
+                    text='ticker:N'
+                )
+            
+                chart = (points + text).interactive()
+                st.altair_chart(chart, width="stretch")
 
         with tab4:
             position_df = build_position_weights(
