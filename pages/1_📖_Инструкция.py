@@ -200,6 +200,33 @@ def load_screener_data():
     df['Rev_Growth_%'] = df['Rev_Growth_%'].fillna(0.0)
     df['P_BV'] = df['P_BV'].fillna(1.0)
     df['P_E'] = df['P_E'].fillna(10.0)
+    df['FCF_Yield_%'] = pd.to_numeric(df['FCF_Yield_%'] if 'FCF_Yield_%' in df.columns else 0.0, errors='coerce').fillna(0.0)
+    df['Div_RUB'] = pd.to_numeric(df['Div_RUB'] if 'Div_RUB' in df.columns else 0.0, errors='coerce').fillna(0.0)
+
+    # Обогащение данными банков из Magellan (ЦБ РФ форма 101/102: норматив Н1.0)
+    df['H1_0_%'] = None
+    try:
+        from src.magellan_gateway import MagellanGateway
+        gw = MagellanGateway()
+        for idx, row in df.iterrows():
+            t = row['ticker']
+            if t in BANK_TICKERS:
+                b_info = gw.get_bank_details(t)
+                if b_info:
+                    if b_info.get('h1_0') is not None:
+                        df.at[idx, 'H1_0_%'] = round(float(b_info['h1_0']), 1)
+                    if b_info.get('roe_ltm') is not None and (df.at[idx, 'ROE_%'] == 0):
+                        df.at[idx, 'ROE_%'] = round(float(b_info['roe_ltm']), 1)
+    except Exception:
+        pass
+
+    # Расчет P/BV для банков (P/BV = P/E * ROE / 100), если значение отсутствует в смартлабе
+    for idx, row in df.iterrows():
+        if pd.isna(row['P_BV']) or row['P_BV'] == 0 or (row['P_BV'] == 1.0 and row['ticker'] in BANK_TICKERS):
+            pe_val = float(row['P_E']) if pd.notna(row['P_E']) else 0.0
+            roe_val = float(row['ROE_%']) if pd.notna(row['ROE_%']) else 0.0
+            if pe_val > 0 and roe_val > 0:
+                df.at[idx, 'P_BV'] = round(pe_val * (roe_val / 100.0), 2)
 
     # Классификация секторов и токсичности
     is_it = df['ticker'].isin(IT_TICKERS)
@@ -442,25 +469,104 @@ with tab2:
 
         filtered = filtered.sort_values(by="Health_Score", ascending=False).reset_index(drop=True)
 
-        st.caption(f"Найдено подходящих компаний: **{len(filtered)}** из {len(screener_df)}")
+        hl_c1, hl_c2 = st.columns([2.2, 1.8])
+        with hl_c1:
+            st.caption(f"Найдено подходящих компаний: **{len(filtered)}** из {len(screener_df)}")
+        with hl_c2:
+            hl_mode = st.radio(
+                "🎨 Подсветка профильных метрик сектора:",
+                ["🟡 Золотистый янтарь", "🟢 Изумрудный зеленый", "⚪ Без подсветки"],
+                horizontal=True,
+                index=0,
+                help="Выделяет ключевые мультипликаторы для каждого сектора (например, P/BV, ROE и Н1.0 для Банков, FCF Yield для Нефти)"
+            )
 
-        # Таблица результатов с отображением фундаментального статуса
-        display_df = filtered[['ticker', 'Компания', 'Сектор', 'Статус', 'Health_Score', 'ROE_%', 'P_E', 'Debt_EBITDA', 'Rev_Growth_%', 'Div_RUB']].copy()
-        display_df.columns = ['Тикер', 'Компания', 'Сектор', 'Статус', 'Health Score', 'ROE %', 'P/E', 'Debt/EBITDA', 'Рост выручки %', 'Дивиденд ₽']
+        with st.expander("💡 Отраслевой компас: почему для каждого сектора важны свои мультипликаторы?", expanded=False):
+            st.markdown("""
+            *В разных секторах экономики компании создают акционерную стоимость по-разному. В таблице ниже **профильные мультипликаторы подсвечены цветом**:*
+            
+            * 🏦 **Финансы / Банки (Сбербанк, Т-Банк, ВТБ, Совкомбанк, БСПБ):**
+              - **Ключевые ориентиры — `P/BV` и `ROE %`:** Банк зарабатывает на капитале. Если $P/BV \\le 0.8–1.0$ при $ROE \\ge 22–25\\%$, вы покупаете сверхдоходный бизнес со скидкой к капиталу.
+              - **Норматив достаточности капитала `Н1.0 (ЦБ РФ)`:** Планка ЦБ $\\ge 8.0\\%$. Запас $\\ge 12.0\\%$ (Сбер 13.1%, Т-Банк 13.0%, БСПБ 19.8%) гарантирует выплату 50% прибыли на дивиденды. При $< 10.0\\%$ (ВТБ 9.7%) дивиденды под угрозой.
+              - **Почему Debt/EBITDA не применим (помечен серым):** У банков нет EBITDA, а вклады населения — это сырье для кредитов, а не долг. Оценивать банк по долгу к EBITDA — грубейшая ошибка.
+            * ⛽ **Нефть, Газ и Металлургия (Лукойл, Роснефть, Татнефть, Северсталь):**
+              - **Ключевые ориентиры — `Debt/EBITDA` и `FCF Yield %`:** Реальный свободный денежный поток (кэш после капекса на бурение и заводы) определяет размер дивидендов. Отрицательный чистый долг (кубышка) защищает при обвале цен на сырье.
+            * 💻 **IT и Финтех (Яндекс, Астра, Хэдхантер, Озон):**
+              - **Ключевые ориентиры — `Рост выручки %` и `ROE %`:** Растущие технологические компании реинвестируют прибыль в захват рынка; их оценивают по темпу экспансии ($+30–50\\%$ г/г).
+            * 🛒 **Потребительский сектор и Ритейл (Магнит, НоваБев, Х5):**
+              - **Ключевые ориентиры — `ROE %` и `Рост выручки %`:** Оборачиваемость капитала и способность индексировать цены на полке выше инфляции.
+            """)
+
+        # Таблица результатов с расширенными мультипликаторами и отраслевой подсветкой
+        display_df = filtered[[
+            'ticker', 'Компания', 'Сектор', 'Статус', 'Health_Score',
+            'P/E', 'P_BV', 'ROE_%', 'Debt_EBITDA', 'FCF_Yield_%', 'Rev_Growth_%', 'H1_0_%', 'Div_RUB'
+        ]].copy()
+        display_df.columns = [
+            'Тикер', 'Компания', 'Сектор', 'Статус', 'Health Score',
+            'P/E', 'P/BV', 'ROE %', 'Debt/EBITDA', 'FCF Yield %', 'Рост выручки %', 'Н1.0 (ЦБ) %', 'Дивиденд ₽'
+        ]
+
+        def highlight_sector_multipliers(row):
+            if "Золотистый" in hl_mode:
+                hl = "background-color: rgba(245, 158, 11, 0.22); color: #FCD34D; font-weight: 700;"
+            elif "Изумрудный" in hl_mode:
+                hl = "background-color: rgba(16, 185, 129, 0.22); color: #6EE7B7; font-weight: 700;"
+            else:
+                return [''] * len(row)
+
+            dim = "color: #64748B; opacity: 0.55; font-style: italic;"
+            styles = [''] * len(row)
+            sector = str(row.get('Сектор', ''))
+            cols = list(row.index)
+
+            is_bank = ('Банк' in sector) or ('Финанс' in sector)
+            is_it = ('IT' in sector) or ('Финтех' in sector)
+            is_commodity = ('Нефть' in sector) or ('Металлург' in sector) or ('Золото' in sector) or ('Уголь' in sector)
+            is_consumer = ('Потребитель' in sector)
+            is_utility = ('Энергетик' in sector) or ('Телеком' in sector)
+
+            for i, col in enumerate(cols):
+                if is_bank:
+                    if col in ['P/BV', 'ROE %', 'Н1.0 (ЦБ) %']:
+                        styles[i] = hl
+                    elif col == 'Debt/EBITDA':
+                        styles[i] = dim
+                elif is_it:
+                    if col in ['Рост выручки %', 'ROE %', 'P/E']:
+                        styles[i] = hl
+                elif is_commodity:
+                    if col in ['Debt/EBITDA', 'FCF Yield %', 'P/E']:
+                        styles[i] = hl
+                elif is_consumer:
+                    if col in ['ROE %', 'Рост выручки %', 'Debt/EBITDA']:
+                        styles[i] = hl
+                elif is_utility:
+                    if col in ['Debt/EBITDA', 'FCF Yield %', 'Дивиденд ₽']:
+                        styles[i] = hl
+            return styles
+
+        styled_df = display_df.style.apply(highlight_sector_multipliers, axis=1)
 
         st.dataframe(
-            display_df,
+            styled_df,
             column_config={
+                "Тикер": st.column_config.TextColumn("Тикер", help="Биржевой код акции"),
+                "Компания": st.column_config.TextColumn("Эмитент", width="medium"),
+                "Сектор": st.column_config.TextColumn("Сектор"),
                 "Статус": st.column_config.TextColumn("Статус", help="Фундаментальный статус надежности эмитента"),
                 "Health Score": st.column_config.NumberColumn("Health Score", format="%.2f", help="Комплексный балл здоровья эмитента (чем выше, тем надежнее)"),
-                "ROE %": st.column_config.NumberColumn("ROE %", format="%.1f%%"),
-                "P/E": st.column_config.NumberColumn("P/E", format="%.1f"),
-                "Debt/EBITDA": st.column_config.NumberColumn("Debt/EBITDA", format="%.2f"),
-                "Рост выручки %": st.column_config.NumberColumn("Рост выручки %", format="%.1f%%"),
-                "Дивиденд ₽": st.column_config.NumberColumn("Дивиденд ₽", format="%.2f ₽"),
+                "P/E": st.column_config.NumberColumn("P/E", format="%.1f", help="Цена / Прибыль (срок окупаемости в годах)"),
+                "P/BV": st.column_config.NumberColumn("P/BV", format="%.2f", help="Цена / Балансовая стоимость чистых активов (Ключевой для Банков и Холдингов, норма < 1.0)"),
+                "ROE %": st.column_config.NumberColumn("ROE %", format="%.1f%%", help="Рентабельность капитала (Ключевой для Банков и Ритейла, норма >= 18-20%)"),
+                "Debt/EBITDA": st.column_config.NumberColumn("Debt/EBITDA", format="%.2f", help="Чистый долг к EBITDA (Ключевой для Сырьевиков; для Банков не применим)"),
+                "FCF Yield %": st.column_config.NumberColumn("FCF Yield %", format="%.1f%%", help="Доходность свободного денежного потока (Ключевой для Экспортеров и Дивидендов)"),
+                "Рост выручки %": st.column_config.NumberColumn("Рост выручки %", format="%.1f%%", help="Темп прироста выручки г/г (Ключевой для IT и Акций роста)"),
+                "Н1.0 (ЦБ) %": st.column_config.NumberColumn("Н1.0 (ЦБ) %", format="%.1f%%", help="Норматив достаточности совокупного капитала ЦБ РФ (Только для банков, норматив >= 8.0%)"),
+                "Дивиденд ₽": st.column_config.NumberColumn("Дивиденд ₽", format="%.2f ₽", help="Выплаченный или прогнозный дивиденд на акцию LTM"),
             },
             use_container_width=True,
-            height=320
+            height=360
         )
 
         st.divider()
