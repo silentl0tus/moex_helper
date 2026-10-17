@@ -18,10 +18,26 @@ import requests
 import streamlit as st
 
 st.set_page_config(
-    page_title="Бэктест Портфеля MOEX",
+    page_title="Бэктест Портфеля MOEX | MOEX Helper",
     page_icon="⏳",
     layout="wide"
 )
+
+st.markdown("""
+<style>
+    /* Переименование ссылки на главную страницу в боковом меню */
+    [data-testid="stSidebarNav"] li:first-child a span,
+    [data-testid="stSidebarNavItems"] li:first-child a span {
+        display: none !important;
+    }
+    [data-testid="stSidebarNav"] li:first-child a::after,
+    [data-testid="stSidebarNavItems"] li:first-child a::after {
+        content: "📊 Экран инвестора";
+        font-size: 0.875rem;
+        font-weight: 500;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 try:
     from moexalgo import Ticker
@@ -299,7 +315,7 @@ def calculate_performance_kpis(
 st.title("⏳ Исторический Бэктест & Стресс-Тест Портфеля (MOEX)")
 st.caption("Симуляция инвестиционных стратегий на реальных исторических котировках Московской биржи с учетом комиссий, ребалансировки и бенчмарка IMOEX.")
 
-st.page_link("streamlit_project.py", label="← Вернуться к главному дашборду и рейтингу", icon="🎯")
+st.page_link("streamlit_project.py", label="← Вернуться на Экран инвестора", icon="📊")
 
 with st.expander("📖 Методология и как читать метрики бэктеста", expanded=False):
     st.markdown("""

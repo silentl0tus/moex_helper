@@ -5,8 +5,8 @@ import pandas as pd
 from pathlib import Path
 
 st.set_page_config(
-    page_title="Мастер отбора активов | MOEX Helper",
-    page_icon="🧭",
+    page_title="Мастер подбора активов | MOEX Helper",
+    page_icon="🎯",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -16,6 +16,18 @@ st.set_page_config(
 # =====================================================================
 st.markdown("""
 <style>
+    /* Переименование ссылки на главную страницу в боковом меню */
+    [data-testid="stSidebarNav"] li:first-child a span,
+    [data-testid="stSidebarNavItems"] li:first-child a span {
+        display: none !important;
+    }
+    [data-testid="stSidebarNav"] li:first-child a::after,
+    [data-testid="stSidebarNavItems"] li:first-child a::after {
+        content: "📊 Экран инвестора";
+        font-size: 0.875rem;
+        font-weight: 500;
+    }
+
     .step-header-box {
         background: linear-gradient(135deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.9) 100%);
         border: 1px solid rgba(255, 255, 255, 0.12);
@@ -304,7 +316,7 @@ screener_df = load_screener_data()
 # =====================================================================
 st.markdown("""
 <div class="step-header-box">
-    <h1 style="margin:0; font-size: 2.1rem; color: #F8FAFC;">🧭 Мастер отбора активов (Инвестиционный пайплайн)</h1>
+    <h1 style="margin:0; font-size: 2.1rem; color: #F8FAFC;">🎯 Мастер подбора активов (Инвестиционный пайплайн)</h1>
     <p style="margin: 8px 0 0 0; color: #94A3B8; font-size: 1.05rem;">
         Пошаговый сквозной алгоритм отбора акций на MOEX. Следуйте этапам цепочки, отбирайте активы в корзину сделок и рассчитывайте доли и транши без необходимости держать в голове формулы и риск-правила.
     </p>
@@ -838,6 +850,8 @@ with tab4:
     </div>
     """, unsafe_allow_html=True)
 
+    max_limit_pct = int(st.session_state.get("wizard_max_share", 12))
+
     if not current_basket:
         st.warning("⚠️ Корзина пуста. Сначала отберите бумаги на Шаге 2.")
     else:
@@ -1007,7 +1021,7 @@ st.subheader("🏁 Итоговая готовность сделки к исп�
 chk_macro = True
 chk_assets = len(current_basket) >= 2
 chk_sentiment = (checked_cnt == len(current_basket)) and (len(current_basket) > 0)
-chk_limit = max_limit_pct <= 15
+chk_limit = (len(current_basket) > 0) and (max_limit_pct <= 15)
 chk_dca = len(current_basket) > 0
 
 checklist_items = [

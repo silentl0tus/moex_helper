@@ -40,6 +40,18 @@ st.set_page_config(
 st.markdown(
     """
     <style>
+    /* Переименование ссылки на главную страницу в боковом меню */
+    [data-testid="stSidebarNav"] li:first-child a span,
+    [data-testid="stSidebarNavItems"] li:first-child a span {
+        display: none !important;
+    }
+    [data-testid="stSidebarNav"] li:first-child a::after,
+    [data-testid="stSidebarNavItems"] li:first-child a::after {
+        content: "📊 Экран инвестора";
+        font-size: 0.875rem;
+        font-weight: 500;
+    }
+
     .metric-card {
         background: linear-gradient(135deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.02) 100%);
         border: 1px solid rgba(255,255,255,0.08);

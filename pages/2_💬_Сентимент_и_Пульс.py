@@ -42,7 +42,23 @@ from sentiment_scraper import (
 import re
 import os
 
-st.set_page_config(page_title="Сентимент и Пульс", page_icon="💬", layout="wide")
+st.set_page_config(page_title="Сентимент и Пульс | MOEX Helper", page_icon="💬", layout="wide")
+
+st.markdown("""
+<style>
+    /* Переименование ссылки на главную страницу в боковом меню */
+    [data-testid="stSidebarNav"] li:first-child a span,
+    [data-testid="stSidebarNavItems"] li:first-child a span {
+        display: none !important;
+    }
+    [data-testid="stSidebarNav"] li:first-child a::after,
+    [data-testid="stSidebarNavItems"] li:first-child a::after {
+        content: "📊 Экран инвестора";
+        font-size: 0.875rem;
+        font-weight: 500;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 st.title("💬 Анализ сентимента (Пульс + Smart-Lab)")
 st.markdown("Здесь вы можете агрегировать последние осмысленные сообщения и аналитику инвесторов из **Т-Банк Пульс** и **Smart-Lab**.")
@@ -210,7 +226,7 @@ with col2:
         > **Что это означает для инвестора:**
         > * По эмитенту сейчас **информационный штиль**: нет острых новостных поводов, корпоративных скандалов, судебных исков или срывов дивидендов.
         > * Сентимент инфополя оценивается как **нейтральный (0.0)**.
-        > * Для принятия инвестиционного решения используйте фундаментальные мультипликаторы (P/E, P/B, ROE, долг) на странице **Инструкция**.
+        > * Для принятия инвестиционного решения используйте фундаментальные мультипликаторы (P/E, P/B, ROE, долг) на странице **Мастер подбора**.
         """)
     else:
         if strict_filter:

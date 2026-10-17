@@ -11,7 +11,23 @@ import pandas as pd
 import requests
 import yfinance as yf
 import streamlit as st
-st.set_page_config(page_title="Аналитика Портфеля", page_icon="📈", layout="wide")
+st.set_page_config(page_title="Экран инвестора | MOEX Helper", page_icon="📊", layout="wide")
+
+st.markdown("""
+<style>
+    /* Переименование ссылки на главную страницу в боковом меню */
+    [data-testid="stSidebarNav"] li:first-child a span,
+    [data-testid="stSidebarNavItems"] li:first-child a span {
+        display: none !important;
+    }
+    [data-testid="stSidebarNav"] li:first-child a::after,
+    [data-testid="stSidebarNavItems"] li:first-child a::after {
+        content: "📊 Экран инвестора";
+        font-size: 0.875rem;
+        font-weight: 500;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 from moexalgo import Ticker
 
@@ -24,8 +40,8 @@ PORTFOLIO_TICKERS = [
 # ==========================================
 # 1. СИСТЕМНЫЕ НАСТРОЙКИ
 # ==========================================
-st.title("🎯 Дашборд выбора активов для длинных стратегий на MOEX")
-st.caption("Гибрид: цены с MOEX, фундаментал, правила риска под ваш портфель")
+st.title("📊 Экран инвестора")
+st.caption("Комплексный дашборд: цены с MOEX, фундаментал, Health Score, макро-часы и аудит портфеля")
 
 with st.expander("📖 Как эффективно использовать этот дашборд", expanded=False):
     st.markdown("""
@@ -1709,7 +1725,11 @@ with tab1:
         with tab1:
             st.bar_chart(data=df_ranked, x="ticker", y="Health_Score")
         
-            st.page_link("pages/2_💬_Сентимент_и_Пульс.py", label="Открыть детальную ленту сообщений и сентимента (Smart-Lab)", icon="💬")
+            col_nav_a, col_nav_b = st.columns(2)
+            with col_nav_a:
+                st.page_link("pages/1_🎯_Мастер_подбора.py", label="🎯 Открыть Мастер подбора активов (пошаговый пайплайн)", icon="🎯")
+            with col_nav_b:
+                st.page_link("pages/2_💬_Сентимент_и_Пульс.py", label="💬 Детальная лента сентимента (Пульс + Smart-Lab)", icon="💬")
         
             cols_to_show = ["ticker", "Health_Score", "Тренд", "Поток (OrderFlow)", "Бонды YTM", "БПИФ поток", "RSI", "Сентимент", "Div_Yield_%", "Rev_Growth_%", "ROE_%", "P_E", "P_BV", "Debt_EBITDA"]
             if my_portfolio:
