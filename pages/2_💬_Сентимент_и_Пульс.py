@@ -6,14 +6,17 @@ import sys
 import importlib
 
 # Добавляем корень проекта в sys.path чтобы импорты работали
-project_root = Path(__file__).parent.parent
+project_root = Path(__file__).resolve().parent.parent
 if str(project_root) not in sys.path:
-    sys.path.append(str(project_root))
+    sys.path.insert(0, str(project_root))
 
 import sentiment_scraper
-# В Streamlit Cloud при hot-reload старый sentiment_scraper может зависнуть в sys.modules без новых функций
-if not hasattr(sentiment_scraper, "generate_structured_summary") or not hasattr(sentiment_scraper, "extract_aggregated_messages"):
+# В Streamlit Cloud при hot-reload модули верхнего уровня кэшируются в sys.modules без новых функций.
+# Принудительно перезагружаем sentiment_scraper для гарантированного получения актуальных функций:
+try:
     sentiment_scraper = importlib.reload(sentiment_scraper)
+except Exception:
+    pass
 
 from sentiment_scraper import (
     extract_meaningful_messages,
