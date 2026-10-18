@@ -1070,20 +1070,13 @@ with tab1:
             st.error("🕰️ **Часы: Стагфляция.** Экономика падает, инфляция высокая. Спасает только Кэш (LQDT) и Золото. Бегите из акций роста и банков.")
     
         st.info(f"{rules['regime']} | Облигации: {rules['bond_currency']}")
-        chart_data = normalize_returns(live_data)
-        loaded_tickers = chart_data.columns[chart_data.notna().any()].tolist()
-        st.caption(
-            f"На графике: {len(loaded_tickers)} из {len(selected_tickers)} выбранных тикеров "
-            f"(доходность от первой доступной котировки, %)"
-        )
-        st.line_chart(chart_data)
     elif selected_tickers:
         st.warning(
             f"Котировки не загружены для выбранных тикеров ({len(selected_tickers)} шт.). "
             "Проверьте предупреждения в sidebar."
         )
     else:
-        st.info("Выберите хотя бы один тикер в sidebar, чтобы построить график.")
+        st.info("Выберите интересующие тикеры в sidebar для анализа портфеля.")
 
     st.markdown("---")
     st.subheader("Фундаментальные мультипликаторы и Отбраковка")
