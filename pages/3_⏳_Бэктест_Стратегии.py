@@ -45,10 +45,16 @@ except ImportError:
     Ticker = None
 
 DEFAULT_PORTFOLIO_TICKERS = [
-    "MGNT", "SBER", "ROSN", "NMTP", "SVCB",
+    "MGNT", "SBER", "ROSN", "NMTP", "LKOH",
     "T", "SIBN", "BELU", "CHMF", "NLMK",
     "SNGS", "TRNFP", "GAZP"
 ]
+
+PREDECESSOR_MAP: Dict[str, str] = {
+    "YDEX": "YNDX",
+    "T": "TCSG",
+    "HEAD": "HHRU"
+}
 
 POPULAR_LIQUID_TICKERS = [
     "SBER", "GAZP", "LKOH", "ROSN", "NVTK", "GMKN", "CHMF", "NLMK",
@@ -130,43 +136,17 @@ MOEX_HISTORICAL_EVENTS = [
 # 1. ЗАГРУЗКА ИСТОРИЧЕСКИХ ДАННЫХ С ПАГИНАЦИЕЙ
 # ==========================================
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def fetch_ticker_candles(ticker: str, start_date: datetime.date, end_date: datetime.date) -> pd.Series:
-    """Загружает дневные свечи акции с Мосбиржи через moexalgo или резервный MOEX ISS API с пагинацией."""
-    # 1. Попытка через moexalgo
-    if Ticker is not None:
-        try:
-            asset = Ticker(ticker)
-            candles_method = getattr(asset, "candles", None)
-            if callable(candles_method):
-                raw = candles_method(start=start_date.isoformat(), end=end_date.isoformat(), period="1D")
-                if isinstance(raw, pd.DataFrame) and not raw.empty and "close" in raw.columns:
-                    df = raw.copy()
-                    if "begin" in df.columns:
-                        df["begin"] = pd.to_datetime(df["begin"])
-                        df = df.drop_duplicates(subset=["begin"]).sort_values(by="begin")
-                        df.set_index("begin", inplace=True)
-                    s = df["close"].astype(float).sort_index()
-                    if len(s) > 10 and (s.index[-1].date() >= end_date - timedelta(days=10) or len(s) >= (end_date - start_date).days * 0.4):
-                        return s
-                elif isinstance(raw, (list, tuple)) and raw:
-                    df = pd.DataFrame(raw)
-                    if "close" in df.columns and "begin" in df.columns:
-                        df["begin"] = pd.to_datetime(df["begin"])
-                        df = df.drop_duplicates(subset=["begin"]).sort_values(by="begin")
-                        df.set_index("begin", inplace=True)
-                        s = df["close"].astype(float).sort_index()
-                        if len(s) > 10:
-                            return s
-        except Exception:
-            pass
-
-    # 2. Резервный шлюз MOEX ISS API с пагинацией (start=0, 500, 1000...)
+def _fetch_single_board_candles(ticker: str, board: str, start_date: datetime.date, end_date: datetime.date) -> pd.Series:
+    """Загружает свечи конкретного инструмента с указанного борда MOEX ISS с пагинацией."""
+    engine = "stock"
+    market = "shares" if board in ["TQBR", "TQTF"] else "bonds"
     all_rows = []
     cols = []
     start_offset = 0
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+
     while True:
-        url = f"https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities/{ticker}/candles.json"
+        url = f"https://iss.moex.com/iss/engines/{engine}/markets/{market}/boards/{board}/securities/{ticker}/candles.json"
         params = {
             "from": start_date.isoformat(),
             "till": end_date.isoformat(),
@@ -175,7 +155,7 @@ def fetch_ticker_candles(ticker: str, start_date: datetime.date, end_date: datet
             "start": start_offset
         }
         try:
-            resp = requests.get(url, params=params, timeout=12)
+            resp = requests.get(url, params=params, headers=headers, timeout=12)
             if resp.status_code == 200:
                 data = resp.json().get("candles", {})
                 rows = data.get("data", [])
@@ -203,6 +183,55 @@ def fetch_ticker_candles(ticker: str, start_date: datetime.date, end_date: datet
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
+def fetch_ticker_candles(ticker: str, start_date: datetime.date, end_date: datetime.date) -> pd.Series:
+    """Загружает дневные свечи акции или облигации с Мосбиржи через MOEX ISS API с пагинацией и сшивкой редомициляций."""
+    # 1. Попытка через moexalgo (только если покрывает требуемый диапазон от начала до конца)
+    if Ticker is not None:
+        try:
+            asset = Ticker(ticker)
+            candles_method = getattr(asset, "candles", None)
+            if callable(candles_method):
+                raw = candles_method(start=start_date.isoformat(), end=end_date.isoformat(), period="1D")
+                if isinstance(raw, pd.DataFrame) and not raw.empty and "close" in raw.columns:
+                    df = raw.copy()
+                    if "begin" in df.columns:
+                        df["begin"] = pd.to_datetime(df["begin"])
+                        df = df.drop_duplicates(subset=["begin"]).sort_values(by="begin")
+                        df.set_index("begin", inplace=True)
+                    s = df["close"].astype(float).sort_index()
+                    is_start_cov = (s.index[0].date() <= start_date + timedelta(days=45)) or ((end_date - start_date).days <= 60)
+                    is_end_cov = s.index[-1].date() >= end_date - timedelta(days=15)
+                    if len(s) > 10 and is_start_cov and is_end_cov:
+                        return s
+        except Exception:
+            pass
+
+    # 2. Поиск по бордам акций и облигаций (TQBR, TQTF, TQCB, TQOB)
+    boards_to_try = ["TQBR", "TQTF", "TQCB", "TQOB"]
+    s = pd.Series(dtype=float)
+    for b in boards_to_try:
+        s = _fetch_single_board_candles(ticker, b, start_date, end_date)
+        if not s.empty:
+            break
+
+    # 3. Автоматическая сшивка исторических тикеров редомициляций (YDEX -> YNDX, T -> TCSG, HEAD -> HHRU)
+    pred_ticker = PREDECESSOR_MAP.get(ticker)
+    if pred_ticker:
+        # Если история начинается значительно позже даты старта, подгружаем котировки предшественника
+        needs_predecessor = s.empty or (s.index[0].date() > start_date + timedelta(days=60))
+        if needs_predecessor:
+            s_pred = _fetch_single_board_candles(pred_ticker, "TQBR", start_date, end_date)
+            if not s_pred.empty:
+                if not s.empty:
+                    cutoff = s.index[0] - pd.Timedelta(days=1)
+                    s = pd.concat([s_pred.loc[:cutoff], s]).sort_index()
+                else:
+                    s = s_pred
+
+    return s
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
 def fetch_benchmark_candles(symbol: str, start_date: datetime.date, end_date: datetime.date) -> pd.Series:
     """Загружает дневные свечи бенчмарка (MCFTRR, IMOEX, MCFTR) с Мосбиржи через moexalgo или MOEX ISS API с пагинацией."""
     # 1. Попытка через moexalgo
@@ -219,17 +248,10 @@ def fetch_benchmark_candles(symbol: str, start_date: datetime.date, end_date: da
                         df = df.drop_duplicates(subset=["begin"]).sort_values(by="begin")
                         df.set_index("begin", inplace=True)
                     s = df["close"].astype(float).sort_index()
-                    if len(s) > 10 and (s.index[-1].date() >= end_date - timedelta(days=10) or len(s) >= (end_date - start_date).days * 0.4):
+                    is_start_cov = (s.index[0].date() <= start_date + timedelta(days=45)) or ((end_date - start_date).days <= 60)
+                    is_end_cov = s.index[-1].date() >= end_date - timedelta(days=15)
+                    if len(s) > 10 and is_start_cov and is_end_cov:
                         return s
-                elif isinstance(raw, (list, tuple)) and raw:
-                    df = pd.DataFrame(raw)
-                    if "close" in df.columns and "begin" in df.columns:
-                        df["begin"] = pd.to_datetime(df["begin"])
-                        df = df.drop_duplicates(subset=["begin"]).sort_values(by="begin")
-                        df.set_index("begin", inplace=True)
-                        s = df["close"].astype(float).sort_index()
-                        if len(s) > 10:
-                            return s
         except Exception:
             pass
 
@@ -237,6 +259,7 @@ def fetch_benchmark_candles(symbol: str, start_date: datetime.date, end_date: da
     all_rows = []
     cols = []
     start_offset = 0
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     while True:
         url = f"https://iss.moex.com/iss/engines/stock/markets/index/boards/SNDX/securities/{symbol}/candles.json"
         params = {
@@ -247,7 +270,7 @@ def fetch_benchmark_candles(symbol: str, start_date: datetime.date, end_date: da
             "start": start_offset
         }
         try:
-            resp = requests.get(url, params=params, timeout=12)
+            resp = requests.get(url, params=params, headers=headers, timeout=12)
             if resp.status_code == 200:
                 data = resp.json().get("candles", {})
                 rows = data.get("data", [])
@@ -664,6 +687,16 @@ if "DCA" in dca_mode:
         step=5000
     )
 
+handle_young_assets = st.sidebar.selectbox(
+    "Активы моложе даты старта (IPO/новые облигации):",
+    options=[
+        "🛡️ Исключать поздние бумаги (сохранять выбранную дату старта)",
+        "⏳ Срезать весь бэктест до даты выхода самой новой бумаги"
+    ],
+    index=0,
+    help="Если в портфеле есть актив, начавший торговаться позже даты старта бэктеста (например, облигация RU000A10D301 от 13.10.2025 или IPO Совкомбанка SVCB от 15.12.2023), по умолчанию он исключается из расчета, чтобы бэктест не схлопывался до 1 года."
+)
+
 rebalance_mode_label = st.sidebar.selectbox(
     "Режим ребалансировки долей:",
     options=[
@@ -801,6 +834,41 @@ if missing_tickers:
     for mt in missing_tickers:
         selected_weights.pop(mt, None)
 
+# Анализ даты первой свечи для каждого актива
+late_assets = {}
+cutoff_threshold = start_date + timedelta(days=90)
+
+for t, s in prices_collector.items():
+    if not s.empty and s.index[0].date() > cutoff_threshold:
+        late_assets[t] = s.index[0].date()
+
+# Обработка молодых бумаг (IPO/новые облигации)
+if late_assets:
+    if handle_young_assets.startswith("🛡️") and len(prices_collector) > len(late_assets):
+        # Исключаем поздние бумаги, чтобы сохранить полный выбранный горизонт дат
+        excluded_tickers = list(late_assets.keys())
+        for et in excluded_tickers:
+            prices_collector.pop(et, None)
+            selected_weights.pop(et, None)
+
+        # Нормализуем оставшиеся веса
+        if selected_weights:
+            tot_w = sum(selected_weights.values())
+            for t in selected_weights:
+                selected_weights[t] = selected_weights[t] / tot_w
+
+        late_desc = ", ".join(f"**{t}** (с {d.strftime('%d.%m.%Y')})" for t, d in late_assets.items())
+        st.sidebar.info(
+            f"ℹ️ Для сохранения горизонта с **{start_date.strftime('%d.%m.%Y')}** исключены активы, начавшие торговаться позже: {late_desc}. "
+            f"Их веса перераспределены между остальными {len(selected_weights)} бумагами."
+        )
+    else:
+        # Режим сжатия горизонта до даты самой новой бумаги
+        latest_start = max(late_assets.values())
+        st.sidebar.warning(
+            f"⚠️ Горизонт бэктеста сокращен до даты старта самого молодого актива: **{latest_start.strftime('%d.%m.%Y')}**."
+        )
+
 if len(prices_collector) < 1 or primary_bench_series.empty:
     st.error("Не удалось сформировать исторические ряды котировок для выбранного периода. Попробуйте другой горизонт.")
     st.stop()
@@ -873,6 +941,12 @@ with st.expander("💡 Разница между Индексами IMOEX и MCF
     - **Индекс полной доходности «нетто» (MCFTRR)** — *эталонный бенчмарк* (Total Return Net). Он учитывает автоматическое реинвестирование дивидендов за вычетом 13% НДФЛ. Именно с ним профессиональные фонды и сервис **izi.invest** сравнивают доходность портфелей.
     - **За 3–4 года** разрыв между ценовым IMOEX и полной доходностью MCFTRR на Мосбирже достигает **25–35%**!
     """)
+
+st.info(
+    f"📅 **Фактический период бэктеста:** с **{aligned_dates[0].strftime('%d.%m.%Y')}** по **{aligned_dates[-1].strftime('%d.%m.%Y')}** "
+    f"({len(aligned_dates)} торговых дней, ~{kpis['years']:.1f} года). Активов в расчете: **{len(prices_df.columns)}** "
+    f"({', '.join(sorted(prices_df.columns))})."
+)
 
 m_c1, m_c2, m_c3, m_c4 = st.columns(4)
 
