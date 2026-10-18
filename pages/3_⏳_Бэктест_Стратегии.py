@@ -9,7 +9,7 @@
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import altair as alt
 import numpy as np
@@ -59,12 +59,80 @@ POPULAR_LIQUID_TICKERS = [
 
 
 # ==========================================
-# 1. ЗАГРУЗКА ИСТОРИЧЕСКИХ ДАННЫХ
+# 0. ИСТОРИЧЕСКИЕ СОБЫТИЯ НА МОСКОВСКОЙ БИРЖЕ
+# ==========================================
+
+MOEX_HISTORICAL_EVENTS = [
+    {
+        "date": "2020-02-20",
+        "title": "🦠 Начало COVID-19",
+        "description": "Обвал мировых и российских рынков из-за пандемии коронавируса, падение нефти до отрицательных значений.",
+        "color": "#E53935"
+    },
+    {
+        "date": "2021-10-26",
+        "title": "🏔️ Пик IMOEX (ATH 4292 п.)",
+        "description": "Исторический максимум Индекса МосБиржи на волне сверхдоходов сырьевого сектора и притока частных инвесторов.",
+        "color": "#43A047"
+    },
+    {
+        "date": "2021-12-21",
+        "title": "💼 Старт портфеля (21.12.2021)",
+        "description": "Точка отсчета портфеля инвестора на izi.invest перед геополитическим кризисом 2022 года.",
+        "color": "#1E88E5"
+    },
+    {
+        "date": "2022-02-24",
+        "title": "⚔️ Начало СВО (Стоп торгов)",
+        "description": "Обвал рынка на 33% за один день. Остановка торгов акциями на Московской бирже на месяц (до 24 марта 2022).",
+        "color": "#D32F2F"
+    },
+    {
+        "date": "2022-03-24",
+        "title": "🟢 Рестарт торгов MOEX",
+        "description": "Возобновление торгов 33 наиболее ликвидными акциями с запретом коротких позиций и блокировкой нерезидентов.",
+        "color": "#00897B"
+    },
+    {
+        "date": "2022-09-21",
+        "title": "📢 Мобилизация (Дно 1906 п.)",
+        "description": "Объявление частичной мобилизации. Локальное дно IMOEX, с которого начался мощный двухлетний бычий тренд.",
+        "color": "#FB8C00"
+    },
+    {
+        "date": "2023-06-24",
+        "title": "🛡️ События ЧВК Вагнер",
+        "description": "Краткосрочный стресс выходного дня с быстрым выкупом просадки в понедельник.",
+        "color": "#8E24AA"
+    },
+    {
+        "date": "2023-08-15",
+        "title": "🏦 Ставка ЦБ 12% (Старт ДКП)",
+        "description": "Внеплановое заседание Банка России из-за курса доллара выше 100 ₽. Старт цикла рекордного ужесточения ДКП.",
+        "color": "#FDD835"
+    },
+    {
+        "date": "2024-06-12",
+        "title": "🚫 Санкции против MOEX и НКЦ",
+        "description": "Блокирующие санкции США (OFAC) против Московской биржи и НКЦ. Остановка биржевых торгов долларом США и евро.",
+        "color": "#C2185B"
+    },
+    {
+        "date": "2024-10-25",
+        "title": "📈 Ставка ЦБ 21% (Рекорд)",
+        "description": "Повышение ключевой ставки ЦБ РФ до исторического рекорда 21.0% годовых для борьбы с инфляцией.",
+        "color": "#F4511E"
+    }
+]
+
+
+# ==========================================
+# 1. ЗАГРУЗКА ИСТОРИЧЕСКИХ ДАННЫХ С ПАГИНАЦИЕЙ
 # ==========================================
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_ticker_candles(ticker: str, start_date: datetime.date, end_date: datetime.date) -> pd.Series:
-    """Загружает дневные свечи акции с Мосбиржи через moexalgo или резервный MOEX ISS API."""
+    """Загружает дневные свечи акции с Мосбиржи через moexalgo или резервный MOEX ISS API с пагинацией."""
     # 1. Попытка через moexalgo
     if Ticker is not None:
         try:
@@ -76,46 +144,67 @@ def fetch_ticker_candles(ticker: str, start_date: datetime.date, end_date: datet
                     df = raw.copy()
                     if "begin" in df.columns:
                         df["begin"] = pd.to_datetime(df["begin"])
+                        df = df.drop_duplicates(subset=["begin"]).sort_values(by="begin")
                         df.set_index("begin", inplace=True)
-                    return df["close"].astype(float).sort_index()
+                    s = df["close"].astype(float).sort_index()
+                    if len(s) > 10 and (s.index[-1].date() >= end_date - timedelta(days=10) or len(s) >= (end_date - start_date).days * 0.4):
+                        return s
                 elif isinstance(raw, (list, tuple)) and raw:
                     df = pd.DataFrame(raw)
                     if "close" in df.columns and "begin" in df.columns:
                         df["begin"] = pd.to_datetime(df["begin"])
+                        df = df.drop_duplicates(subset=["begin"]).sort_values(by="begin")
                         df.set_index("begin", inplace=True)
-                        return df["close"].astype(float).sort_index()
+                        s = df["close"].astype(float).sort_index()
+                        if len(s) > 10:
+                            return s
         except Exception:
             pass
 
-    # 2. Резервный шлюз MOEX ISS API
-    url = f"https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities/{ticker}/candles.json"
-    params = {
-        "from": start_date.isoformat(),
-        "till": end_date.isoformat(),
-        "interval": 24,
-        "iss.meta": "off"
-    }
-    try:
-        resp = requests.get(url, params=params, timeout=12)
-        if resp.status_code == 200:
-            data = resp.json().get("candles", {})
-            rows = data.get("data", [])
-            cols = data.get("columns", [])
-            if rows and cols:
-                df = pd.DataFrame(rows, columns=cols)
-                if "close" in df.columns and "begin" in df.columns:
-                    df["begin"] = pd.to_datetime(df["begin"])
-                    df.set_index("begin", inplace=True)
-                    return df["close"].astype(float).sort_index()
-    except Exception:
-        pass
+    # 2. Резервный шлюз MOEX ISS API с пагинацией (start=0, 500, 1000...)
+    all_rows = []
+    cols = []
+    start_offset = 0
+    while True:
+        url = f"https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities/{ticker}/candles.json"
+        params = {
+            "from": start_date.isoformat(),
+            "till": end_date.isoformat(),
+            "interval": 24,
+            "iss.meta": "off",
+            "start": start_offset
+        }
+        try:
+            resp = requests.get(url, params=params, timeout=12)
+            if resp.status_code == 200:
+                data = resp.json().get("candles", {})
+                rows = data.get("data", [])
+                cols = data.get("columns", [])
+                if not rows:
+                    break
+                all_rows.extend(rows)
+                if len(rows) < 500:
+                    break
+                start_offset += len(rows)
+            else:
+                break
+        except Exception:
+            break
+
+    if all_rows and cols:
+        df = pd.DataFrame(all_rows, columns=cols)
+        if "close" in df.columns and "begin" in df.columns:
+            df["begin"] = pd.to_datetime(df["begin"])
+            df = df.drop_duplicates(subset=["begin"]).sort_values(by="begin")
+            df.set_index("begin", inplace=True)
+            return df["close"].astype(float).sort_index()
 
     return pd.Series(dtype=float)
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_benchmark_candles(symbol: str, start_date: datetime.date, end_date: datetime.date) -> pd.Series:
-    """Загружает дневные свечи бенчмарка (MCFTRR, IMOEX, MCFTR) с Мосбиржи через moexalgo или MOEX ISS API."""
+    """Загружает дневные свечи бенчмарка (MCFTRR, IMOEX, MCFTR) с Мосбиржи через moexalgo или MOEX ISS API с пагинацией."""
     # 1. Попытка через moexalgo
     if Ticker is not None:
         try:
@@ -127,40 +216,61 @@ def fetch_benchmark_candles(symbol: str, start_date: datetime.date, end_date: da
                     df = raw.copy()
                     if "begin" in df.columns:
                         df["begin"] = pd.to_datetime(df["begin"])
+                        df = df.drop_duplicates(subset=["begin"]).sort_values(by="begin")
                         df.set_index("begin", inplace=True)
-                    return df["close"].astype(float).sort_index()
+                    s = df["close"].astype(float).sort_index()
+                    if len(s) > 10 and (s.index[-1].date() >= end_date - timedelta(days=10) or len(s) >= (end_date - start_date).days * 0.4):
+                        return s
                 elif isinstance(raw, (list, tuple)) and raw:
                     df = pd.DataFrame(raw)
                     if "close" in df.columns and "begin" in df.columns:
                         df["begin"] = pd.to_datetime(df["begin"])
+                        df = df.drop_duplicates(subset=["begin"]).sort_values(by="begin")
                         df.set_index("begin", inplace=True)
-                        return df["close"].astype(float).sort_index()
+                        s = df["close"].astype(float).sort_index()
+                        if len(s) > 10:
+                            return s
         except Exception:
             pass
 
-    # 2. Резервный шлюз MOEX ISS API (рынок индексов SNDX)
-    url = f"https://iss.moex.com/iss/engines/stock/markets/index/boards/SNDX/securities/{symbol}/candles.json"
-    params = {
-        "from": start_date.isoformat(),
-        "till": end_date.isoformat(),
-        "interval": 24,
-        "iss.meta": "off"
-    }
-    try:
-        resp = requests.get(url, params=params, timeout=12)
-        if resp.status_code == 200:
-            data = resp.json().get("candles", {})
-            rows = data.get("data", [])
-            cols = data.get("columns", [])
-            if rows and cols:
-                df = pd.DataFrame(rows, columns=cols)
-                if "close" in df.columns and "begin" in df.columns:
-                    df["begin"] = pd.to_datetime(df["begin"])
-                    df = df.drop_duplicates(subset=["begin"]).sort_values(by="begin")
-                    df.set_index("begin", inplace=True)
-                    return df["close"].astype(float).sort_index()
-    except Exception:
-        pass
+    # 2. Резервный шлюз MOEX ISS API (рынок индексов SNDX) с пагинацией
+    all_rows = []
+    cols = []
+    start_offset = 0
+    while True:
+        url = f"https://iss.moex.com/iss/engines/stock/markets/index/boards/SNDX/securities/{symbol}/candles.json"
+        params = {
+            "from": start_date.isoformat(),
+            "till": end_date.isoformat(),
+            "interval": 24,
+            "iss.meta": "off",
+            "start": start_offset
+        }
+        try:
+            resp = requests.get(url, params=params, timeout=12)
+            if resp.status_code == 200:
+                data = resp.json().get("candles", {})
+                rows = data.get("data", [])
+                cols = data.get("columns", [])
+                if not rows:
+                    break
+                all_rows.extend(rows)
+                if len(rows) < 500:
+                    break
+                start_offset += len(rows)
+            else:
+                break
+        except Exception:
+            break
+
+    if all_rows and cols:
+        df = pd.DataFrame(all_rows, columns=cols)
+        if "close" in df.columns and "begin" in df.columns:
+            df["begin"] = pd.to_datetime(df["begin"])
+            df = df.drop_duplicates(subset=["begin"]).sort_values(by="begin")
+            df.set_index("begin", inplace=True)
+            return df["close"].astype(float).sort_index()
+
     return pd.Series(dtype=float)
 
 
@@ -173,15 +283,17 @@ def simulate_portfolio(
     weights_dict: Dict[str, float],
     initial_capital: float,
     rebalance_freq: str = "M",
-    fee_rate: float = 0.0005
-) -> Tuple[pd.Series, pd.Series, float]:
-    """Симулирует динамику стоимости портфеля с учетом весов, комиссий и периодической ребалансировки."""
+    fee_rate: float = 0.0005,
+    monthly_contribution: float = 0.0
+) -> Tuple[pd.Series, pd.Series, float, pd.Series]:
+    """Симулирует динамику стоимости портфеля с учетом весов, комиссий, ребалансировки и регулярных довнесений (DCA)."""
     dates = prices_df.index
     n_days = len(dates)
     tickers = list(weights_dict.keys())
 
     port_values = pd.Series(index=dates, dtype=float)
     daily_fees = pd.Series(0.0, index=dates, dtype=float)
+    invested_series = pd.Series(index=dates, dtype=float)
 
     # Нормализуем веса к 1.0
     total_w = sum(weights_dict.values())
@@ -194,12 +306,27 @@ def simulate_portfolio(
 
     units = {t: (capital_after_entry * norm_weights[t]) / prices_df[t].iloc[0] for t in tickers}
     port_values.iloc[0] = capital_after_entry
+    cum_invested = initial_capital
+    invested_series.iloc[0] = cum_invested
 
     last_rebal_period = None
+    last_dca_period = (dates[0].year, dates[0].month)
 
     for i in range(1, n_days):
         d = dates[i]
         curr_val = sum(units[t] * prices_df[t].iloc[i] for t in tickers)
+
+        # Регулярное довнесение (DCA) раз в месяц
+        curr_month = (d.year, d.month)
+        if monthly_contribution > 0 and curr_month != last_dca_period:
+            cum_invested += monthly_contribution
+            dca_cost = monthly_contribution * fee_rate
+            net_dca = monthly_contribution - dca_cost
+            daily_fees.iloc[i] += dca_cost
+            for t in tickers:
+                units[t] += (net_dca * norm_weights[t]) / prices_df[t].iloc[i]
+            curr_val = sum(units[t] * prices_df[t].iloc[i] for t in tickers)
+            last_dca_period = curr_month
 
         do_rebal = False
         if rebalance_freq == "M":
@@ -225,43 +352,100 @@ def simulate_portfolio(
                 target_asset_val = curr_val * norm_weights[t]
                 turnover += abs(target_asset_val - curr_asset_val)
             cost = turnover * fee_rate
-            daily_fees.iloc[i] = cost
+            daily_fees.iloc[i] += cost
             net_val = curr_val - cost
             units = {t: (net_val * norm_weights[t]) / prices_df[t].iloc[i] for t in tickers}
             curr_val = net_val
 
         port_values.iloc[i] = curr_val
+        invested_series.iloc[i] = cum_invested
 
     total_fees_paid = daily_fees.sum()
-    return port_values, daily_fees, total_fees_paid
+    return port_values, daily_fees, total_fees_paid, invested_series
+
+
+def simulate_benchmark(
+    bench_series: pd.Series,
+    initial_capital: float,
+    monthly_contribution: float = 0.0
+) -> pd.Series:
+    """Симулирует динамику бенчмарка со стартовым капиталом и опциональным довнесением (DCA)."""
+    dates = bench_series.index
+    n_days = len(dates)
+    bench_values = pd.Series(index=dates, dtype=float)
+
+    units = initial_capital / bench_series.iloc[0]
+    bench_values.iloc[0] = initial_capital
+    last_dca_period = (dates[0].year, dates[0].month)
+
+    for i in range(1, n_days):
+        d = dates[i]
+        curr_m = (d.year, d.month)
+        if monthly_contribution > 0 and curr_m != last_dca_period:
+            units += monthly_contribution / bench_series.iloc[i]
+            last_dca_period = curr_m
+        bench_values.iloc[i] = units * bench_series.iloc[i]
+
+    return bench_values
+
+
+def simulate_risk_free(
+    dates: pd.DatetimeIndex,
+    initial_capital: float,
+    rf_annual_pct: float,
+    monthly_contribution: float = 0.0
+) -> pd.Series:
+    """Симулирует депозит по ставке ЦБ РФ со сложным процентом и опциональным довнесением (DCA)."""
+    n_days = len(dates)
+    rf_values = pd.Series(index=dates, dtype=float)
+    daily_rate = (1.0 + rf_annual_pct / 100.0) ** (1.0 / 365.25)
+
+    curr_val = initial_capital
+    rf_values.iloc[0] = curr_val
+    last_dca_period = (dates[0].year, dates[0].month)
+
+    for i in range(1, n_days):
+        d = dates[i]
+        curr_m = (d.year, d.month)
+        days_step = max(1, (d - dates[i-1]).days)
+        curr_val = curr_val * (daily_rate ** days_step)
+        if monthly_contribution > 0 and curr_m != last_dca_period:
+            curr_val += monthly_contribution
+            last_dca_period = curr_m
+        rf_values.iloc[i] = curr_val
+
+    return rf_values
 
 
 def calculate_performance_kpis(
     port_values: pd.Series,
     benchmark_values: pd.Series,
     initial_capital: float,
-    risk_free_rate_pct: float = 16.0
+    risk_free_rate_pct: float = 16.0,
+    invested_series: Optional[pd.Series] = None
 ) -> Dict[str, float]:
-    """Рассчитывает институциональные коэффициенты эффективности и риска."""
+    """Рассчитывает институциональные коэффициенты эффективности и риска с учетом довнесений."""
     common_idx = port_values.index.intersection(benchmark_values.index)
     pv = port_values.loc[common_idx]
     bv = benchmark_values.loc[common_idx]
+
+    total_invested = float(invested_series.loc[common_idx[-1]]) if (invested_series is not None and not invested_series.empty) else initial_capital
 
     n_days = (common_idx[-1] - common_idx[0]).days if len(common_idx) > 1 else 1
     years = max(n_days / 365.25, 0.05)
 
     # 1. Total Return & CAGR
     fin_val = pv.iloc[-1]
-    total_ret = ((fin_val / initial_capital) - 1.0) * 100.0 if initial_capital > 0 else 0.0
-    bench_ret = ((bv.iloc[-1] / bv.iloc[0]) - 1.0) * 100.0 if bv.iloc[0] > 0 else 0.0
+    total_ret = ((fin_val / total_invested) - 1.0) * 100.0 if total_invested > 0 else 0.0
+    bench_ret = ((bv.iloc[-1] / total_invested) - 1.0) * 100.0 if total_invested > 0 else 0.0
 
-    if fin_val > 0 and initial_capital > 0:
-        cagr = (((fin_val / initial_capital) ** (1.0 / years)) - 1.0) * 100.0
+    if fin_val > 0 and total_invested > 0:
+        cagr = (((fin_val / total_invested) ** (1.0 / years)) - 1.0) * 100.0
     else:
         cagr = -100.0
 
-    if bv.iloc[-1] > 0 and bv.iloc[0] > 0:
-        bench_cagr = (((bv.iloc[-1] / bv.iloc[0]) ** (1.0 / years)) - 1.0) * 100.0
+    if bv.iloc[-1] > 0 and total_invested > 0:
+        bench_cagr = (((bv.iloc[-1] / total_invested) ** (1.0 / years)) - 1.0) * 100.0
     else:
         bench_cagr = -100.0
 
@@ -294,12 +478,11 @@ def calculate_performance_kpis(
     # 7. Calmar Ratio
     calmar = (cagr / abs(max_dd)) if abs(max_dd) > 0.01 else 0.0
 
-    # 8. Beta & Alpha к IMOEX
+    # 8. Beta & Alpha к бенчмарку
     if len(daily_port_ret) > 5 and len(daily_bench_ret) > 5:
         cov = np.cov(daily_port_ret, daily_bench_ret)[0][1]
         bench_var = np.var(daily_bench_ret)
         beta = (cov / bench_var) if bench_var > 0 else 1.0
-        # Дженсен Альфа в годовом выражении
         alpha = cagr - (rf_dec + beta * (bench_cagr - rf_dec))
     else:
         beta = 1.0
@@ -312,6 +495,7 @@ def calculate_performance_kpis(
 
     return {
         "final_capital": pv.iloc[-1],
+        "total_invested": total_invested,
         "total_return_pct": total_ret,
         "bench_return_pct": bench_ret,
         "alpha_excess_pct": total_ret - bench_ret,
@@ -370,20 +554,115 @@ strategy_mode = st.sidebar.selectbox(
     index=0
 )
 
-horizon_choice = st.sidebar.selectbox(
-    "Горизонт тестирования:",
-    options=["6 месяцев", "1 год", "2 года", "3 года", "5 лет"],
-    index=1
+date_mode = st.sidebar.radio(
+    "Выбор временного периода:",
+    options=[
+        "🎯 Исторические точки (События MOEX)",
+        "📆 Произвольный диапазон (Календарь)",
+        "⏳ Фиксированный горизонт (от сегодня)"
+    ],
+    index=0
 )
 
-horizon_days_map = {
-    "6 месяцев": 180,
-    "1 год": 365,
-    "2 года": 730,
-    "3 года": 1095,
-    "5 лет": 1825
-}
-backtest_days = horizon_days_map[horizon_choice]
+start_date: datetime.date
+end_date: datetime.date = datetime.now().date()
+
+if date_mode == "🎯 Исторические точки (События MOEX)":
+    event_preset = st.sidebar.selectbox(
+        "Точка отсчета бэктеста:",
+        options=[
+            "💼 21.12.2021 — Первая сделка портфеля (как на izi.invest)",
+            "⚔️ 24.02.2022 — Начало СВО (Кризис и заморозка)",
+            "🟢 24.03.2022 — Рестарт биржевых торгов MOEX",
+            "📢 21.09.2022 — Локальное дно (Мобилизация)",
+            "🚀 01.01.2023 — Старт бычьего ралли 2023 года",
+            "🏦 15.08.2023 — Внеплановое повышение ставки ЦБ 12%",
+            "📅 01.01.2024 — С начала 2024 года (YTD)",
+            "🚫 12.06.2024 — Санкции OFAC против Мосбиржи и НКЦ",
+            "🏔️ 26.10.2021 — Исторический максимум IMOEX (ATH 4292 п.)",
+            "🦠 20.02.2020 — Начало пандемии COVID-19"
+        ],
+        index=0
+    )
+    preset_date_map = {
+        "💼 21.12.2021": datetime(2021, 12, 21).date(),
+        "⚔️ 24.02.2022": datetime(2022, 2, 24).date(),
+        "🟢 24.03.2022": datetime(2022, 3, 24).date(),
+        "📢 21.09.2022": datetime(2022, 9, 21).date(),
+        "🚀 01.01.2023": datetime(2023, 1, 1).date(),
+        "🏦 15.08.2023": datetime(2023, 8, 15).date(),
+        "📅 01.01.2024": datetime(2024, 1, 1).date(),
+        "🚫 12.06.2024": datetime(2024, 6, 12).date(),
+        "🏔️ 26.10.2021": datetime(2021, 10, 26).date(),
+        "🦠 20.02.2020": datetime(2020, 2, 20).date(),
+    }
+    matched_dt = None
+    for k, v in preset_date_map.items():
+        if event_preset.startswith(k):
+            matched_dt = v
+            break
+    start_date = matched_dt or datetime(2021, 12, 21).date()
+
+elif date_mode == "📆 Произвольный диапазон (Календарь)":
+    c_d1, c_d2 = st.sidebar.columns(2)
+    with c_d1:
+        start_date = st.date_input(
+            "Дата начала:",
+            value=datetime(2021, 12, 21).date(),
+            min_value=datetime(2015, 1, 1).date(),
+            max_value=datetime.now().date()
+        )
+    with c_d2:
+        end_date = st.date_input(
+            "Дата конца:",
+            value=datetime.now().date(),
+            min_value=start_date,
+            max_value=datetime.now().date()
+        )
+    if start_date >= end_date:
+        st.sidebar.error("Дата начала должна быть строго раньше даты окончания.")
+        st.stop()
+
+else:  # Фиксированный горизонт (от сегодня)
+    horizon_choice = st.sidebar.selectbox(
+        "Горизонт тестирования:",
+        options=["6 месяцев", "1 год", "2 года", "3 года", "5 лет"],
+        index=1
+    )
+    horizon_days_map = {
+        "6 месяцев": 180,
+        "1 год": 365,
+        "2 года": 730,
+        "3 года": 1095,
+        "5 лет": 1825
+    }
+    start_date = end_date - timedelta(days=horizon_days_map[horizon_choice])
+
+show_events_on_chart = st.sidebar.checkbox(
+    "🏷️ Маркировать события MOEX на графике",
+    value=True,
+    help="Отображает вертикальные пунктирные линии ключевых исторических событий (СВО, COVID, мобилизация, ключевая ставка, санкции)"
+)
+
+dca_mode = st.sidebar.selectbox(
+    "Режим инвестирования капитала:",
+    options=[
+        "Единоразовый вход (Lump-sum)",
+        "Ежемесячное довнесение (DCA)"
+    ],
+    index=0,
+    help="DCA (Dollar-Cost Averaging) — регулярное довнесение средств каждый месяц. Сглаживает просадки при падении рынка и объясняет более высокую доходность на izi.invest за счет покупок на дне 2022 года."
+)
+
+monthly_contrib = 0.0
+if "DCA" in dca_mode:
+    monthly_contrib = st.sidebar.number_input(
+        "Ежемесячное пополнение (₽):",
+        min_value=5000,
+        max_value=10000000,
+        value=50000,
+        step=5000
+    )
 
 rebalance_mode_label = st.sidebar.selectbox(
     "Режим ребалансировки долей:",
@@ -498,10 +777,9 @@ if not selected_weights:
     st.warning("Выберите хотя бы один актив для запуска бэктеста.")
     st.stop()
 
-end_date = datetime.now().date()
-start_date = end_date - timedelta(days=backtest_days)
+period_label = f"{start_date.strftime('%d.%m.%Y')} — {end_date.strftime('%d.%m.%Y')}"
 
-with st.spinner(f"Загружаю котировки за {horizon_choice} с Мосбиржи и симулирую портфель..."):
+with st.spinner(f"Загружаю котировки за период {period_label} с Мосбиржи и симулирую портфель..."):
     # 1. Загрузка цен активов
     prices_collector: Dict[str, pd.Series] = {}
     missing_tickers: List[str] = []
@@ -538,33 +816,51 @@ if len(aligned_dates) < 20:
 prices_df = raw_price_df.loc[aligned_dates].copy()
 bench_df = primary_bench_series.loc[aligned_dates].copy()
 
-# Масштабируем основной бенчмарк к стартовому капиталу
-bench_scaled = (bench_df / bench_df.iloc[0]) * initial_capital
+# Масштабируем основной бенчмарк к стартовому капиталу (с поддержкой DCA)
+bench_scaled = simulate_benchmark(
+    primary_bench_series.loc[aligned_dates],
+    initial_capital,
+    monthly_contribution=monthly_contrib
+)
 
 # Масштабируем вспомогательный бенчмарк (если доступен)
 has_companion = not companion_bench_series.empty
 if has_companion:
     companion_aligned = companion_bench_series.reindex(aligned_dates).ffill().bfill()
-    companion_scaled = (companion_aligned / companion_aligned.iloc[0]) * initial_capital
+    companion_scaled = simulate_benchmark(
+        companion_aligned,
+        initial_capital,
+        monthly_contribution=monthly_contrib
+    )
 else:
     companion_scaled = pd.Series(dtype=float)
 
-# Запуск симуляции портфеля
-port_series, fee_series, total_fees = simulate_portfolio(
+# Запуск симуляции портфеля (с поддержкой DCA)
+port_series, fee_series, total_fees, invested_series = simulate_portfolio(
     prices_df,
     selected_weights,
     initial_capital,
     rebalance_freq=rebalance_freq,
-    fee_rate=fee_rate
+    fee_rate=fee_rate,
+    monthly_contribution=monthly_contrib
 )
 
-# Линия безрисковой доходности (вклад по ставке ЦБ)
-days_from_start = (aligned_dates - aligned_dates[0]).days.values
-rf_daily_factor = (1.0 + rf_rate_input / 100.0) ** (days_from_start / 365.25)
-rf_series = pd.Series(initial_capital * rf_daily_factor, index=aligned_dates)
+# Линия безрисковой доходности (вклад по ставке ЦБ с поддержкой DCA)
+rf_series = simulate_risk_free(
+    aligned_dates,
+    initial_capital,
+    rf_rate_input,
+    monthly_contribution=monthly_contrib
+)
 
-# Расчет всех метрик
-kpis = calculate_performance_kpis(port_series, bench_scaled, initial_capital, risk_free_rate_pct=rf_rate_input)
+# Расчет всех метрик с учетом динамики довнесений
+kpis = calculate_performance_kpis(
+    port_series,
+    bench_scaled,
+    initial_capital,
+    risk_free_rate_pct=rf_rate_input,
+    invested_series=invested_series
+)
 
 # ==========================================
 # 4. ВЫВОД РЕЗУЛЬТАТОВ (KPI METRICS)
@@ -581,15 +877,20 @@ with st.expander("💡 Разница между Индексами IMOEX и MCF
 m_c1, m_c2, m_c3, m_c4 = st.columns(4)
 
 final_cap = kpis["final_capital"]
-profit_rub = final_cap - initial_capital
+tot_invested = kpis["total_invested"]
+profit_rub = final_cap - tot_invested
 tot_ret = kpis["total_return_pct"]
 bench_ret = kpis["bench_return_pct"]
 excess_ret = kpis["alpha_excess_pct"]
 
+delta_label = f"{profit_rub:+,.0f} ₽ ({tot_ret:+.1f}%)"
+if monthly_contrib > 0:
+    delta_label += f" | Вложено: {tot_invested:,.0f} ₽"
+
 m_c1.metric(
     label="Итоговый капитал",
     value=f"{final_cap:,.0f} ₽",
-    delta=f"{profit_rub:+,.0f} ₽ ({tot_ret:+.1f}%)"
+    delta=delta_label
 )
 
 m_c2.metric(
@@ -642,18 +943,21 @@ with tab_curves:
             primary_bench_label: bench_scaled.values,
             f"Ставка ЦБ РФ ({rf_rate_input:.1f}%)": rf_series.values
         }
+        if monthly_contrib > 0:
+            chart_dict["Вложенный капитал (DCA)"] = invested_series.values
         if has_companion and len(companion_scaled) == len(aligned_dates):
             chart_dict[companion_label] = companion_scaled.values
         val_title = "Капитал, ₽"
     else:
+        # В процентах доходности от вложенного капитала (как на izi.invest)
         chart_dict = {
             "Дата": aligned_dates,
-            "Портфель стратегии": ((port_series.values / initial_capital) - 1.0) * 100.0,
-            primary_bench_label: ((bench_scaled.values / initial_capital) - 1.0) * 100.0,
-            f"Ставка ЦБ РФ ({rf_rate_input:.1f}%)": ((rf_series.values / initial_capital) - 1.0) * 100.0
+            "Портфель стратегии": ((port_series.values / invested_series.values) - 1.0) * 100.0,
+            primary_bench_label: ((bench_scaled.values / invested_series.values) - 1.0) * 100.0,
+            f"Ставка ЦБ РФ ({rf_rate_input:.1f}%)": ((rf_series.values / invested_series.values) - 1.0) * 100.0
         }
         if has_companion and len(companion_scaled) == len(aligned_dates):
-            chart_dict[companion_label] = ((companion_scaled.values / initial_capital) - 1.0) * 100.0
+            chart_dict[companion_label] = ((companion_scaled.values / invested_series.values) - 1.0) * 100.0
         val_title = "Доходность, %"
 
     chart_df = pd.DataFrame(chart_dict)
@@ -664,17 +968,19 @@ with tab_curves:
         "MCFTRR (Полная доходность «нетто»)",
         "Индекс МосБиржи (IMOEX)",
         "MCFTR (Полная доходность «брутто»)",
-        f"Ставка ЦБ РФ ({rf_rate_input:.1f}%)"
+        f"Ставка ЦБ РФ ({rf_rate_input:.1f}%)",
+        "Вложенный капитал (DCA)"
     ]
     color_range = [
         "#00BCD4",  # Голубой (как Ликвидная часть на izi.invest)
         "#EC407A",  # Розовый (как MCFTRR на izi.invest)
         "#7986CB",  # Фиолетовый (как IMOEX на izi.invest)
         "#AB47BC",  # Пурпурный
-        "#FFB300"   # Янтарный (ставка ЦБ)
+        "#FFB300",  # Янтарный (ставка ЦБ)
+        "#90A4AE"   # Серый (тело капитала DCA)
     ]
 
-    curve_chart = alt.Chart(melted_chart_df).mark_line().encode(
+    base_curve_chart = alt.Chart(melted_chart_df).mark_line().encode(
         x=alt.X("Дата:T", title="Дата"),
         y=alt.Y("Значение:Q", title=val_title),
         color=alt.Color("Инструмент:N", scale=alt.Scale(
@@ -683,9 +989,61 @@ with tab_curves:
         )),
         strokeWidth=alt.condition(alt.datum.Инструмент == "Портфель стратегии", alt.value(2.8), alt.value(1.8)),
         tooltip=["Дата:T", "Инструмент:N", alt.Tooltip("Значение:Q", format=",.1f")]
-    ).properties(height=420).interactive()
+    )
 
-    st.altair_chart(curve_chart, width="stretch")
+    # Поиск исторических событий MOEX в рамках выбранного диапазона дат
+    active_events = []
+    min_chart_dt = aligned_dates[0]
+    max_chart_dt = aligned_dates[-1]
+
+    for ev in MOEX_HISTORICAL_EVENTS:
+        ev_dt = pd.to_datetime(ev["date"])
+        if min_chart_dt <= ev_dt <= max_chart_dt:
+            active_events.append({
+                "Дата": ev_dt,
+                "Событие": ev["title"],
+                "Описание": ev["description"],
+                "Цвет": ev["color"]
+            })
+
+    if show_events_on_chart and active_events:
+        events_df = pd.DataFrame(active_events)
+        event_rules = alt.Chart(events_df).mark_rule(
+            strokeDash=[4, 4],
+            size=1.5,
+            opacity=0.75
+        ).encode(
+            x="Дата:T",
+            color=alt.Color("Цвет:N", scale=None),
+            tooltip=["Дата:T", "Событие:N", "Описание:N"]
+        )
+
+        event_text = alt.Chart(events_df).mark_text(
+            align="left",
+            baseline="top",
+            dx=5,
+            dy=6,
+            fontSize=11,
+            fontWeight="bold"
+        ).encode(
+            x="Дата:T",
+            y=alt.value(6),
+            text="Событие:N",
+            color=alt.Color("Цвет:N", scale=None)
+        )
+
+        final_curve = alt.layer(base_curve_chart, event_rules, event_text).properties(height=440).interactive()
+    else:
+        final_curve = base_curve_chart.properties(height=440).interactive()
+
+    st.altair_chart(final_curve, width="stretch")
+
+    if active_events:
+        with st.expander(f"🏛️ Хронология исторических событий на Мосбирже ({len(active_events)} событий в выбранном периоде)", expanded=False):
+            st.markdown("Ключевые геополитические, регуляторные и макроэкономические вехи, повлиявшие на динамику рынка:")
+            for ev in active_events:
+                ev_formatted = ev["Дата"].strftime("%d.%m.%Y")
+                st.markdown(f"- **{ev_formatted} — {ev['Событие']}:** {ev['Описание']}")
 
     c_fee1, c_fee2 = st.columns(2)
     with c_fee1:
@@ -725,9 +1083,23 @@ with tab_risks:
             range=["#FF1744", "#EC407A" if primary_bench_symbol == "MCFTRR" else "#2979FF"]
         )),
         tooltip=["Дата:T", "Индикатор:N", alt.Tooltip("Просадка, %:Q", format=".2f")]
-    ).properties(height=320).interactive()
+    )
 
-    st.altair_chart(dd_chart, width="stretch")
+    if show_events_on_chart and active_events:
+        dd_rules = alt.Chart(pd.DataFrame(active_events)).mark_rule(
+            strokeDash=[4, 4],
+            size=1.2,
+            opacity=0.65
+        ).encode(
+            x="Дата:T",
+            color=alt.Color("Цвет:N", scale=None),
+            tooltip=["Дата:T", "Событие:N", "Описание:N"]
+        )
+        final_dd_chart = alt.layer(dd_chart, dd_rules).properties(height=320).interactive()
+    else:
+        final_dd_chart = dd_chart.properties(height=320).interactive()
+
+    st.altair_chart(final_dd_chart, width="stretch")
 
     st.markdown("#### 📋 Институциональные коэффициенты риска и устойчивости")
     rk1, rk2, rk3, rk4 = st.columns(4)

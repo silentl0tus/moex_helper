@@ -979,27 +979,42 @@ def fetch_iss_benchmark_series(symbol: str, start_date: date, end_date: date) ->
         except Exception:
             pass
 
-    # Резервный шлюз MOEX ISS API (рынок индексов SNDX)
-    try:
-        url = f"https://iss.moex.com/iss/engines/stock/markets/index/boards/SNDX/securities/{symbol}/candles.json"
-        params = {
-            "from": start_date.isoformat(),
-            "till": end_date.isoformat(),
-            "interval": 24,
-            "iss.meta": "off"
-        }
-        resp = requests.get(url, params=params, timeout=12)
-        if resp.status_code == 200:
-            data = resp.json().get("candles", {})
-            rows = data.get("data", [])
-            cols = data.get("columns", [])
-            if rows and cols:
-                df = pd.DataFrame(rows, columns=cols)
-                if "close" in df.columns and "begin" in df.columns:
-                    df["begin"] = pd.to_datetime(df["begin"]).dt.tz_localize(None)
-                    return df.set_index("begin")["close"].astype(float).sort_index()
-    except Exception:
-        pass
+    # Резервный шлюз MOEX ISS API (рынок индексов SNDX) с пагинацией
+    all_rows = []
+    cols = []
+    start_offset = 0
+    while True:
+        try:
+            url = f"https://iss.moex.com/iss/engines/stock/markets/index/boards/SNDX/securities/{symbol}/candles.json"
+            params = {
+                "from": start_date.isoformat(),
+                "till": end_date.isoformat(),
+                "interval": 24,
+                "iss.meta": "off",
+                "start": start_offset
+            }
+            resp = requests.get(url, params=params, timeout=12)
+            if resp.status_code == 200:
+                data = resp.json().get("candles", {})
+                rows = data.get("data", [])
+                cols = data.get("columns", [])
+                if not rows:
+                    break
+                all_rows.extend(rows)
+                if len(rows) < 500:
+                    break
+                start_offset += len(rows)
+            else:
+                break
+        except Exception:
+            break
+
+    if all_rows and cols:
+        df = pd.DataFrame(all_rows, columns=cols)
+        if "close" in df.columns and "begin" in df.columns:
+            df["begin"] = pd.to_datetime(df["begin"]).dt.tz_localize(None)
+            df = df.drop_duplicates(subset=["begin"]).sort_values(by="begin")
+            return df.set_index("begin")["close"].astype(float)
     return None
 
 
