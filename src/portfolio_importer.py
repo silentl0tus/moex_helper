@@ -1035,17 +1035,25 @@ def calculate_mirror_benchmark_timeline(
     mcftrr_prices = fetch_iss_benchmark_series("MCFTRR", start_date, end_date)
     imoex_prices = fetch_iss_benchmark_series("IMOEX", start_date, end_date)
 
-    # Защитный fallback: если какой-то индекс не загрузился, используем доступный
-    if mcftrr_prices is None or mcftrr_prices.empty:
-        mcftrr_prices = imoex_prices
-    if imoex_prices is None or imoex_prices.empty:
-        imoex_prices = mcftrr_prices
+    if mcftrr_prices is not None and not mcftrr_prices.empty:
+        mcftrr_prices = mcftrr_prices[~mcftrr_prices.index.duplicated(keep="first")].sort_index()
+    if imoex_prices is not None and not imoex_prices.empty:
+        imoex_prices = imoex_prices[~imoex_prices.index.duplicated(keep="first")].sort_index()
 
-    if mcftrr_prices is None or mcftrr_prices.empty:
+    # Защитный fallback: если какой-то индекс не загрузился, используем доступный
+    if (mcftrr_prices is None or mcftrr_prices.empty) and (imoex_prices is None or imoex_prices.empty):
         return pd.DataFrame(), 0.0
 
-    # Общая временная шкала по торговым дням
-    all_dates = mcftrr_prices.index
+    if mcftrr_prices is None or mcftrr_prices.empty:
+        mcftrr_prices = imoex_prices.copy()
+    if imoex_prices is None or imoex_prices.empty:
+        imoex_prices = mcftrr_prices.copy()
+
+    # Сводим к единому выровненному календарю торговых дней без пропусков (объединение дат)
+    all_dates = mcftrr_prices.index.union(imoex_prices.index).sort_values()
+    mcftrr_aligned = mcftrr_prices.reindex(all_dates).ffill().bfill()
+    imoex_aligned = imoex_prices.reindex(all_dates).ffill().bfill()
+
     deposit_by_date = cash_moves.groupby("Дата")["Сумма"].sum().to_dict()
     sorted_deposit_dates = sorted(deposit_by_date.keys())
 
@@ -1058,25 +1066,23 @@ def calculate_mirror_benchmark_timeline(
     imoex_series = []
 
     dep_idx = 0
-    for d in all_dates:
+    for i, d in enumerate(all_dates):
         while dep_idx < len(sorted_deposit_dates) and sorted_deposit_dates[dep_idx] <= d:
             amt = float(deposit_by_date[sorted_deposit_dates[dep_idx]])
             
-            p_mcftrr = mcftrr_prices.asof(d) if mcftrr_prices is not None else 0.0
-            if p_mcftrr and p_mcftrr > 0:
-                delta_m = amt / float(p_mcftrr)
-                mcftrr_units = max(0.0, mcftrr_units + delta_m)
+            p_mcftrr = float(mcftrr_aligned.iloc[i]) if float(mcftrr_aligned.iloc[i]) > 0 else 1.0
+            delta_m = amt / p_mcftrr
+            mcftrr_units = max(0.0, mcftrr_units + delta_m)
 
-            p_imoex = imoex_prices.asof(d) if imoex_prices is not None else 0.0
-            if p_imoex and p_imoex > 0:
-                delta_i = amt / float(p_imoex)
-                imoex_units = max(0.0, imoex_units + delta_i)
+            p_imoex = float(imoex_aligned.iloc[i]) if float(imoex_aligned.iloc[i]) > 0 else 1.0
+            delta_i = amt / p_imoex
+            imoex_units = max(0.0, imoex_units + delta_i)
 
             accumulated_invested += amt
             dep_idx += 1
 
-        px_m = float(mcftrr_prices.loc[d].iloc[0] if isinstance(mcftrr_prices.loc[d], pd.Series) else mcftrr_prices.loc[d]) if mcftrr_prices is not None else 0.0
-        px_i = float(imoex_prices.loc[d].iloc[0] if isinstance(imoex_prices.loc[d], pd.Series) else imoex_prices.loc[d]) if imoex_prices is not None else 0.0
+        px_m = float(mcftrr_aligned.iloc[i])
+        px_i = float(imoex_aligned.iloc[i])
 
         invested_series.append(accumulated_invested)
         mcftrr_series.append(mcftrr_units * px_m)

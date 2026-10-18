@@ -156,6 +156,7 @@ def fetch_benchmark_candles(symbol: str, start_date: datetime.date, end_date: da
                 df = pd.DataFrame(rows, columns=cols)
                 if "close" in df.columns and "begin" in df.columns:
                     df["begin"] = pd.to_datetime(df["begin"])
+                    df = df.drop_duplicates(subset=["begin"]).sort_values(by="begin")
                     df.set_index("begin", inplace=True)
                     return df["close"].astype(float).sort_index()
     except Exception:
