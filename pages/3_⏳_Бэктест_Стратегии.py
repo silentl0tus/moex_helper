@@ -114,9 +114,32 @@ def fetch_ticker_candles(ticker: str, start_date: datetime.date, end_date: datet
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_benchmark_candles(start_date: datetime.date, end_date: datetime.date) -> pd.Series:
-    """Загружает дневные свечи Индекса МосБиржи (IMOEX)."""
-    url = "https://iss.moex.com/iss/engines/stock/markets/index/boards/SNDX/securities/IMOEX/candles.json"
+def fetch_benchmark_candles(symbol: str, start_date: datetime.date, end_date: datetime.date) -> pd.Series:
+    """Загружает дневные свечи бенчмарка (MCFTRR, IMOEX, MCFTR) с Мосбиржи через moexalgo или MOEX ISS API."""
+    # 1. Попытка через moexalgo
+    if Ticker is not None:
+        try:
+            asset = Ticker(symbol)
+            candles_method = getattr(asset, "candles", None)
+            if callable(candles_method):
+                raw = candles_method(start=start_date.isoformat(), end=end_date.isoformat(), period="1D")
+                if isinstance(raw, pd.DataFrame) and not raw.empty and "close" in raw.columns:
+                    df = raw.copy()
+                    if "begin" in df.columns:
+                        df["begin"] = pd.to_datetime(df["begin"])
+                        df.set_index("begin", inplace=True)
+                    return df["close"].astype(float).sort_index()
+                elif isinstance(raw, (list, tuple)) and raw:
+                    df = pd.DataFrame(raw)
+                    if "close" in df.columns and "begin" in df.columns:
+                        df["begin"] = pd.to_datetime(df["begin"])
+                        df.set_index("begin", inplace=True)
+                        return df["close"].astype(float).sort_index()
+        except Exception:
+            pass
+
+    # 2. Резервный шлюз MOEX ISS API (рынок индексов SNDX)
+    url = f"https://iss.moex.com/iss/engines/stock/markets/index/boards/SNDX/securities/{symbol}/candles.json"
     params = {
         "from": start_date.isoformat(),
         "till": end_date.isoformat(),
@@ -407,6 +430,27 @@ rf_rate_input = st.sidebar.slider(
     help="Используется как базовая планка альтернативной доходности для расчета Sharpe и Sortino."
 )
 
+benchmark_choice = st.sidebar.selectbox(
+    "Основной бенчмарк для сравнения:",
+    options=[
+        "MCFTRR (Индекс полной доходности «нетто») [Как в izi.invest]",
+        "IMOEX (Ценовой Индекс МосБиржи без див.)",
+        "MCFTR (Индекс полной доходности «брутто»)"
+    ],
+    index=0,
+    help="MCFTRR — эталонный индекс Мосбиржи полной доходности (Total Return Net). Учитывает реинвестирование дивидендов после уплаты 13% НДФЛ. IMOEX — ценовой индекс (Price Return) без учета дивидендов, занижающий реальную доходность рынка на 10-14% ежегодно из-за дивгэпов."
+)
+
+if "MCFTRR" in benchmark_choice:
+    primary_bench_symbol = "MCFTRR"
+    primary_bench_label = "MCFTRR (Полная доходность «нетто»)"
+elif "брутто" in benchmark_choice:
+    primary_bench_symbol = "MCFTR"
+    primary_bench_label = "MCFTR (Полная доходность «брутто»)"
+else:
+    primary_bench_symbol = "IMOEX"
+    primary_bench_label = "Индекс МосБиржи (IMOEX)"
+
 # Формирование тикеров и весов
 selected_weights: Dict[str, float] = {}
 
@@ -468,31 +512,41 @@ with st.spinner(f"Загружаю котировки за {horizon_choice} с �
         else:
             missing_tickers.append(t)
 
-    # 2. Загрузка бенчмарка IMOEX
-    bench_series = fetch_benchmark_candles(start_date, end_date)
+    # 2. Загрузка основного и вспомогательного бенчмарка (MCFTRR + IMOEX)
+    primary_bench_series = fetch_benchmark_candles(primary_bench_symbol, start_date, end_date)
+    companion_symbol = "IMOEX" if primary_bench_symbol != "IMOEX" else "MCFTRR"
+    companion_bench_series = fetch_benchmark_candles(companion_symbol, start_date, end_date)
 
 if missing_tickers:
     st.sidebar.warning(f"Недостаточно котировок для тикеров: {', '.join(missing_tickers)}. Они исключены из бэктеста.")
     for mt in missing_tickers:
         selected_weights.pop(mt, None)
 
-if len(prices_collector) < 1 or bench_series.empty:
+if len(prices_collector) < 1 or primary_bench_series.empty:
     st.error("Не удалось сформировать исторические ряды котировок для выбранного периода. Попробуйте другой горизонт.")
     st.stop()
 
 # Формируем матрицу цен и выравниваем даты
 raw_price_df = pd.DataFrame(prices_collector).dropna()
-aligned_dates = raw_price_df.index.intersection(bench_series.index)
+aligned_dates = raw_price_df.index.intersection(primary_bench_series.index)
 
 if len(aligned_dates) < 20:
     st.error(f"Слишком мало совпадающих торговых дней ({len(aligned_dates)}). Выберите более длительный горизонт.")
     st.stop()
 
 prices_df = raw_price_df.loc[aligned_dates].copy()
-bench_df = bench_series.loc[aligned_dates].copy()
+bench_df = primary_bench_series.loc[aligned_dates].copy()
 
-# Масштабируем IMOEX к стартовому капиталу
+# Масштабируем основной бенчмарк к стартовому капиталу
 bench_scaled = (bench_df / bench_df.iloc[0]) * initial_capital
+
+# Масштабируем вспомогательный бенчмарк (если доступен)
+has_companion = not companion_bench_series.empty
+if has_companion:
+    companion_aligned = companion_bench_series.reindex(aligned_dates).ffill().bfill()
+    companion_scaled = (companion_aligned / companion_aligned.iloc[0]) * initial_capital
+else:
+    companion_scaled = pd.Series(dtype=float)
 
 # Запуск симуляции портфеля
 port_series, fee_series, total_fees = simulate_portfolio(
@@ -515,6 +569,14 @@ kpis = calculate_performance_kpis(port_series, bench_scaled, initial_capital, ri
 # 4. ВЫВОД РЕЗУЛЬТАТОВ (KPI METRICS)
 # ==========================================
 
+# Информационная плашка о специфике бенчмарка в РФ (как на izi.invest)
+with st.expander("💡 Разница между Индексами IMOEX и MCFTRR (Специфика РФ)", expanded=False):
+    st.markdown("""
+    - **Индекс МосБиржи (IMOEX)** — *ценовой индекс* (Price Return). Он фиксирует только изменение котировок и «теряет» все дивидендные гэпы. На дивидендном рынке РФ это занижает доходность на 9–14% в год!
+    - **Индекс полной доходности «нетто» (MCFTRR)** — *эталонный бенчмарк* (Total Return Net). Он учитывает автоматическое реинвестирование дивидендов за вычетом 13% НДФЛ. Именно с ним профессиональные фонды и сервис **izi.invest** сравнивают доходность портфелей.
+    - **За 3–4 года** разрыв между ценовым IMOEX и полной доходностью MCFTRR на Мосбирже достигает **25–35%**!
+    """)
+
 m_c1, m_c2, m_c3, m_c4 = st.columns(4)
 
 final_cap = kpis["final_capital"]
@@ -530,21 +592,21 @@ m_c1.metric(
 )
 
 m_c2.metric(
-    label="Доходность vs IMOEX",
+    label=f"Доходность vs {primary_bench_symbol}",
     value=f"{tot_ret:+.1f}%",
-    delta=f"{excess_ret:+.1f}% к рынку" if excess_ret != 0 else "На уровне рынка"
+    delta=f"{excess_ret:+.1f}% к бенчмарку" if excess_ret != 0 else "На уровне бенчмарка"
 )
 
 m_c3.metric(
     label="CAGR (Годовая доходность)",
     value=f"{kpis['cagr_pct']:+.1f}%",
-    delta=f"vs IMOEX {kpis['bench_cagr_pct']:+.1f}%"
+    delta=f"vs {primary_bench_symbol} {kpis['bench_cagr_pct']:+.1f}%"
 )
 
 m_c4.metric(
     label="Макс. просадка (Max DD)",
     value=f"{kpis['max_drawdown_pct']:.1f}%",
-    delta=f"vs IMOEX {kpis['bench_max_dd_pct']:.1f}%",
+    delta=f"vs {primary_bench_symbol} {kpis['bench_max_dd_pct']:.1f}%",
     delta_color="inverse"
 )
 
@@ -566,35 +628,57 @@ tab_curves, tab_risks, tab_attribution, tab_monthly = st.tabs([
 # ------------------------------------------
 with tab_curves:
     st.subheader("📈 Динамика стоимости портфеля во времени")
-    st.caption(f"Период: {aligned_dates[0].strftime('%d.%m.%Y')} — {aligned_dates[-1].strftime('%d.%m.%Y')} ({kpis['trading_days']} торговых дней).")
+    st.caption(f"Период: {aligned_dates[0].strftime('%d.%m.%Y')} — {aligned_dates[-1].strftime('%d.%m.%Y')} ({kpis['trading_days']} торговых дней). Сравнение с индексами Мосбиржи и безрисковой ставкой.")
 
-    display_mode = st.radio("Отображение шкалы:", ["В рублях (Стоимость капитала)", "В процентах доходности (%)"], horizontal=True)
+    display_mode = st.radio("Отображение шкалы:", ["В процентах доходности (%) [Как izi.invest]", "В рублях (Стоимость капитала)"], horizontal=True)
+
+    companion_label = "Индекс МосБиржи (IMOEX)" if primary_bench_symbol != "IMOEX" else "MCFTRR (Полная доходность «нетто»)"
 
     if display_mode.startswith("В рублях"):
-        chart_df = pd.DataFrame({
+        chart_dict = {
             "Дата": aligned_dates,
             "Портфель стратегии": port_series.values,
-            "Индекс МосБиржи (IMOEX)": bench_scaled.values,
+            primary_bench_label: bench_scaled.values,
             f"Ставка ЦБ РФ ({rf_rate_input:.1f}%)": rf_series.values
-        })
+        }
+        if has_companion and len(companion_scaled) == len(aligned_dates):
+            chart_dict[companion_label] = companion_scaled.values
         val_title = "Капитал, ₽"
     else:
-        chart_df = pd.DataFrame({
+        chart_dict = {
             "Дата": aligned_dates,
             "Портфель стратегии": ((port_series.values / initial_capital) - 1.0) * 100.0,
-            "Индекс МосБиржи (IMOEX)": ((bench_scaled.values / initial_capital) - 1.0) * 100.0,
+            primary_bench_label: ((bench_scaled.values / initial_capital) - 1.0) * 100.0,
             f"Ставка ЦБ РФ ({rf_rate_input:.1f}%)": ((rf_series.values / initial_capital) - 1.0) * 100.0
-        })
+        }
+        if has_companion and len(companion_scaled) == len(aligned_dates):
+            chart_dict[companion_label] = ((companion_scaled.values / initial_capital) - 1.0) * 100.0
         val_title = "Доходность, %"
 
+    chart_df = pd.DataFrame(chart_dict)
     melted_chart_df = chart_df.melt(id_vars=["Дата"], var_name="Инструмент", value_name="Значение")
+
+    color_domain = [
+        "Портфель стратегии",
+        "MCFTRR (Полная доходность «нетто»)",
+        "Индекс МосБиржи (IMOEX)",
+        "MCFTR (Полная доходность «брутто»)",
+        f"Ставка ЦБ РФ ({rf_rate_input:.1f}%)"
+    ]
+    color_range = [
+        "#00BCD4",  # Голубой (как Ликвидная часть на izi.invest)
+        "#EC407A",  # Розовый (как MCFTRR на izi.invest)
+        "#7986CB",  # Фиолетовый (как IMOEX на izi.invest)
+        "#AB47BC",  # Пурпурный
+        "#FFB300"   # Янтарный (ставка ЦБ)
+    ]
 
     curve_chart = alt.Chart(melted_chart_df).mark_line().encode(
         x=alt.X("Дата:T", title="Дата"),
         y=alt.Y("Значение:Q", title=val_title),
         color=alt.Color("Инструмент:N", scale=alt.Scale(
-            domain=["Портфель стратегии", "Индекс МосБиржи (IMOEX)", f"Ставка ЦБ РФ ({rf_rate_input:.1f}%)"],
-            range=["#00E676", "#2979FF", "#FFB300"]
+            domain=color_domain,
+            range=color_range
         )),
         strokeWidth=alt.condition(alt.datum.Инструмент == "Портфель стратегии", alt.value(2.8), alt.value(1.8)),
         tooltip=["Дата:T", "Инструмент:N", alt.Tooltip("Значение:Q", format=",.1f")]
@@ -607,9 +691,9 @@ with tab_curves:
         st.info(f"💡 **Уплаченные комиссии брокеру:** `{total_fees:,.1f} ₽` (ставка `{broker_fee_pct:.2f}%` при входе и ребалансировках).")
     with c_fee2:
         if excess_ret > 0:
-            st.success(f"🚀 **Альфа стратегии:** портфель превзошел рынок на **+{excess_ret:.1f}%** с чистым опережением индекса.")
+            st.success(f"🚀 **Альфа стратегии:** портфель опередил {primary_bench_symbol} на **+{excess_ret:.1f}%**.")
         else:
-            st.warning(f"⚠️ **Отставание от рынка:** портфель уступил индексу IMOEX **{excess_ret:.1f}%**.")
+            st.warning(f"⚠️ **Отставание от бенчмарка:** портфель уступил {primary_bench_symbol} **{excess_ret:.1f}%**.")
 
 # ------------------------------------------
 # ТАБ 2: РИСК И ПРОСАДКИ
@@ -627,7 +711,7 @@ with tab_risks:
     dd_df = pd.DataFrame({
         "Дата": aligned_dates,
         "Просадка портфеля (%)": port_dd.values,
-        "Просадка IMOEX (%)": bench_dd.values
+        f"Просадка {primary_bench_symbol} (%)": bench_dd.values
     })
 
     dd_melted = dd_df.melt(id_vars=["Дата"], var_name="Индикатор", value_name="Просадка, %")
@@ -636,8 +720,8 @@ with tab_risks:
         x=alt.X("Дата:T", title="Дата"),
         y=alt.Y("Просадка, %:Q", title="Просадка от пика, %"),
         color=alt.Color("Индикатор:N", scale=alt.Scale(
-            domain=["Просадка портфеля (%)", "Просадка IMOEX (%)"],
-            range=["#FF1744", "#2979FF"]
+            domain=["Просадка портфеля (%)", f"Просадка {primary_bench_symbol} (%)"],
+            range=["#FF1744", "#EC407A" if primary_bench_symbol == "MCFTRR" else "#2979FF"]
         )),
         tooltip=["Дата:T", "Индикатор:N", alt.Tooltip("Просадка, %:Q", format=".2f")]
     ).properties(height=320).interactive()
@@ -649,11 +733,11 @@ with tab_risks:
     rk1.metric("Sharpe Ratio", f"{kpis['sharpe_ratio']:.2f}", "Норма > 0.5" if kpis['sharpe_ratio'] > 0.5 else "Слабая отдача к риску")
     rk2.metric("Sortino Ratio", f"{kpis['sortino_ratio']:.2f}", "С учетом downside риска")
     rk3.metric("Calmar Ratio", f"{kpis['calmar_ratio']:.2f}", "CAGR / |MaxDD|")
-    rk4.metric("Бета к IMOEX", f"{kpis['beta']:.2f}", "Защитный" if kpis['beta'] < 1.0 else "Агрессивнее рынка")
+    rk4.metric(f"Бета к {primary_bench_symbol}", f"{kpis['beta']:.2f}", "Защитный" if kpis['beta'] < 1.0 else "Агрессивнее рынка")
 
     rk5, rk6, rk7, rk8 = st.columns(4)
-    rk5.metric("Волатильность портфеля", f"{kpis['volatility_pct']:.1f}%", f"IMOEX: {kpis['bench_volatility_pct']:.1f}%")
-    rk6.metric("Jensen's Alpha", f"{kpis['jensen_alpha_pct']:+.1f}%", "Превышение CAPM модели")
+    rk5.metric("Волатильность портфеля", f"{kpis['volatility_pct']:.1f}%", f"{primary_bench_symbol}: {kpis['bench_volatility_pct']:.1f}%")
+    rk6.metric("Jensen's Alpha", f"{kpis['jensen_alpha_pct']:+.1f}%", f"Превышение модели CAPM к {primary_bench_symbol}")
     rk7.metric("Win Rate (Прибыльные дни)", f"{kpis['win_rate_pct']:.1f}%", "Доля зеленых сессий")
     rk8.metric("Торговых дней", f"{kpis['trading_days']} дн.", f"{kpis['years']:.1f} года")
 

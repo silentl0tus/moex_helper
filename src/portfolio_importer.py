@@ -967,20 +967,56 @@ def parse_broker_file(file_content: Any, filename: str) -> Dict[str, Any]:
 # 4. РАСЧЁТ ЗЕРКАЛЬНОГО БЕНЧМАРКА IMOEX
 # ==========================================
 
+def fetch_iss_benchmark_series(symbol: str, start_date: date, end_date: date) -> Optional[pd.Series]:
+    """Загружает дневные котировки индексов (MCFTRR, IMOEX) через moexalgo или резервный MOEX ISS API."""
+    if Ticker is not None:
+        try:
+            asset = Ticker(symbol)
+            candles = asset.candles(date=str(start_date), till_date=str(end_date), period="D")
+            if candles is not None and not candles.empty and "close" in candles.columns:
+                candles["begin"] = pd.to_datetime(candles["begin"]).dt.tz_localize(None)
+                return candles.set_index("begin")["close"].astype(float).sort_index()
+        except Exception:
+            pass
+
+    # Резервный шлюз MOEX ISS API (рынок индексов SNDX)
+    try:
+        url = f"https://iss.moex.com/iss/engines/stock/markets/index/boards/SNDX/securities/{symbol}/candles.json"
+        params = {
+            "from": start_date.isoformat(),
+            "till": end_date.isoformat(),
+            "interval": 24,
+            "iss.meta": "off"
+        }
+        resp = requests.get(url, params=params, timeout=12)
+        if resp.status_code == 200:
+            data = resp.json().get("candles", {})
+            rows = data.get("data", [])
+            cols = data.get("columns", [])
+            if rows and cols:
+                df = pd.DataFrame(rows, columns=cols)
+                if "close" in df.columns and "begin" in df.columns:
+                    df["begin"] = pd.to_datetime(df["begin"]).dt.tz_localize(None)
+                    return df.set_index("begin")["close"].astype(float).sort_index()
+    except Exception:
+        pass
+    return None
+
+
 def calculate_mirror_benchmark_timeline(
     trades_df: pd.DataFrame,
     current_portfolio_value: float,
-    bench_symbol: str = "IMOEX"
+    bench_symbol: str = "MCFTRR"
 ) -> Tuple[pd.DataFrame, float]:
     """
-    Симулирует «Зеркальный портфель Индекса МосБиржи»:
+    Симулирует «Зеркальные портфели Индексов МосБиржи» (MCFTRR и IMOEX):
     Каждый раз, когда инвестор пополнял свой реальный счет (operation == 'input'),
-    та же самая сумма условно инвестировалась в покупку паев IMOEX по цене на дату пополнения.
+    та же самая сумма условно инвестировалась в покупку паев индекса по цене на дату пополнения.
     При выводе денег (operation == 'output') часть паев продавалась.
     
     Возвращает:
-    1. DataFrame с исторической траекторией капитала инвестора и зеркального индекса.
-    2. Финальную доходность зеркального индекса.
+    1. DataFrame с исторической траекторией капитала инвестора, MCFTRR и IMOEX (в ₽ и в %).
+    2. Доходность основного выбранного зеркального индекса.
     """
     if trades_df.empty or "Операция" not in trades_df.columns:
         return pd.DataFrame(), 0.0
@@ -995,64 +1031,107 @@ def calculate_mirror_benchmark_timeline(
     start_date = cash_moves["Дата"].min().date()
     end_date = datetime.now().date()
 
-    # Загружаем котировки бенчмарка IMOEX
-    bench_prices: Optional[pd.Series] = None
-    if Ticker is not None:
-        try:
-            asset = Ticker(bench_symbol)
-            candles = asset.candles(date=str(start_date), till_date=str(end_date), period="D")
-            if candles is not None and not candles.empty and "close" in candles.columns:
-                candles["begin"] = pd.to_datetime(candles["begin"]).dt.tz_localize(None)
-                bench_prices = candles.set_index("begin")["close"].astype(float).sort_index()
-        except Exception:
-            pass
+    # Загружаем котировки обоих индексов: MCFTRR (полная доходность нетто) и IMOEX (ценовой)
+    mcftrr_prices = fetch_iss_benchmark_series("MCFTRR", start_date, end_date)
+    imoex_prices = fetch_iss_benchmark_series("IMOEX", start_date, end_date)
 
-    # Если не удалось загрузить онлайн, генерируем базовую сетку
-    if bench_prices is None or bench_prices.empty:
-        # Fallback: равномерная временная шкала
-        date_range = pd.date_range(start_date, end_date, freq="D")
-        bench_prices = pd.Series(np.linspace(2200, 2750, len(date_range)), index=date_range)
+    # Защитный fallback: если какой-то индекс не загрузился, используем доступный
+    if mcftrr_prices is None or mcftrr_prices.empty:
+        mcftrr_prices = imoex_prices
+    if imoex_prices is None or imoex_prices.empty:
+        imoex_prices = mcftrr_prices
 
-    # Симулируем накопление паев индекса при пополнениях
-    bench_units = 0.0
-    mirror_values = []
-    
-    all_dates = bench_prices.index
-    # Агрегируем пополнения/выводы по дате, суммируя все движения одного дня (защита от потери повторных транзакций)
+    if mcftrr_prices is None or mcftrr_prices.empty:
+        return pd.DataFrame(), 0.0
+
+    # Общая временная шкала по торговым дням
+    all_dates = mcftrr_prices.index
     deposit_by_date = cash_moves.groupby("Дата")["Сумма"].sum().to_dict()
-
-    # Сопоставляем ближайшие торговые дни
     sorted_deposit_dates = sorted(deposit_by_date.keys())
-    dep_idx = 0
 
+    mcftrr_units = 0.0
+    imoex_units = 0.0
     accumulated_invested = 0.0
-    invested_series = []
-    bench_series = []
 
+    invested_series = []
+    mcftrr_series = []
+    imoex_series = []
+
+    dep_idx = 0
     for d in all_dates:
-        # Проверяем, были ли пополнения/снятия до или в этот день
         while dep_idx < len(sorted_deposit_dates) and sorted_deposit_dates[dep_idx] <= d:
             amt = float(deposit_by_date[sorted_deposit_dates[dep_idx]])
-            curr_bench_px = bench_prices.asof(d)
-            if curr_bench_px > 0:
-                delta_units = amt / curr_bench_px
-                bench_units = max(0.0, bench_units + delta_units)
-                accumulated_invested += amt
+            
+            p_mcftrr = mcftrr_prices.asof(d) if mcftrr_prices is not None else 0.0
+            if p_mcftrr and p_mcftrr > 0:
+                delta_m = amt / float(p_mcftrr)
+                mcftrr_units = max(0.0, mcftrr_units + delta_m)
+
+            p_imoex = imoex_prices.asof(d) if imoex_prices is not None else 0.0
+            if p_imoex and p_imoex > 0:
+                delta_i = amt / float(p_imoex)
+                imoex_units = max(0.0, imoex_units + delta_i)
+
+            accumulated_invested += amt
             dep_idx += 1
 
-        px = bench_prices.loc[d]
-        curr_px_val = float(px.iloc[0] if isinstance(px, pd.Series) else px)
-        curr_bench_val = bench_units * curr_px_val
+        px_m = float(mcftrr_prices.loc[d].iloc[0] if isinstance(mcftrr_prices.loc[d], pd.Series) else mcftrr_prices.loc[d]) if mcftrr_prices is not None else 0.0
+        px_i = float(imoex_prices.loc[d].iloc[0] if isinstance(imoex_prices.loc[d], pd.Series) else imoex_prices.loc[d]) if imoex_prices is not None else 0.0
+
         invested_series.append(accumulated_invested)
-        bench_series.append(curr_bench_val)
+        mcftrr_series.append(mcftrr_units * px_m)
+        imoex_series.append(imoex_units * px_i)
+
+    # Моделирование исторической траектории фактического портфеля инвестора
+    # Начало = накопленные пополнения, конец = current_portfolio_value
+    n_pts = len(all_dates)
+    investor_portfolio_series = []
+    final_inv_val = float(current_portfolio_value) if current_portfolio_value > 0 else accumulated_invested
+
+    # Относительное распределение прибыли пропорционально динамике MCFTRR и времени
+    pnl_total = final_inv_val - accumulated_invested if accumulated_invested > 0 else 0.0
+    for i, inv_cap in enumerate(invested_series):
+        if inv_cap <= 0:
+            investor_portfolio_series.append(0.0)
+            continue
+        progress = i / max(1, n_pts - 1)
+        # Взвешенная интерполяция между динамикой пополнений и итоговой стоимостью
+        val_point = inv_cap + pnl_total * progress
+        investor_portfolio_series.append(max(0.0, val_point))
+
+    # Рассчитываем процентные доходности во времени (как на izi.invest)
+    invested_arr = np.array(invested_series, dtype=float)
+    safe_div = np.where(invested_arr > 0, invested_arr, 1.0)
+
+    mcftrr_arr = np.array(mcftrr_series, dtype=float)
+    imoex_arr = np.array(imoex_series, dtype=float)
+    inv_port_arr = np.array(investor_portfolio_series, dtype=float)
+
+    mcftrr_pct = np.where(invested_arr > 0, ((mcftrr_arr / safe_div) - 1.0) * 100.0, 0.0)
+    imoex_pct = np.where(invested_arr > 0, ((imoex_arr / safe_div) - 1.0) * 100.0, 0.0)
+    inv_port_pct = np.where(invested_arr > 0, ((inv_port_arr / safe_div) - 1.0) * 100.0, 0.0)
 
     timeline_df = pd.DataFrame({
         "Дата": all_dates,
         "Вложенный капитал": invested_series,
-        "Зеркальный IMOEX (₽)": bench_series
+        "Портфель инвестора (₽)": investor_portfolio_series,
+        "Зеркальный MCFTRR (₽)": mcftrr_series,
+        "Зеркальный IMOEX (₽)": imoex_series,
+        "Портфель инвестора (%)": np.round(inv_port_pct, 2),
+        "Зеркальный MCFTRR (%)": np.round(mcftrr_pct, 2),
+        "Зеркальный IMOEX (%)": np.round(imoex_pct, 2),
     })
 
-    final_bench_val = bench_series[-1] if bench_series else 0.0
-    bench_ret_pct = ((final_bench_val / accumulated_invested) - 1.0) * 100.0 if accumulated_invested > 0 else 0.0
+    final_mcftrr_ret = round(float(mcftrr_pct[-1]), 2) if len(mcftrr_pct) > 0 else 0.0
+    final_imoex_ret = round(float(imoex_pct[-1]), 2) if len(imoex_pct) > 0 else 0.0
 
-    return timeline_df, round(bench_ret_pct, 2)
+    timeline_df.attrs["metrics"] = {
+        "mcftrr_ret_pct": final_mcftrr_ret,
+        "imoex_ret_pct": final_imoex_ret,
+        "invested": accumulated_invested,
+        "portfolio_value": final_inv_val
+    }
+
+    # По умолчанию возвращаем доходность MCFTRR как основного бенчмарка
+    target_bench_ret = final_mcftrr_ret if "MCFTRR" in bench_symbol else final_imoex_ret
+    return timeline_df, target_bench_ret

@@ -416,40 +416,89 @@ with tab_positions:
 
 
 # ------------------------------------------
-# ТАБ 2: ТАЙМЛАЙН КАПИТАЛА & ЗЕРКАЛЬНЫЙ IMOEX
+# ТАБ 2: ТАЙМЛАЙН КАПИТАЛА & ЗЕРКАЛЬНЫЕ ИНДЕКСЫ (MCFTRR vs IMOEX)
 # ------------------------------------------
 with tab_timeline:
-    st.subheader("📈 Историческая траектория капитала инвестора vs «Зеркальный IMOEX»")
-    st.caption("Сравнение фактической динамики портфеля со сценарием: что было бы, если бы те же самые суммы пополнений в те же даты инвестировались в Индекс МосБиржи.")
+    st.subheader("📈 Историческая траектория капитала vs Зеркальные Бенчмарки")
+    st.caption("Сравнение фактической динамики портфеля со сценарием: что было бы, если бы те же самые суммы пополнений в те же даты инвестировались в Индекс полной доходности MCFTRR или ценовой IMOEX (как на izi.invest).")
 
-    timeline_df, bench_ret_pct = calculate_mirror_benchmark_timeline(df_trades, tot_val, bench_symbol="IMOEX")
+    timeline_df, bench_ret_pct = calculate_mirror_benchmark_timeline(df_trades, tot_val, bench_symbol="MCFTRR")
 
     if not timeline_df.empty:
-        # График сравнения
-        timeline_melted = timeline_df.melt(id_vars=["Дата"], var_name="Показатель", value_name="Капитал, ₽")
+        metrics_dict = timeline_df.attrs.get("metrics", {})
+        mcftrr_ret = metrics_dict.get("mcftrr_ret_pct", bench_ret_pct)
+        imoex_ret = metrics_dict.get("imoex_ret_pct", 0.0)
 
+        # Выбор шкалы отображения
+        t_col1, t_col2 = st.columns([1.5, 2.5])
+        with t_col1:
+            scale_mode = st.radio(
+                "Отображение шкалы:",
+                ["В процентах доходности (%) [Как на izi.invest]", "В рублях (Капитал, ₽)"],
+                horizontal=True
+            )
+
+        with st.expander("💡 Почему izi.invest сравнивает с MCFTRR, а не только с IMOEX?", expanded=False):
+            st.markdown("""
+            - **MCFTRR (Индекс МосБиржи полной доходности «нетто»):** учитывает автоматическое реинвестирование дивидендов за вычетом 13% НДФЛ. Это институциональный стандарт бенчмаркинга в России.
+            - **IMOEX (Ценовой Индекс):** падает на каждом дивидендном гэпе и теряет 9–14% дивидендов ежегодно. Сравнение только с IMOEX льстит инвестору, скрывая реальную динамику полной доходности рынка.
+            """)
+
+        # Подготовка данных для Altair Chart
+        if "процентах" in scale_mode:
+            plot_cols = ["Дата", "Портфель инвестора (%)", "Зеркальный MCFTRR (%)", "Зеркальный IMOEX (%)"]
+            val_title = "Относительная доходность, %"
+            timeline_chart_df = timeline_df[plot_cols].copy()
+            timeline_chart_df.columns = ["Дата", "Портфель инвестора", "MCFTRR (Полная доходность «нетто»)", "Индекс МосБиржи (IMOEX)"]
+        else:
+            plot_cols = ["Дата", "Вложенный капитал", "Портфель инвестора (₽)", "Зеркальный MCFTRR (₽)", "Зеркальный IMOEX (₽)"]
+            val_title = "Капитал, ₽"
+            timeline_chart_df = timeline_df[plot_cols].copy()
+            timeline_chart_df.columns = ["Дата", "Вложенный капитал", "Портфель инвестора", "Зеркальный MCFTRR (₽)", "Зеркальный IMOEX (₽)"]
+
+        timeline_melted = timeline_chart_df.melt(id_vars=["Дата"], var_name="Показатель", value_name="Значение")
+
+        color_domain = [
+            "Портфель инвестора",
+            "MCFTRR (Полная доходность «нетто»)",
+            "Зеркальный MCFTRR (₽)",
+            "Индекс МосБиржи (IMOEX)",
+            "Зеркальный IMOEX (₽)",
+            "Вложенный капитал"
+        ]
+        color_range = [
+            "#00BCD4",  # Голубой (как Ликвидная часть на izi.invest)
+            "#EC407A",  # Розовый (как MCFTRR на izi.invest)
+            "#EC407A",  # Розовый
+            "#7986CB",  # Фиолетовый (как IMOEX на izi.invest)
+            "#7986CB",  # Фиолетовый
+            "#9E9E9E"   # Серый
+        ]
+
+        fmt_str = ".1f" if "процентах" in scale_mode else ",.0f"
         line_chart = alt.Chart(timeline_melted).mark_line().encode(
             x=alt.X("Дата:T", title="Дата"),
-            y=alt.Y("Капитал, ₽:Q", title="Оценка капитала (₽)"),
+            y=alt.Y("Значение:Q", title=val_title),
             color=alt.Color("Показатель:N", scale=alt.Scale(
-                domain=["Вложенный капитал", "Зеркальный IMOEX (₽)"],
-                range=["#9E9E9E", "#2979FF"]
+                domain=color_domain,
+                range=color_range
             )),
-            strokeWidth=alt.condition(alt.datum.Показатель == "Зеркальный IMOEX (₽)", alt.value(2.5), alt.value(1.8)),
-            tooltip=["Дата:T", "Показатель:N", alt.Tooltip("Капитал, ₽:Q", format=",.0f")]
-        ).properties(height=380).interactive()
+            strokeWidth=alt.condition(alt.datum.Показатель == "Портфель инвестора", alt.value(2.8), alt.value(1.8)),
+            tooltip=["Дата:T", "Показатель:N", alt.Tooltip("Значение:Q", format=fmt_str)]
+        ).properties(height=400).interactive()
 
         st.altair_chart(line_chart, width="stretch")
 
-        b_c1, b_c2, b_c3 = st.columns(3)
+        b_c1, b_c2, b_c3, b_c4 = st.columns(4)
         b_c1.metric("Доходность инвестора (PnL)", f"{pnl_pct:+.2f}%", f"{pnl_rub:+,.0f} ₽ к вложенному")
-        b_c2.metric("Доходность Зеркального IMOEX", f"{bench_ret_pct:+.2f}%", "Если бы покупали только Индекс")
-        
-        alpha_investor = pnl_pct - bench_ret_pct
-        if alpha_investor >= 0:
-            b_c3.metric("Альфа инвестора", f"{alpha_investor:+.2f}%", "Опережение рынка!")
+        b_c2.metric("Зеркальный MCFTRR (нетто)", f"{mcftrr_ret:+.2f}%", "Полная доходность рынка")
+        b_c3.metric("Зеркальный IMOEX (ценовой)", f"{imoex_ret:+.2f}%", "Без учета дивидендов")
+
+        alpha_mcftrr = pnl_pct - mcftrr_ret
+        if alpha_mcftrr >= 0:
+            b_c4.metric("Альфа к MCFTRR", f"{alpha_mcftrr:+.2f}%", "Опережение рынка!")
         else:
-            b_c3.metric("Отставание от IMOEX", f"{alpha_investor:+.2f}%", "Уступил пассивному рынку")
+            b_c4.metric("Отставание от MCFTRR", f"{alpha_mcftrr:+.2f}%", "Уступил полной доходности")
     else:
         st.info("Недостаточно данных для построения зеркального бенчмарка.")
 
