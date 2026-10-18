@@ -175,28 +175,31 @@ SCREENER_TICKERS = [
 # =====================================================================
 
 COMMODITIES_BASE = [
-    {"name": "Нефть Brent", "ticker": "BZ=F", "price": 110.0, "unit": "$/барр.", "change": 0.0},
-    {"name": "Нефть WTI", "ticker": "CL=F", "price": 99.0, "unit": "$/барр.", "change": 0.0},
-    {"name": "kUrals", "ticker": "URALS", "price": 106.0, "unit": "$/барр.", "change": 0.0},
-    {"name": "Золото", "ticker": "GC=F", "price": 4181.0, "unit": "$/унц.", "change": 0.0},
-    {"name": "Серебро", "ticker": "SI=F", "price": 57.3, "unit": "$/унц.", "change": 0.0},
-    {"name": "Платина", "ticker": "PL=F", "price": 1633.0, "unit": "$/унц.", "change": 0.0},
-    {"name": "Палладий", "ticker": "PA=F", "price": 1119.0, "unit": "$/унц.", "change": 0.0},
-    {"name": "Алюминий", "ticker": "ALI=F", "price": 3098.0, "unit": "$/т", "change": 0.0},
-    {"name": "Медь", "ticker": "HG=F", "price": 6.57, "unit": "$/фунт", "change": 0.0},
-    {"name": "Газ ЕС (TTF)", "ticker": "TTF", "price": 1018.0, "unit": "$/тыс.м³", "change": 0.0},
-    {"name": "Газ Азия", "ticker": "GAS_ASIA", "price": 1057.0, "unit": "$/тыс.м³", "change": 0.0},
-    {"name": "Газ США", "ticker": "NG=F", "price": 110.0, "unit": "$/млн БТЕ", "change": 0.0},
-    {"name": "Жел. руда", "ticker": "IRON", "price": 90.9, "unit": "$/т", "change": 0.0},
-    {"name": "Уголь Австрал.", "ticker": "COAL", "price": 155.0, "unit": "$/т", "change": 0.0},
-    {"name": "Пшеница", "ticker": "ZW=F", "price": 661.0, "unit": "$/буш.", "change": 0.0},
-    {"name": "Сахар", "ticker": "SB=F", "price": 20.9, "unit": "ц/фунт", "change": 0.0},
-    {"name": "Карбамид США", "ticker": "UREA", "price": 482.0, "unit": "$/т", "change": 0.0},
-    {"name": "DAP", "ticker": "DAP", "price": 803.0, "unit": "$/т", "change": 0.0},
+    # Ряд 1 (8 колонок)
     {"name": "Масло Индия", "ticker": "OIL_IND", "price": 1632.0, "unit": "$/т", "change": 3.6},
     {"name": "Масло РФ", "ticker": "OIL_RU", "price": 1301.0, "unit": "$/т", "change": 0.0},
-    {"name": "Диз. маржа ЕС", "ticker": "DIESEL", "price": 71.7, "unit": "$/т", "change": 0.0},
-    {"name": "LNG Brent", "ticker": "LNG", "price": 508.0, "unit": "$/тыс.м³", "change": 0.0}
+    {"name": "kUrals", "ticker": "URALS", "price": 106.0, "unit": "", "change": 0.0},
+    {"name": "Алюминий", "ticker": "ALI=F", "price": 3098.0, "unit": "", "change": 0.0},
+    {"name": "Нефть WTI", "ticker": "CL=F", "price": 99.0, "unit": "", "change": 0.0},
+    {"name": "DAP", "ticker": "DAP", "price": 803.0, "unit": "", "change": 0.0},
+    {"name": "Диз. маржа ЕС", "ticker": "DIESEL", "price": 71.7, "unit": "", "change": 0.0},
+    {"name": "Золото", "ticker": "GC=F", "price": 4181.0, "unit": "", "change": 0.0},
+    # Ряд 2 (8 колонок)
+    {"name": "Медь", "ticker": "HG=F", "price": 6.57, "unit": "", "change": 0.0},
+    {"name": "Газ Азия", "ticker": "GAS_ASIA", "price": 1057.0, "unit": "", "change": 0.0},
+    {"name": "LNG Brent", "ticker": "LNG", "price": 508.0, "unit": "", "change": 0.0},
+    {"name": "Уголь Австрал.", "ticker": "COAL", "price": 155.0, "unit": "", "change": 0.0},
+    {"name": "Газ США", "ticker": "NG=F", "price": 110.0, "unit": "", "change": 0.0},
+    {"name": "Палладий", "ticker": "PA=F", "price": 1119.0, "unit": "", "change": 0.0},
+    {"name": "Платина", "ticker": "PL=F", "price": 1633.0, "unit": "", "change": 0.0},
+    {"name": "Сахар", "ticker": "SB=F", "price": 20.9, "unit": "", "change": 0.0},
+    # Ряд 3 (6 колонок)
+    {"name": "Серебро", "ticker": "SI=F", "price": 57.3, "unit": "", "change": 0.0},
+    {"name": "Жел. руда", "ticker": "IRON", "price": 90.9, "unit": "", "change": 0.0},
+    {"name": "Газ ЕС", "ticker": "TTF", "price": 1018.0, "unit": "", "change": 0.0},
+    {"name": "Карбамид США", "ticker": "UREA", "price": 482.0, "unit": "", "change": 0.0},
+    {"name": "Нефть Brent", "ticker": "BZ=F", "price": 110.0, "unit": "", "change": 0.0},
+    {"name": "Пшеница", "ticker": "ZW=F", "price": 661.0, "unit": "", "change": 0.0}
 ]
 
 @st.cache_data(ttl=600)
@@ -423,174 +426,167 @@ def render_market_view_component(
     - Плиточная сетка акций (Heat Map в стиле скриншота терминала)
     - Переключение на детальную таблицу скринера
     """
-    st.markdown("""
-    <style>
-        /* Сетка сырьевых товаров */
-        .commodities-container {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
-            gap: 8px;
-            margin-bottom: 22px;
-        }
-        .comm-card {
-            background: rgba(15, 23, 42, 0.75);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            border-radius: 8px;
-            padding: 8px 10px;
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-        }
-        .comm-header {
-            display: flex;
-            justify-content: space-between;
-            font-size: 0.75rem;
-            color: #94A3B8;
-            font-weight: 500;
-        }
-        .comm-val {
-            font-size: 0.95rem;
-            font-weight: 700;
-            color: #F8FAFC;
-            margin-top: 4px;
-        }
-        .comm-unit {
-            font-size: 0.7rem;
-            color: #64748B;
-            font-weight: normal;
-            margin-left: 3px;
-        }
+    # CSS стили интерфейса тепловой карты и сырьевого барометра
+    screener_css = """<style>
+.commodities-grid {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    gap: 6px;
+    margin-bottom: 20px;
+}
+@media (max-width: 1400px) {
+    .commodities-grid { grid-template-columns: repeat(6, 1fr); }
+}
+@media (max-width: 1100px) {
+    .commodities-grid { grid-template-columns: repeat(4, 1fr); }
+}
+@media (max-width: 768px) {
+    .commodities-grid { grid-template-columns: repeat(2, 1fr); }
+}
 
-        /* Основная 8-колоночная плиточная сетка акций */
-        .market-tiles-grid {
-            display: grid;
-            grid-template-columns: repeat(8, 1fr);
-            gap: 8px;
-            margin-top: 14px;
-            margin-bottom: 28px;
-        }
-        @media (max-width: 1300px) {
-            .market-tiles-grid { grid-template-columns: repeat(6, 1fr); }
-        }
-        @media (max-width: 992px) {
-            .market-tiles-grid { grid-template-columns: repeat(4, 1fr); }
-        }
-        @media (max-width: 600px) {
-            .market-tiles-grid { grid-template-columns: repeat(2, 1fr); }
-        }
+.comm-card {
+    background: #111A2E;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    padding: 6px 8px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-height: 48px;
+    box-sizing: border-box;
+}
+.comm-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.72rem;
+    color: #94A3B8;
+    font-weight: 500;
+    line-height: 1.1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.comm-val {
+    font-size: 0.88rem;
+    font-weight: 700;
+    color: #F8FAFC;
+    margin-top: 4px;
+    line-height: 1.2;
+}
+.comm-unit {
+    font-size: 0.68rem;
+    color: #64748B;
+    font-weight: normal;
+    margin-left: 3px;
+}
 
-        .m-card {
-            border-radius: 8px;
-            padding: 8px 10px;
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            min-height: 58px;
-            box-sizing: border-box;
-            transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
-            position: relative;
-            text-decoration: none !important;
-        }
-        .m-card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 20px rgba(0,0,0,0.5);
-            z-index: 3;
-            filter: brightness(1.12);
-        }
+.market-section-title {
+    font-size: 1.3rem;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    color: #FFFFFF;
+    margin-top: 10px;
+    margin-bottom: 6px;
+}
 
-        .m-top {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            gap: 4px;
-        }
-        .m-name {
-            font-size: 0.85rem;
-            font-weight: 700;
-            color: #FFFFFF;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            line-height: 1.2;
-        }
-        .m-badge {
-            font-size: 0.82rem;
-            font-weight: 800;
-            white-space: nowrap;
-            line-height: 1.2;
-        }
-        .m-bottom {
-            display: flex;
-            justify-content: space-between;
-            align-items: baseline;
-            margin-top: 6px;
-        }
-        .m-price {
-            font-size: 0.95rem;
-            font-weight: 700;
-            color: #F1F5F9;
-            letter-spacing: -0.2px;
-        }
-        .m-ticker {
-            font-size: 0.68rem;
-            color: rgba(255,255,255,0.5);
-            font-weight: 600;
-        }
+.market-tiles-grid {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    gap: 6px;
+    margin-top: 10px;
+    margin-bottom: 24px;
+}
+@media (max-width: 1400px) {
+    .market-tiles-grid { grid-template-columns: repeat(6, 1fr); }
+}
+@media (max-width: 1100px) {
+    .market-tiles-grid { grid-template-columns: repeat(4, 1fr); }
+}
+@media (max-width: 768px) {
+    .market-tiles-grid { grid-template-columns: repeat(2, 1fr); }
+}
 
-        /* Градиентные стили плиток под разные градации доходности */
-        .tile-green-max {
-            background: linear-gradient(135deg, #064E3B 0%, #047857 100%);
-            border: 1px solid #10B981;
-        }
-        .tile-green-high {
-            background: #14532D;
-            border: 1px solid #16A34A;
-        }
-        .tile-green-med {
-            background: #166534;
-            border: 1px solid #22C55E;
-        }
-        .tile-green-low {
-            background: #1E3A2F;
-            border: 1px solid #15803D;
-        }
-        .tile-green-flat {
-            background: #1A3026;
-            border: 1px solid #1B4332;
-        }
-        .tile-neutral {
-            background: #1E293B;
-            border: 1px solid #334155;
-        }
-        .tile-red-flat {
-            background: #381A1A;
-            border: 1px solid #5C1D1D;
-        }
-        .tile-red-low {
-            background: #5A1E1E;
-            border: 1px solid #7F1D1D;
-        }
-        .tile-red-med {
-            background: #7F1D1D;
-            border: 1px solid #B91C1C;
-        }
-        .tile-red-max {
-            background: linear-gradient(135deg, #881337 0%, #B91C1C 100%);
-            border: 1px solid #EF4444;
-        }
+.m-card {
+    border-radius: 6px;
+    padding: 6px 8px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-height: 52px;
+    box-sizing: border-box;
+    transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+    cursor: default;
+    user-select: none;
+}
+.m-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(0,0,0,0.6);
+    filter: brightness(1.15);
+    z-index: 2;
+}
+.m-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 4px;
+}
+.m-name {
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: #FFFFFF;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.2;
+}
+.m-badge {
+    font-size: 0.78rem;
+    font-weight: 800;
+    white-space: nowrap;
+    line-height: 1.2;
+}
+.m-bottom {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-top: 4px;
+}
+.m-price {
+    font-size: 0.88rem;
+    font-weight: 700;
+    color: #F8FAFC;
+    letter-spacing: -0.2px;
+    line-height: 1.2;
+}
+.m-ticker {
+    font-size: 0.65rem;
+    color: rgba(255,255,255,0.45);
+    font-weight: 600;
+}
 
-        .portfolio-star {
-            color: #F59E0B;
-            font-size: 0.75rem;
-            margin-right: 2px;
-        }
-    </style>
-    """, unsafe_allow_html=True)
+.tile-green-max { background: #0E4426; border: 1px solid #10B981; }
+.tile-green-high { background: #134E2C; border: 1px solid #16A34A; }
+.tile-green-med { background: #154628; border: 1px solid #22C55E; }
+.tile-green-low { background: #183D25; border: 1px solid #15803D; }
+.tile-green-flat { background: #183324; border: 1px solid #1B4332; }
+.tile-neutral { background: #1E293B; border: 1px solid #334155; }
+.tile-red-flat { background: #381A1F; border: 1px solid #5C1D26; }
+.tile-red-low { background: #541922; border: 1px solid #7F1D2B; }
+.tile-red-med { background: #731725; border: 1px solid #991B2D; }
+.tile-red-max { background: #8B1224; border: 1px solid #DC2626; }
+
+.portfolio-star {
+    color: #F59E0B;
+    font-size: 0.72rem;
+    margin-right: 2px;
+}
+</style>"""
+    st.markdown(screener_css, unsafe_allow_html=True)
 
     # 1. СЫРЬЕВОЙ БАРОМЕТР (COMMODITIES)
-    st.markdown("#### 🛢️ Сырьевой барометр & Макро-индикаторы")
     if commodities:
-        comm_html = ['<div class="commodities-container">']
+        comm_parts = ['<div class="commodities-grid">']
         for c in commodities:
             ch = c.get("change", 0.0)
             if ch > 0:
@@ -602,23 +598,19 @@ def render_market_view_component(
             
             p_val = _format_price_ru(c.get("price"))
             unit = c.get("unit", "")
+            unit_span = f'<span class="comm-unit">{unit}</span>' if unit else ''
             
-            comm_html.append(f"""
-            <div class="comm-card">
-                <div class="comm-header">
-                    <span>{c['name']}</span>
-                    {ch_str}
-                </div>
-                <div class="comm-val">{p_val}<span class="comm-unit">{unit}</span></div>
-            </div>
-            """)
-        comm_html.append('</div>')
-        st.markdown("".join(comm_html), unsafe_allow_html=True)
-
-    st.markdown("---")
+            comm_parts.append(
+                f'<div class="comm-card">'
+                f'<div class="comm-header"><span>{c["name"]}</span>{ch_str}</div>'
+                f'<div class="comm-val">{p_val}{unit_span}</div>'
+                f'</div>'
+            )
+        comm_parts.append('</div>')
+        st.markdown("".join(comm_parts), unsafe_allow_html=True)
 
     # 2. ПАНЕЛЬ ВЫБОРА ПЕРИОДА И ФИЛЬТРОВ
-    st.markdown("#### 📈 АКЦИИ (Тепловая карта рынка MOEX)")
+    st.markdown('<div class="market-section-title">АКЦИИ</div>', unsafe_allow_html=True)
     
     col_per, col_view, col_sec, col_search = st.columns([2.2, 1.2, 1.6, 1.4])
     
@@ -683,7 +675,7 @@ def render_market_view_component(
 
     # РЕЖИМ 1: ПЛИТОЧНАЯ ТЕПЛОВАЯ КАРТА (КАК НА СКРИНШОТЕ)
     if view_mode == "🟩 Плитки":
-        cards_html = ['<div class="market-tiles-grid">']
+        cards_parts = ['<div class="market-tiles-grid">']
         
         for _, row in df_filtered.iterrows():
             t = row["ticker"]
@@ -705,21 +697,21 @@ def render_market_view_component(
             
             tooltip_txt = f"{name} ({t}) | {row['sector']} | Цена: {price_val} ₽ | {p_key}: {ret_str}"
             
-            cards_html.append(f"""
-            <div class="m-card {css_class}" title="{tooltip_txt}">
-                <div class="m-top">
-                    <span class="m-name">{port_star}{name}</span>
-                    <span class="m-badge" style="color: {badge_color};">{ret_str}</span>
-                </div>
-                <div class="m-bottom">
-                    <span class="m-price">{price_val}</span>
-                    <span class="m-ticker">{t}</span>
-                </div>
-            </div>
-            """)
+            cards_parts.append(
+                f'<div class="m-card {css_class}" title="{tooltip_txt}">'
+                f'<div class="m-top">'
+                f'<span class="m-name">{port_star}{name}</span>'
+                f'<span class="m-badge" style="color: {badge_color};">{ret_str}</span>'
+                f'</div>'
+                f'<div class="m-bottom">'
+                f'<span class="m-price">{price_val}</span>'
+                f'<span class="m-ticker">{t}</span>'
+                f'</div>'
+                f'</div>'
+            )
             
-        cards_html.append('</div>')
-        st.markdown("".join(cards_html), unsafe_allow_html=True)
+        cards_parts.append('</div>')
+        st.markdown("".join(cards_parts), unsafe_allow_html=True)
         
     # РЕЖИМ 2: ДЕТАЛЬНАЯ ТАБЛИЦА СКРИНЕРА
     else:
