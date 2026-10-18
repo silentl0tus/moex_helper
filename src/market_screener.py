@@ -426,145 +426,213 @@ def render_market_view_component(
     - Плиточная сетка акций (Heat Map в стиле скриншота терминала)
     - Переключение на детальную таблицу скринера
     """
-    # CSS стили интерфейса тепловой карты и сырьевого барометра
+    # CSS стили интерфейса тепловой карты и сырьевого барометра (защита глаз от яркого белого фона)
     screener_css = """<style>
+/* Темный экран терминала для защиты глаз от яркого белого света */
+.market-dark-canvas {
+    background: #080D1A;
+    border: 1px solid #1E293B;
+    border-radius: 14px;
+    padding: 22px 24px;
+    margin-top: 12px;
+    margin-bottom: 24px;
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+}
+
+.market-section-title {
+    font-size: 1.45rem;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    color: #F8FAFC;
+    margin-top: 4px;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.market-section-sub {
+    font-size: 0.88rem;
+    color: #94A3B8;
+    margin-bottom: 16px;
+}
+
+/* Сетка сырьевых индикаторов */
 .commodities-grid {
     display: grid;
-    grid-template-columns: repeat(8, 1fr);
-    gap: 6px;
-    margin-bottom: 20px;
-}
-@media (max-width: 1400px) {
-    .commodities-grid { grid-template-columns: repeat(6, 1fr); }
-}
-@media (max-width: 1100px) {
-    .commodities-grid { grid-template-columns: repeat(4, 1fr); }
-}
-@media (max-width: 768px) {
-    .commodities-grid { grid-template-columns: repeat(2, 1fr); }
+    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+    gap: 8px;
+    margin-bottom: 8px;
 }
 
 .comm-card {
-    background: #111A2E;
+    background: #10172A;
     border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 6px;
-    padding: 6px 8px;
+    border-radius: 8px;
+    padding: 10px 12px;
     display: flex;
     flex-direction: column;
     justify-content: space-between;
-    min-height: 48px;
+    min-height: 66px;
     box-sizing: border-box;
+    transition: transform 0.15s ease, border-color 0.15s ease;
+}
+.comm-card:hover {
+    transform: translateY(-2px);
+    border-color: rgba(255, 255, 255, 0.2);
 }
 .comm-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    font-size: 0.72rem;
+    font-size: 0.90rem;
     color: #94A3B8;
-    font-weight: 500;
+    font-weight: 600;
     line-height: 1.1;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 .comm-val {
-    font-size: 0.88rem;
-    font-weight: 700;
+    font-size: 1.18rem;
+    font-weight: 800;
     color: #F8FAFC;
     margin-top: 4px;
     line-height: 1.2;
 }
 .comm-unit {
-    font-size: 0.68rem;
+    font-size: 0.78rem;
     color: #64748B;
     font-weight: normal;
-    margin-left: 3px;
+    margin-left: 4px;
 }
 
-.market-section-title {
-    font-size: 1.3rem;
-    font-weight: 800;
-    letter-spacing: 0.5px;
-    color: #FFFFFF;
-    margin-top: 10px;
-    margin-bottom: 6px;
-}
-
-.market-tiles-grid {
+/* КРУПНАЯ СЕТКА ПЛИТОК АКЦИЙ (ПО УМОЛЧАНИЮ) */
+.market-tiles-grid.size-large {
     display: grid;
-    grid-template-columns: repeat(8, 1fr);
-    gap: 6px;
-    margin-top: 10px;
-    margin-bottom: 24px;
-}
-@media (max-width: 1400px) {
-    .market-tiles-grid { grid-template-columns: repeat(6, 1fr); }
-}
-@media (max-width: 1100px) {
-    .market-tiles-grid { grid-template-columns: repeat(4, 1fr); }
-}
-@media (max-width: 768px) {
-    .market-tiles-grid { grid-template-columns: repeat(2, 1fr); }
+    grid-template-columns: repeat(auto-fill, minmax(215px, 1fr));
+    gap: 9px;
+    margin-top: 12px;
+    margin-bottom: 8px;
 }
 
-.m-card {
-    border-radius: 6px;
-    padding: 6px 8px;
+.m-card-large {
+    border-radius: 9px;
+    padding: 12px 14px;
     display: flex;
     flex-direction: column;
     justify-content: space-between;
-    min-height: 52px;
+    min-height: 86px;
     box-sizing: border-box;
     transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
     cursor: default;
     user-select: none;
 }
-.m-card:hover {
+.m-card-large:hover {
     transform: translateY(-2px);
-    box-shadow: 0 6px 16px rgba(0,0,0,0.6);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.7);
     filter: brightness(1.15);
     z-index: 2;
 }
-.m-top {
+.m-card-large .m-top {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    gap: 4px;
+    gap: 6px;
 }
-.m-name {
-    font-size: 0.78rem;
+.m-card-large .m-name {
+    font-size: 1.15rem;
     font-weight: 700;
-    color: #FFFFFF;
+    color: #F8FAFC;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     line-height: 1.2;
 }
-.m-badge {
-    font-size: 0.78rem;
+.m-card-large .m-badge {
+    font-size: 1.20rem;
     font-weight: 800;
     white-space: nowrap;
     line-height: 1.2;
 }
-.m-bottom {
+.m-card-large .m-bottom {
     display: flex;
     justify-content: space-between;
     align-items: baseline;
-    margin-top: 4px;
+    margin-top: 10px;
 }
-.m-price {
-    font-size: 0.88rem;
-    font-weight: 700;
-    color: #F8FAFC;
+.m-card-large .m-price {
+    font-size: 1.30rem;
+    font-weight: 800;
+    color: #FFFFFF;
     letter-spacing: -0.2px;
     line-height: 1.2;
 }
-.m-ticker {
-    font-size: 0.65rem;
-    color: rgba(255,255,255,0.45);
+.m-card-large .m-ticker {
+    font-size: 0.85rem;
+    color: #94A3B8;
     font-weight: 600;
 }
 
+/* КОМПАКТНАЯ СЕТКА ПЛИТОК АКЦИЙ */
+.market-tiles-grid.size-compact {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 6px;
+    margin-top: 10px;
+    margin-bottom: 8px;
+}
+.m-card-compact {
+    border-radius: 7px;
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-height: 60px;
+    box-sizing: border-box;
+    transition: transform 0.15s ease, filter 0.15s ease;
+    cursor: default;
+    user-select: none;
+}
+.m-card-compact:hover {
+    transform: translateY(-2px);
+    filter: brightness(1.15);
+}
+.m-card-compact .m-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 4px;
+}
+.m-card-compact .m-name {
+    font-size: 0.88rem;
+    font-weight: 700;
+    color: #F8FAFC;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.m-card-compact .m-badge {
+    font-size: 0.90rem;
+    font-weight: 800;
+    white-space: nowrap;
+}
+.m-card-compact .m-bottom {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-top: 6px;
+}
+.m-card-compact .m-price {
+    font-size: 1.02rem;
+    font-weight: 700;
+    color: #FFFFFF;
+}
+.m-card-compact .m-ticker {
+    font-size: 0.72rem;
+    color: #94A3B8;
+}
+
+/* Цвета градиентов доходности плиток (глубокие, мягкие тона) */
 .tile-green-max { background: #0E4426; border: 1px solid #10B981; }
 .tile-green-high { background: #134E2C; border: 1px solid #16A34A; }
 .tile-green-med { background: #154628; border: 1px solid #22C55E; }
@@ -578,21 +646,26 @@ def render_market_view_component(
 
 .portfolio-star {
     color: #F59E0B;
-    font-size: 0.72rem;
-    margin-right: 2px;
+    font-size: 0.85rem;
+    margin-right: 3px;
 }
 </style>"""
     st.markdown(screener_css, unsafe_allow_html=True)
 
     # 1. СЫРЬЕВОЙ БАРОМЕТР (COMMODITIES)
     if commodities:
-        comm_parts = ['<div class="commodities-grid">']
+        comm_parts = [
+            '<div class="market-dark-canvas">'
+            '<div class="market-section-title">🛢️ СЫРЬЕВОЙ БАРОМЕТР & МАКРО-ИНДИКАТОРЫ</div>'
+            '<div class="market-section-sub">Ключевые бенчмарки нефти, металлов, газа и агропродукции</div>'
+            '<div class="commodities-grid">'
+        ]
         for c in commodities:
             ch = c.get("change", 0.0)
             if ch > 0:
-                ch_str = f'<span style="color:#4ADE80; font-weight:700;">+{ch:.1f}%</span>'
+                ch_str = f'<span style="color:#4ADE80; font-weight:800;">+{ch:.1f}%</span>'
             elif ch < 0:
-                ch_str = f'<span style="color:#F87171; font-weight:700;">{ch:.1f}%</span>'
+                ch_str = f'<span style="color:#F87171; font-weight:800;">{ch:.1f}%</span>'
             else:
                 ch_str = '<span style="color:#94A3B8;">0%</span>'
             
@@ -606,13 +679,11 @@ def render_market_view_component(
                 f'<div class="comm-val">{p_val}{unit_span}</div>'
                 f'</div>'
             )
-        comm_parts.append('</div>')
+        comm_parts.append('</div></div>')
         st.markdown("".join(comm_parts), unsafe_allow_html=True)
 
-    # 2. ПАНЕЛЬ ВЫБОРА ПЕРИОДА И ФИЛЬТРОВ
-    st.markdown('<div class="market-section-title">АКЦИИ</div>', unsafe_allow_html=True)
-    
-    col_per, col_view, col_sec, col_search = st.columns([2.2, 1.2, 1.6, 1.4])
+    # 2. ПАНЕЛЬ ВЫБОРА ПЕРИОДА, РАЗМЕРА И ФИЛЬТРОВ
+    col_per, col_view, col_size, col_sec, col_search = st.columns([2.0, 1.0, 1.2, 1.4, 1.4])
     
     with col_per:
         period = st.radio(
@@ -633,6 +704,9 @@ def render_market_view_component(
 
     with col_view:
         view_mode = st.radio("Режим:", ["🟩 Плитки", "📋 Таблица"], horizontal=True)
+
+    with col_size:
+        tile_size = st.radio("Размер:", ["🔍 Крупные", "📱 Компактные"], horizontal=True, index=0)
 
     with col_sec:
         all_sectors = ["Все сектора"] + sorted(list(set(screener_df["sector"].dropna().unique())))
@@ -675,7 +749,16 @@ def render_market_view_component(
 
     # РЕЖИМ 1: ПЛИТОЧНАЯ ТЕПЛОВАЯ КАРТА (КАК НА СКРИНШОТЕ)
     if view_mode == "🟩 Плитки":
-        cards_parts = ['<div class="market-tiles-grid">']
+        is_large = (tile_size == "🔍 Крупные")
+        grid_class = "size-large" if is_large else "size-compact"
+        card_class = "m-card-large" if is_large else "m-card-compact"
+
+        cards_parts = [
+            '<div class="market-dark-canvas">'
+            '<div class="market-section-title">📈 АКЦИИ (ТЕПЛОВАЯ КАРТА РЫНКА MOEX)</div>'
+            f'<div class="market-section-sub">Сортировка по доходности за {period.lower()} (лидеры роста → аутсайдеры)</div>'
+            f'<div class="market-tiles-grid {grid_class}">'
+        ]
         
         for _, row in df_filtered.iterrows():
             t = row["ticker"]
@@ -698,19 +781,19 @@ def render_market_view_component(
             tooltip_txt = f"{name} ({t}) | {row['sector']} | Цена: {price_val} ₽ | {p_key}: {ret_str}"
             
             cards_parts.append(
-                f'<div class="m-card {css_class}" title="{tooltip_txt}">'
+                f'<div class="{card_class} {css_class}" title="{tooltip_txt}">'
                 f'<div class="m-top">'
                 f'<span class="m-name">{port_star}{name}</span>'
                 f'<span class="m-badge" style="color: {badge_color};">{ret_str}</span>'
                 f'</div>'
                 f'<div class="m-bottom">'
-                f'<span class="m-price">{price_val}</span>'
+                f'<span class="m-price">{price_val} ₽</span>'
                 f'<span class="m-ticker">{t}</span>'
                 f'</div>'
                 f'</div>'
             )
             
-        cards_parts.append('</div>')
+        cards_parts.append('</div></div>')
         st.markdown("".join(cards_parts), unsafe_allow_html=True)
         
     # РЕЖИМ 2: ДЕТАЛЬНАЯ ТАБЛИЦА СКРИНЕРА
