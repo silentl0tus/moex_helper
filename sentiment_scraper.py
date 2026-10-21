@@ -904,21 +904,21 @@ def generate_structured_summary(messages: list, ticker: str = "") -> dict:
 # =====================================================================
 # КОНФИГУРАЦИЯ НЕЙРОСЕТЕЙ (OPENROUTER AI)
 # =====================================================================
-# Модель по умолчанию (только бесплатные варианты)
-DEFAULT_OPENROUTER_MODEL = "liquid/lfm-2.5-2.6b:free"
+# Модель по умолчанию (только проверенные варианты с поддержкой русского языка)
+DEFAULT_OPENROUTER_MODEL = "google/gemma-4-31b-it:free"
 
 # Максимальное количество токенов на ответ модели (до 3000 токенов для развернутых статей)
 MAX_SUMMARY_TOKENS = 3000
 
 # Список поддерживаемых бесплатных моделей OpenRouter (100% Free, $0.00 / 0 токенов)
+# Отфильтрованы только модели с уверенной генерацией на русском языке (исключены англоязычные/узкие код-модели)
 OPENROUTER_FREE_MODELS = [
-    "liquid/lfm-2.5-2.6b:free",           # 💧 LiquidAI LFM 2.5 (быстрая, стабильная, без очередей)
-    "openrouter/free",                    # 🔄 Автовыбор свободной бесплатной модели
-    "dots-studio/dots-3-note-preview:free", # 📝 Dots Studio 3-Note Preview
-    "apodex/apodex-1.1-mini:free",        # ⚡ Apodex 1.1 Mini
-    "google/gemma-4-31b-it:free",         # 🧠 Google Gemma 4 31B (DeepMind)
-    "google/gemma-4-26b-a4b-it:free",     # ⚡ Google Gemma 4 26B
-    "nvidia/nemotron-3.5-lightning:free", # 🚀 NVIDIA Nemotron 3.5 Lightning
+    "google/gemma-4-31b-it:free",           # 🧠 Google Gemma 4 31B (DeepMind — лучший русский язык и аналитика)
+    "minimax/minimax-m3.1-flash:free",      # 🌟 MiniMax M3.1 Flash (контекст 1M, глубокий русский язык)
+    "google/gemma-4-26b-a4b-it:free",       # ⚡ Google Gemma 4 26B (быстрая и качественная)
+    "nvidia/nemotron-3.5-lightning:free",   # 🚀 NVIDIA Nemotron 3.5 Lightning (сверхбыстрый ответ)
+    "nvidia/nemotron-3.5-super-vl:free",    # 🛡️ NVIDIA Nemotron 3.5 Super VL (высокая точность)
+    "openrouter/free",                      # 🔄 Автовыбор свободной бесплатной модели
 ]
 
 
@@ -980,6 +980,8 @@ def summarize_with_openrouter(messages: list, ticker: str = "", api_key: str = N
                 "content": (
                     "Ты профессиональный финансовый аналитик Мосбиржи (MOEX). "
                     "Внимательно изучи мнения, статьи и факты инвесторов из Т-Банк Пульс и Smart-Lab строго по заданной компании. "
+                    "СТРОГОЕ ТРЕБОВАНИЕ: Весь ответ ОБЯЗАН быть исключительно на РУССКОМ ЯЗЫКЕ! "
+                    "Категорически запрещено отвечать на английском языке (кроме общепринятых тикеров акций вроде SBER, LKOH). "
                     "Составь подробное, глубокое и структурированное резюме на русском языке:\n"
                     "1) 🟢 Ключевые драйверы роста и позитив (дивиденды, финансовые отчеты, рост прибыли);\n"
                     "2) 🔴 Основные риски и опасения (ставка ЦБ, судебные иски, налоги, конкуренция);\n"
@@ -990,7 +992,7 @@ def summarize_with_openrouter(messages: list, ticker: str = "", api_key: str = N
             },
             {
                 "role": "user",
-                "content": f"Эмитент/тикер: {ticker_clean}\n\nВыдержки из статей и обсуждений инвесторов:\n{context_text}"
+                "content": f"Эмитент/тикер: {ticker_clean}\n\nВыдержки из статей и обсуждений инвесторов:\n{context_text}\n\nСделай подробную выжимку строго на русском языке!"
             }
         ],
         "temperature": 0.3,

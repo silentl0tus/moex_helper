@@ -170,12 +170,15 @@ with col1:
         help="Бесплатный ключ с сайта openrouter.ai/settings/keys. Запросы отправляются только к бесплатным моделям (:free)."
     )
 
+    st.caption("🔑 [Получить бесплатный API ключ на openrouter.ai](https://openrouter.ai/settings/keys)")
+
     selected_openrouter_model = st.selectbox(
-        "Бесплатная модель OpenRouter:",
+        "Бесплатная модель OpenRouter (с поддержкой русского):",
         options=OPENROUTER_FREE_MODELS,
         index=0,
-        help="Модели с суффиксом ':free' и 'openrouter/free' работают без списания средств ($0.00)."
+        help="Модели с суффиксом ':free' и 'openrouter/free' работают без списания средств ($0.00). Исключены модели, отвечающие только на английском языке."
     )
+    st.caption("🇷🇺 *Список отфильтрован: оставлены только бесплатные модели с подтвержденным знанием русского языка.*")
 
     if not openrouter_key_input:
         st.caption("💡 *Без ключа работает встроенная 3-колоночная выжимка. С ключом доступна генерация аналитического резюме через бесплатную нейросеть.*")
