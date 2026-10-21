@@ -922,6 +922,28 @@ OPENROUTER_FREE_MODELS = [
 ]
 
 
+def clean_model_output(text: str) -> str:
+    """Очищает ответ модели от тегов размышлений, цепочек рассуждений (reasoning/thoughts) и черновиков анализа."""
+    if not text:
+        return ""
+    # 1. Удаление тегов размышлений и их содержимого
+    for tag in ["think", "thought", "reasoning", "reflection", "scratchpad"]:
+        text = re.sub(rf"<{tag}>[\s\S]*?</{tag}>", "", text, flags=re.IGNORECASE).strip()
+        text = re.sub(rf"<{tag}>[\s\S]*$", "", text, flags=re.IGNORECASE).strip()
+
+    # 2. Если модель вывела черновик рассуждений перед чистовым отчетом
+    matches = list(re.finditer(r"(?:^|\n)(?:(?:1[\).]|###|\*\*1[\).]\*\*)\s*)?🟢\s*Ключевые драйверы", text, flags=re.IGNORECASE))
+    if len(matches) > 1:
+        text = text[matches[-1].start():].strip()
+    elif len(matches) == 1:
+        pre_text = text[:matches[0].start()].lower()
+        markers = ["пользователь просит", "давайте напишем", "давайте проанализируем", "структура ответа", "важные ограничения", "черновик", "ход мыслей"]
+        if any(m in pre_text for m in markers) or len(pre_text) > 150:
+            text = text[matches[0].start():].strip()
+
+    return text
+
+
 def summarize_with_openrouter(messages: list, ticker: str = "", api_key: str = None, model: str = None) -> dict:
     """
     Генерирует связную аналитическую выжимку через OpenRouter API.
@@ -982,7 +1004,8 @@ def summarize_with_openrouter(messages: list, ticker: str = "", api_key: str = N
                     "Внимательно изучи мнения, статьи и факты инвесторов из Т-Банк Пульс и Smart-Lab строго по заданной компании. "
                     "СТРОГОЕ ТРЕБОВАНИЕ: Весь ответ ОБЯЗАН быть исключительно на РУССКОМ ЯЗЫКЕ! "
                     "Категорически запрещено отвечать на английском языке (кроме общепринятых тикеров акций вроде SBER, LKOH). "
-                    "Составь подробное, глубокое и структурированное резюме на русском языке:\n"
+                    "ФИНАЛЬНЫЙ РЕЗУЛЬТАТ БЕЗ РАССУЖДЕНИЙ: Категорически запрещено выводить ход мыслей, черновики, вводные фразы вроде 'Пользователь просит...' или 'Давайте напишем...'. "
+                    "Сразу выводи готовый структурированный отчет, начиная строго с заголовка первого пункта:\n"
                     "1) 🟢 Ключевые драйверы роста и позитив (дивиденды, финансовые отчеты, рост прибыли);\n"
                     "2) 🔴 Основные риски и опасения (ставка ЦБ, судебные иски, налоги, конкуренция);\n"
                     "3) 📊 Ключевые цифры, котировки и факты из обсуждений;\n"
@@ -992,11 +1015,14 @@ def summarize_with_openrouter(messages: list, ticker: str = "", api_key: str = N
             },
             {
                 "role": "user",
-                "content": f"Эмитент/тикер: {ticker_clean}\n\nВыдержки из статей и обсуждений инвесторов:\n{context_text}\n\nСделай подробную выжимку строго на русском языке!"
+                "content": f"Эмитент/тикер: {ticker_clean}\n\nВыдержки из статей и обсуждений инвесторов:\n{context_text}\n\nНапиши аналитический отчет строго на русском языке, начиная сразу с первого пункта!"
             }
         ],
         "temperature": 0.3,
-        "max_tokens": MAX_SUMMARY_TOKENS
+        "max_tokens": MAX_SUMMARY_TOKENS,
+        "reasoning": {
+            "exclude": True
+        }
     }
 
     try:
@@ -1006,13 +1032,10 @@ def summarize_with_openrouter(messages: list, ticker: str = "", api_key: str = N
             choices = res_data.get("choices", [])
             if choices:
                 msg = choices[0].get("message", {})
-                ai_text = str(msg.get("content") or "").strip()
-                # Очищаем теги размышлений <think>...</think>, если модель поместила их в content
-                ai_text = re.sub(r"<think>[\s\S]*?</think>", "", ai_text).strip()
+                raw_content = str(msg.get("content") or "").strip()
 
-                # Если content остался пустым, но модель сформировала reasoning
-                if not ai_text and msg.get("reasoning"):
-                    ai_text = str(msg.get("reasoning")).strip()
+                # Очищаем от тегов <think> и внутренних черновиков/рассуждений модели
+                ai_text = clean_model_output(raw_content)
 
                 if ai_text:
                     return {
@@ -1022,7 +1045,7 @@ def summarize_with_openrouter(messages: list, ticker: str = "", api_key: str = N
                     }
                 else:
                     return {
-                        "ai_summary": f"⏳ Модель {chosen_model} потратила лимит токенов на внутренние рассуждения. Рекомендуется переключить модель на LiquidAI LFM 2.5 в боковом меню.",
+                        "ai_summary": f"⏳ Модель {chosen_model} вернула только черновик рассуждений без финального ответа. Рекомендуется переключиться на Google Gemma 4 31B или MiniMax M3.1 Flash в боковом меню.",
                         "structured": fallback_summary,
                         "model": chosen_model
                     }
