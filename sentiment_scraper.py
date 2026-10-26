@@ -23,7 +23,7 @@ NEGATIVE_WORDS = [
 PORTFOLIO_TICKERS = [
     "MGNT", "SBER", "ROSN", "NMTP", "SVCB",
     "T", "SIBN", "BELU", "CHMF", "NLMK",
-    "SNGS", "TRNFP", "GAZP"
+    "SNGS", "TRNFP", "GAZP", "AQUA"
 ]
 
 # Резервный список (все основные ликвидные компании MOEX)
@@ -184,7 +184,28 @@ TICKER_ALIASES = {
     'ДОМ.РФ': 'DOMRF',
     'ИВА': 'IVAT',
     'ПРОМОМЕД': 'PRMD',
-    'МАТЬ И ДИТЯ': 'MDMG'
+    'МАТЬ И ДИТЯ': 'MDMG',
+    'ИНАРКТИКА': 'AQUA',
+    'ИНАРКТИК': 'AQUA',
+    'INARCTICA': 'AQUA',
+    'INAR': 'AQUA',
+    'АКВАКУЛЬТУРА': 'AQUA',
+    'РУССКАЯ АКВАКУЛЬТУРА': 'AQUA',
+    'РОССЕТИ': 'FEES',
+    'ФСК': 'FEES',
+    'ФСК ЕЭС': 'FEES',
+    'RSTI': 'FEES',
+    'ВСЕИНСТРУМЕНТЫ': 'VSEH',
+    'ВИ.РУ': 'VSEH',
+    'ХЕНДЕРСОН': 'HNFG',
+    'HENDERSON': 'HNFG',
+    'КАРМАНИ': 'CARM',
+    'CARMONEY': 'CARM',
+    'ДЕЛИМОБИЛЬ': 'DELI',
+    'ЕВРОТРАНС': 'EUTR',
+    'ЗАЙМЕР': 'ZAYM',
+    'КРИСТАЛЛ': 'KLVZ',
+    'АРЕНАДАТА': 'DATA'
 }
 
 SMARTLAB_FORUM_MAP = {
@@ -207,7 +228,8 @@ PULSE_ALIASES = {
     'FIVE': ['X5'],
     'UGLD': ['UGC'],
     'UGC': ['UGLD'],
-    'BELU': ['NOVA']
+    'BELU': ['NOVA'],
+    'AQUA': ['AQUA', 'INARCTICA']
 }
 
 def resolve_ticker(raw_ticker: str) -> str:
@@ -300,7 +322,9 @@ def analyze_sentiment(text):
     return pos_count, neg_count
 
 def fetch_forum_sentiment(ticker, max_age_days=30):
-    url = f"https://smart-lab.ru/forum/{ticker}"
+    resolved = resolve_ticker(str(ticker).upper().strip())
+    forum_ticker = SMARTLAB_FORUM_MAP.get(resolved, resolved)
+    url = f"https://smart-lab.ru/forum/{forum_ticker}"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
     }
@@ -1154,14 +1178,26 @@ def summarize_with_hf(messages: list, ticker: str = "", hf_token: str = None) ->
 def main():
     tickers = fetch_moex_tickers()
     print(f"Starting sentiment analysis for {len(tickers)} tickers...")
-    results = {}
     
+    # Загружаем существующий кэш чтобы не потерять уже собранные тикеры при временных сбоях
+    results = {}
+    if OUTPUT_FILE.exists():
+        try:
+            with open(OUTPUT_FILE, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    results = loaded
+        except Exception:
+            results = {}
+
+    success_count = 0
     for i, ticker in enumerate(tickers):
         print(f"[{i+1}/{len(tickers)}] Analyzing {ticker}...", end=" ")
         sentiment = fetch_forum_sentiment(ticker)
         
         if sentiment is not None:
             results[ticker] = sentiment
+            success_count += 1
             score = sentiment["score"]
             trend = "🟢 Positive" if score > 0 else "🔴 Negative" if score < 0 else "⚪ Neutral"
             print(f"{trend} (Score: {score})")
@@ -1169,12 +1205,14 @@ def main():
             print("No data")
             
         # Небольшая пауза чтобы не забанил смартлаб
-        time.sleep(1)
-        
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-        json.dump(results, f, ensure_ascii=False, indent=2)
-        
-    print(f"\nSaved sentiment data for {len(results)} tickers to {OUTPUT_FILE}")
+        time.sleep(0.5)
+
+    if success_count > 0 or len(results) > 0:
+        with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+            json.dump(results, f, ensure_ascii=False, indent=2)
+        print(f"\nSaved sentiment data for {len(results)} tickers to {OUTPUT_FILE} ({success_count} updated in this run)")
+    else:
+        print(f"\n[WARNING] Scrape produced 0 results. sentiment.json was NOT overwritten to prevent data loss.")
 
 if __name__ == "__main__":
     main()

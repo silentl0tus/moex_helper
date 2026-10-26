@@ -60,7 +60,7 @@ POPULAR_LIQUID_TICKERS = [
     "SBER", "GAZP", "LKOH", "ROSN", "NVTK", "GMKN", "CHMF", "NLMK",
     "MAGN", "PLZL", "ALRS", "VTBR", "T", "SVCB", "BSPB", "MTSS",
     "MGNT", "SMLT", "SGZH", "AFLT", "RTKM", "PHOR", "TATN", "SIBN",
-    "TRNFP", "FLOT", "AFKS", "SELG", "HEAD", "YDEX", "OZON", "BELU", "NMTP"
+    "TRNFP", "FLOT", "AFKS", "SELG", "HEAD", "YDEX", "OZON", "BELU", "NMTP", "AQUA"
 ]
 
 

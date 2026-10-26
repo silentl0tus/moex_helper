@@ -371,14 +371,17 @@ def load_sentiment_data(_cache_buster: float = 0.0):
         if p.exists():
             sentiment_path = p
             break
-            
-        st.error(f"Sentiment file not found! Tried: {paths_to_try}")
+
+    if not sentiment_path:
+        st.warning(f"⚠️ Файл сентимента sentiment.json не найден. Проверены пути: {[str(p) for p in paths_to_try]}")
         return {}
-        return {}
+
     try:
         with open(sentiment_path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except Exception as e:
+        st.error(f"⚠️ Ошибка чтения sentiment.json: {e}")
         return {}
 
 @st.cache_data(ttl=3600)
@@ -1336,7 +1339,20 @@ with tab1:
             
         # Интеграция Sentiment Analysis (Настроения толпы за последний месяц / 30 дней)
         def get_sentiment_info(ticker):
-            data = sentiment_data.get(str(ticker).upper().strip())
+            t_clean = str(ticker).upper().strip()
+            data = sentiment_data.get(t_clean)
+            # Если для привилегированной акции нет отдельных данных (SBERP, TATNP, SNGSP), берем обыкновенную
+            if not data and t_clean.endswith("P") and len(t_clean) > 4:
+                data = sentiment_data.get(t_clean[:-1])
+            # Проверяем возможные альтернативные тикеры/алиасы
+            if not data:
+                alt_ticker = {
+                    "TCSG": "T", "YNDX": "YDEX", "CIAN": "CNRU",
+                    "FIVE": "X5", "UGC": "UGLD", "NOVA": "BELU"
+                }.get(t_clean)
+                if alt_ticker:
+                    data = sentiment_data.get(alt_ticker)
+
             if not data:
                 return 0.0, False
             posts = data.get("posts_analyzed", 0)
