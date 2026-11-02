@@ -35,6 +35,12 @@ from src.market_screener import (
     fetch_commodities_barometer,
     render_market_view_component
 )
+from src.foundry_client import (
+    get_foundry_status,
+    clear_foundry_cache,
+    get_company_fundamental_profile,
+    fetch_moex_market_snapshot,
+)
 
 PORTFOLIO_TICKERS = [
     "MGNT", "SBER", "ROSN", "NMTP", "SVCB",
@@ -977,6 +983,31 @@ with st.sidebar:
         min_roe_filter = st.slider("Мин. ROE (%)", -50.0, 30.0, 5.0, 1.0, help="Компании с ROE ниже этого значения будут удалены.")
         max_debt_filter = st.slider("Макс. Долг/EBITDA", 0.0, 20.0, 4.0, 0.5, help="Компании с Долг/EBITDA выше этого значения будут удалены.")
 
+    st.markdown("---")
+    st.markdown("##### 🏛️ База данных Data Foundry")
+    foundry_status = get_foundry_status()
+    if foundry_status.get("ok"):
+        ver = foundry_status.get("dataset_version", "")
+        short_ver = ver.split("-")[-1] if "-" in ver else ver[:8]
+        ts_str = foundry_status.get("source_updated_at") or foundry_status.get("published_at", "")
+        date_display = "Н/Д"
+        if ts_str:
+            try:
+                from datetime import timezone
+                dt = datetime.fromisoformat(ts_str)
+                msk_dt = dt.astimezone(timezone(timedelta(hours=3)))
+                date_display = msk_dt.strftime("%d.%m.%Y %H:%M МСК")
+            except Exception:
+                date_display = ts_str[:16]
+        schema_badge = " ✅ v1" if foundry_status.get("is_schema_supported") else " ⚠️ schema_mismatch"
+        st.caption(
+            f"🟢 **MCP Онлайн** | Версия: `{short_ver}`{schema_badge}\n\n"
+            f"📅 Обновлено: **{date_display}**"
+        )
+    else:
+        err_msg = foundry_status.get("error", "Сервер недоступен")
+        st.caption(f"🔴 **MCP Офлайн**: `{err_msg[:30]}`")
+
 with st.spinner("Считываю сигналы систем..."):
     live_data = fetch_live_prices(selected_tickers)
     market_context = fetch_market_context()
@@ -1003,7 +1034,7 @@ d_col2.metric("Ключевая ставка ЦБ", f"{market_context.get('KEY_R
 d_col3.metric("Индекс МосБиржи", f"{index_level:,.0f}" if index_level else "Н/Д")
 st.markdown("---")
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
     "🏆 Рейтинг и Аналитика",
     "💼 Мой Портфель",
     "🗺️ Вид рынка (Скринер & Карта)",
@@ -1011,7 +1042,8 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "🌊 Order Flow (Magellan)",
     "🏦 Банки ЦБ РФ (РСБУ)",
     "🚢 Танкеры & Нефть (TankerMap)",
-    "💳 Долг & БПИФ (Рынок капитала)"
+    "💳 Долг & БПИФ (Рынок капитала)",
+    "📊 Фундаментал (Data Foundry)"
 ])
 
 with tab1:
@@ -2159,5 +2191,251 @@ with tab1:
                     st.dataframe(pd.DataFrame(ipr_rows), width="stretch", hide_index=True)
                 else:
                     st.write("Данные ИПР обновляются...")
+
+        with tab9:
+            # 📊 ФУНДАМЕНТАЛЬНЫЙ АНАЛИЗ (DATA FOUNDRY)
+            st.subheader("📊 Фундаментальный анализ компании (Data Foundry)")
+            st.caption("Официальные аудированные показатели эмитентов РФ (МСФО/РСБУ) из публичного финансового MCP-сервера Data Foundry.")
+
+            foundry_status = get_foundry_status()
+            dataset_version = foundry_status.get("dataset_version")
+
+            if not foundry_status.get("ok") or not dataset_version:
+                st.warning(
+                    "⚠️ Сервер Data Foundry временно недоступен или не отвечает. "
+                    "Основной функционал дашборда (котировки MOEX, индикаторы, портфель) продолжает работать штатно (Graceful Degradation)."
+                )
+                if foundry_status.get("error"):
+                    st.caption(f"Техническая деталь: `{foundry_status.get('error')}`")
+                if st.button("🔄 Повторить проверку Data Foundry", key="btn_retry_foundry"):
+                    clear_foundry_cache()
+                    st.rerun()
+            else:
+                if not foundry_status.get("is_schema_supported"):
+                    st.warning(
+                        f"⚠️ Версия схемы данных сервера ({foundry_status.get('schema_version')}) отличается от ожидаемой (v1)."
+                    )
+
+                f_col1, f_col2, f_col3 = st.columns([2, 2, 1])
+                with f_col1:
+                    avail_tickers = [t for t in selected_tickers if t in moex_tickers] if selected_tickers else moex_tickers
+                    if not avail_tickers:
+                        avail_tickers = moex_tickers
+                    def_idx = 0
+                    if "SBER" in avail_tickers:
+                        def_idx = avail_tickers.index("SBER")
+                    elif "LKOH" in avail_tickers:
+                        def_idx = avail_tickers.index("LKOH")
+
+                    chosen_ticker = st.selectbox(
+                        "Выберите акцию / эмитент:",
+                        options=avail_tickers,
+                        index=def_idx,
+                        key="foundry_ticker_select"
+                    )
+
+                with f_col2:
+                    basis_choice = st.radio(
+                        "Стандарт отчётности:",
+                        ["МСФО (IFRS)", "РСБУ (RAS)"],
+                        horizontal=True,
+                        key="foundry_basis_choice"
+                    )
+                    chosen_basis = "IFRS" if "IFRS" in basis_choice else "RAS"
+
+                with f_col3:
+                    st.write("")
+                    st.write("")
+                    if st.button("🔄 Сбросить кэш", key="btn_refresh_foundry_cache", help="Сбросить кэш healthz и запросить свежие данные"):
+                        clear_foundry_cache()
+                        st.rerun()
+
+                if chosen_ticker:
+                    with st.spinner(f"Загружаю финансовые ряды для {chosen_ticker} ({chosen_basis})..."):
+                        profile = get_company_fundamental_profile(
+                            chosen_ticker,
+                            dataset_version,
+                            accounting_basis=chosen_basis
+                        )
+
+                    is_bank = profile.get("is_bank", False)
+                    company_name = profile.get("company_name", chosen_ticker)
+                    avail_standards = profile.get("available_standards", [])
+                    periods = profile.get("periods", [])
+                    rows = profile.get("rows", [])
+
+                    sector_label = "🏦 Банковский / Финансовый сектор" if is_bank else "🏭 Реальный сектор экономики"
+                    st.markdown(f"### {company_name} (`{chosen_ticker}`) — {sector_label}")
+
+                    if avail_standards:
+                        standards_badge = " • ".join(
+                            [f"**{std}**" if std == chosen_basis else std for std in avail_standards]
+                        )
+                        st.caption(f"Стандарты отчётности эмитента в базе: {standards_badge} │ Отображается: **{chosen_basis}**")
+
+                    # Live Market Snapshot from MOEX ISS
+                    moex_snap = fetch_moex_market_snapshot(chosen_ticker)
+                    last_price = moex_snap.get("price")
+                    market_cap = moex_snap.get("market_cap")
+
+                    # Extract key values for latest FY
+                    fy_periods = [p for p in periods if p.endswith("-FY")]
+                    latest_fy = fy_periods[-1] if fy_periods else (periods[-1] if periods else None)
+
+                    net_income_row = next((r for r in rows if r["metric_code"] == "fin.net_income"), None)
+                    roe_row = next((r for r in rows if r["metric_code"] == "calc.roe"), None)
+                    net_debt_row = next((r for r in rows if r["metric_code"] == "calc.net_debt"), None)
+                    assets_row = next((r for r in rows if r["metric_code"] in ("fin.total_assets", "fin.total_equity")), None)
+
+                    # Top Multipliers Cards
+                    c_m1, c_m2, c_m3, c_m4 = st.columns(4)
+
+                    # 1. Price
+                    if last_price:
+                        chg = moex_snap.get("change_pct")
+                        chg_str = f"{chg:+.2f}%" if chg is not None else None
+                        c_m1.metric("Цена MOEX (TQBR)", f"{last_price:,.2f} ₽", delta=chg_str)
+                    elif chosen_ticker in live_data.columns and not live_data[chosen_ticker].dropna().empty:
+                        c_price = live_data[chosen_ticker].dropna().iloc[-1]
+                        c_m1.metric("Цена MOEX", f"{c_price:,.2f} ₽")
+                    else:
+                        c_m1.metric("Цена MOEX", "Н/Д")
+
+                    # 2. Market Cap
+                    if market_cap:
+                        c_m2.metric("Капитализация", f"{market_cap / 1_000_000_000:,.1f} млрд ₽")
+                    else:
+                        c_m2.metric("Капитализация", "Н/Д")
+
+                    # 3. P/E Multiplier
+                    if latest_fy and net_income_row:
+                        ni_val = net_income_row["values"].get(latest_fy)
+                        if market_cap and ni_val and ni_val > 0:
+                            pe_val = market_cap / ni_val
+                            c_m3.metric(f"P/E ({latest_fy})", f"{pe_val:.2f}x")
+                        elif ni_val is not None and ni_val <= 0:
+                            c_m3.metric(f"P/E ({latest_fy})", "Убыток")
+                        else:
+                            c_m3.metric(f"P/E ({latest_fy})", "Н/Д")
+                    else:
+                        c_m3.metric("P/E", "Н/Д")
+
+                    # 4. ROE or Debt
+                    if latest_fy and roe_row and roe_row["values"].get(latest_fy) is not None:
+                        roe_val = roe_row["values"].get(latest_fy)
+                        c_m4.metric(f"ROE ({latest_fy})", f"{roe_val:.1f}%")
+                    elif not is_bank and latest_fy and net_debt_row and net_debt_row["values"].get(latest_fy) is not None:
+                        nd_val = net_debt_row["values"].get(latest_fy)
+                        c_m4.metric(f"Чистый долг ({latest_fy})", f"{nd_val / 1_000_000_000:,.1f} млрд ₽")
+                    elif is_bank and latest_fy and assets_row and assets_row["values"].get(latest_fy) is not None:
+                        ass_val = assets_row["values"].get(latest_fy)
+                        c_m4.metric(f"Активы ({latest_fy})", f"{ass_val / 1_000_000_000:,.1f} млрд ₽")
+                    else:
+                        c_m4.metric("ROE / Долг", "Н/Д")
+
+                    st.markdown("---")
+
+                    if periods and rows:
+                        st.markdown(f"#### 📑 Финансовая отчётность по периодам ({chosen_basis})")
+                        st.caption("Значения выражены в млрд ₽ (или %, где применимо). Значения `Н/Д` означают отсутствие публикации в данном периоде и никогда не заменяются нулём.")
+
+                        table_data = []
+                        for r in rows:
+                            row_dict = {"Показатель": r["metric_name"]}
+                            unit = r.get("unit", "RUB")
+                            for p in periods:
+                                v = r["values"].get(p)
+                                if v is None:
+                                    row_dict[p] = "Н/Д"
+                                elif unit == "%":
+                                    row_dict[p] = f"{v:.1f}%"
+                                elif unit == "RUB":
+                                    row_dict[p] = f"{v / 1_000_000_000:,.1f}"
+                                else:
+                                    row_dict[p] = f"{v:,.2f}"
+                            table_data.append(row_dict)
+
+                        df_matrix = pd.DataFrame(table_data)
+                        st.dataframe(df_matrix, width="stretch", hide_index=True)
+
+                        # Chart
+                        st.markdown("#### 📈 График динамики показателей")
+                        chartable_metrics = [
+                            r["metric_name"] for r in rows 
+                            if any(v is not None for v in r["values"].values())
+                        ]
+                        if chartable_metrics:
+                            ch_m1, ch_m2 = st.columns([2, 3])
+                            with ch_m1:
+                                chosen_metric_name = st.selectbox(
+                                    "Выберите показатель для графика:",
+                                    options=chartable_metrics,
+                                    key="foundry_chart_metric_sel"
+                                )
+                            chosen_row = next((r for r in rows if r["metric_name"] == chosen_metric_name), None)
+                            if chosen_row:
+                                chart_pts = []
+                                u = chosen_row.get("unit", "RUB")
+                                for p in periods:
+                                    val = chosen_row["values"].get(p)
+                                    if val is not None:
+                                        chart_pts.append({
+                                            "Период": p,
+                                            "Значение": val / 1_000_000_000 if u == "RUB" else val,
+                                            "Единица": "млрд ₽" if u == "RUB" else u
+                                        })
+                                if chart_pts:
+                                    df_chart = pd.DataFrame(chart_pts)
+                                    c_bars = alt.Chart(df_chart).mark_bar(size=36, color="#0288D1").encode(
+                                        x=alt.X("Период:N", sort=periods, title="Период отчёта"),
+                                        y=alt.Y("Значение:Q", title=f"{chosen_metric_name} ({df_chart['Единица'].iloc[0]})"),
+                                        tooltip=["Период", alt.Tooltip("Значение:Q", format=",.1f"), "Единица"]
+                                    ).properties(height=320)
+                                    st.altair_chart(c_bars, use_container_width=True)
+
+                        # Provenance and Sources Audit Expander
+                        with st.expander("🔍 Аудит данных: Официальные источники и локаторы формул (get_evidence)", expanded=False):
+                            st.markdown("Каждое число в таблице связано с официальным документом (МСФО/РСБУ), страницей и строкой публикации:")
+                            evidence_records = []
+                            for r in rows:
+                                for p in periods:
+                                    ev = r["evidence"].get(p)
+                                    raw_item = r["raw_items"].get(p)
+                                    val = r["values"].get(p)
+                                    if val is not None:
+                                        val_str = f"{val / 1_000_000_000:,.1f} млрд" if r.get("unit") == "RUB" else f"{val}"
+                                        doc_title = ev.get("title") if ev else ("Методология / Расчётная метрика" if r.get("methodology") else "Официальная отчётность")
+                                        locator_str = "—"
+                                        if ev and ev.get("locator"):
+                                            loc = ev["locator"]
+                                            parts = []
+                                            if loc.get("page"): parts.append(f"Стр. {loc['page']}")
+                                            if loc.get("row"): parts.append(f"Строка {loc['row']}")
+                                            if loc.get("table"): parts.append(f"Табл. {loc['table']}")
+                                            locator_str = ", ".join(parts) if parts else str(loc)
+                                        elif r.get("methodology"):
+                                            locator_str = r["methodology"].get("formula", "Формула")
+
+                                        evidence_records.append({
+                                            "Показатель": r["metric_name"],
+                                            "Период": p,
+                                            "Значение": val_str,
+                                            "Документ / Источник": doc_title,
+                                            "Локатор (стр./строка)": locator_str,
+                                            "Стандарт": raw_item.get("accounting_basis", chosen_basis) if raw_item else chosen_basis,
+                                        })
+
+                            if evidence_records:
+                                st.dataframe(pd.DataFrame(evidence_records), width="stretch", hide_index=True)
+                            else:
+                                st.write("Сведения об источниках формируются...")
+                    else:
+                        st.info(f"Для эмитента {chosen_ticker} по стандарту {chosen_basis} пока нет загруженных периодов.")
+                        if "IFRS" not in avail_standards and "RAS" in avail_standards:
+                            st.info("💡 В базе данных доступны отчёты по стандарту РСБУ (RAS). Переключите радиокнопку стандарта выше.")
+
     else:
         st.error("Аварийная остановка: Ни один актив не прошел проверку качества.")
+        with tab9:
+            st.subheader("📊 Фундаментальный анализ компании (Data Foundry)")
+            st.info("Для анализа фундаментальных показателей выберите тикеры в sidebar.")

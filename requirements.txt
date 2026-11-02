@@ -11,3 +11,4 @@ matplotlib
 httpx
 python-dotenv
 beautifulsoup4
+mcp

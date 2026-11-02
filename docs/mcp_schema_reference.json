@@ -1,0 +1,1795 @@
+{
+  "healthz": {
+    "status": "ok",
+    "dataset": {
+      "version": "20261102T093659Z-6c5d7d2f",
+      "schema_version": 1,
+      "built_at": "2026-11-02T09:36:59.656860Z",
+      "published_at": "2026-11-02T09:41:25.196779Z",
+      "source_updated_at": "2026-11-02T01:33:34.649371+03:00"
+    }
+  },
+  "tools": {
+    "search_companies": {
+      "description": "Find an accepted company by its ticker or name; returns exact company identifiers.",
+      "inputSchema": {
+        "properties": {
+          "query_text": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Query Text",
+            "type": "string"
+          },
+          "limit": {
+            "default": 20,
+            "maximum": 100,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Cursor"
+          }
+        },
+        "required": [
+          "query_text"
+        ],
+        "type": "object",
+        "title": "search_companiesArguments"
+      }
+    },
+    "find_metrics": {
+      "description": "Find definitions and explicit metric codes; use companies to scope company-specific aliases.",
+      "inputSchema": {
+        "properties": {
+          "query_text": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Query Text",
+            "type": "string"
+          },
+          "companies": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 10,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Companies"
+          },
+          "limit": {
+            "default": 20,
+            "maximum": 100,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Cursor"
+          }
+        },
+        "required": [
+          "query_text"
+        ],
+        "type": "object",
+        "title": "find_metricsArguments"
+      }
+    },
+    "get_series": {
+      "description": "Read exact values. periods uses normalized keys (2024-FY, 2024-Q2, ASOF:2024-12-31).\n        Omitted periods returns available history. revisions is current or all_verified.\n        If ambiguous, select returned variant IDs. Missing rows mean no data, never zero.\n        ",
+      "inputSchema": {
+        "properties": {
+          "companies": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "minItems": 1,
+            "title": "Companies",
+            "type": "array"
+          },
+          "metrics": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Metrics",
+            "type": "array"
+          },
+          "periods": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 40,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Periods"
+          },
+          "variants": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 40,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Variants"
+          },
+          "revisions": {
+            "default": "current",
+            "enum": [
+              "current",
+              "all_verified"
+            ],
+            "title": "Revisions",
+            "type": "string"
+          },
+          "limit": {
+            "default": 20,
+            "maximum": 100,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Cursor"
+          }
+        },
+        "required": [
+          "companies",
+          "metrics"
+        ],
+        "type": "object",
+        "title": "get_seriesArguments"
+      }
+    },
+    "get_coverage": {
+      "description": "List available periods and update dates. Explicit periods also return missing cells.\n        Without explicit periods this does not infer an issuer's required reporting schedule.\n        ",
+      "inputSchema": {
+        "properties": {
+          "companies": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "minItems": 1,
+            "title": "Companies",
+            "type": "array"
+          },
+          "metrics": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Metrics",
+            "type": "array"
+          },
+          "periods": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 40,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Periods"
+          },
+          "variants": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 40,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Variants"
+          },
+          "limit": {
+            "default": 20,
+            "maximum": 100,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Cursor"
+          }
+        },
+        "required": [
+          "companies",
+          "metrics"
+        ],
+        "type": "object",
+        "title": "get_coverageArguments"
+      }
+    },
+    "get_evidence": {
+      "description": "Read saved document metadata or verified formula input lineage using source_id from a value.\n        Never fetches originals, reads local source documents, or claims a new document verification.\n        ",
+      "inputSchema": {
+        "properties": {
+          "source_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Source Ids",
+            "type": "array"
+          },
+          "limit": {
+            "default": 20,
+            "maximum": 100,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Cursor"
+          }
+        },
+        "required": [
+          "source_ids"
+        ],
+        "type": "object",
+        "title": "get_evidenceArguments"
+      }
+    }
+  },
+  "probes": {
+    "SBER": {
+      "search": [
+        {
+          "dataset": {
+            "version": "20261102T093659Z-6c5d7d2f",
+            "schema_version": 1,
+            "built_at": "2026-11-02T09:36:59.656860Z",
+            "published_at": "2026-11-02T09:41:25.196779Z",
+            "source_updated_at": "2026-11-02T01:33:34.649371+03:00"
+          },
+          "status": "ok",
+          "message": null,
+          "page": {
+            "returned": 1,
+            "limit": 20,
+            "next_cursor": null
+          },
+          "items": [
+            {
+              "id": "215c2c3c-ddca-44bf-b22b-d45c1da44a8b",
+              "ticker": "SBER",
+              "name": "ПАО Сбербанк",
+              "industry": "bank"
+            }
+          ],
+          "choices": []
+        }
+      ],
+      "metrics": [
+        {
+          "dataset": {
+            "version": "20261102T093659Z-6c5d7d2f",
+            "schema_version": 1,
+            "built_at": "2026-11-02T09:36:59.656860Z",
+            "published_at": "2026-11-02T09:41:25.196779Z",
+            "source_updated_at": "2026-11-02T01:33:34.649371+03:00"
+          },
+          "status": "ok",
+          "message": null,
+          "page": {
+            "returned": 4,
+            "limit": 20,
+            "next_cursor": null
+          },
+          "items": [
+            {
+              "id": "ebd756e6-b0cd-42ba-966f-4bdfda7506ea",
+              "code": "fin.eps_basic",
+              "name_ru": "Базовая прибыль на акцию",
+              "name_en": "Basic earnings per share",
+              "description": "Published IAS 33 basic earnings per ordinary share attributable to the parent's shareholders.",
+              "comparability_policy": "Preserve share class, currency, reported scale and period; never substitute calculated market EPS.",
+              "scope": "universal",
+              "owner_id": null,
+              "industry": null,
+              "domain": "financial",
+              "statement": "income_statement",
+              "parent_code": null,
+              "measure_type": "ratio",
+              "canonical_unit": "currency_per_share",
+              "accounting_basis": "IFRS",
+              "active": true,
+              "version": 1,
+              "methodologies": [
+                {
+                  "id": "190026e0-a2f9-405c-9bad-1ace8537401f",
+                  "code": "ifrs_basic_eps",
+                  "name": "IFRS published basic earnings per share",
+                  "accounting_basis": "IFRS",
+                  "comparability_key": "ifrs.eps.basic",
+                  "formula": "Прибыль или убыток, причитающиеся владельцам обычных акций материнской компании, на средневзвешенное число обычных акций за период; опубликованная базовая прибыль на акцию по IAS 33."
+                }
+              ],
+              "aliases": [
+                "basic earnings per share",
+                "fin.eps_basic",
+                "базовая прибыль (убыток) на акцию",
+                "базовая прибыль на акцию",
+                "базовая прибыль на акцию (в российских рублях на акцию)",
+                "базовая прибыль на акцию (руб. на акцию)",
+                "базовая прибыль на акцию (рублей)",
+                "базовая прибыль на акцию, руб"
+              ],
+              "variants": [
+                {
+                  "selector": "86f9073710bb068b2b93e2b4",
+                  "ticker": "SBER",
+                  "metric_code": "fin.eps_basic",
+                  "name": null,
+                  "variant": "86f9073710bb068b2b93e2b4",
+                  "accounting_basis": "IFRS",
+                  "consolidation_scope": "consolidated",
+                  "methodology": "ifrs_basic_eps",
+                  "dimensions": {}
+                }
+              ],
+              "details_truncated": false
+            },
+            {
+              "id": "13645704-08f2-4f9d-bc13-4600c8a0e03d",
+              "code": "fin.eps_diluted",
+              "name_ru": "Разводнённая прибыль на акцию",
+              "name_en": "Diluted earnings per share",
+              "description": "Published IAS 33 diluted earnings per ordinary share attributable to the parent's shareholders.",
+              "comparability_policy": "Preserve share class, currency, reported scale and period; never substitute calculated market EPS.",
+              "scope": "universal",
+              "owner_id": null,
+              "industry": null,
+              "domain": "financial",
+              "statement": "income_statement",
+              "parent_code": null,
+              "measure_type": "ratio",
+              "canonical_unit": "currency_per_share",
+              "accounting_basis": "IFRS",
+              "active": true,
+              "version": 1,
+              "methodologies": [
+                {
+                  "id": "e2c5cda9-868d-4034-b02f-35b0245b4542",
+                  "code": "ifrs_diluted_eps",
+                  "name": "IFRS published diluted earnings per share",
+                  "accounting_basis": "IFRS",
+                  "comparability_key": "ifrs.eps.diluted",
+                  "formula": "Опубликованная разводнённая прибыль на акцию по IAS 33 с учётом разводняющих потенциальных обычных акций; сохраняются напечатанные валюта, масштаб и округление."
+                }
+              ],
+              "aliases": [
+                "diluted earnings per share",
+                "fin.eps_diluted",
+                "разводненная прибыль (убыток) на акцию",
+                "разводненная прибыль на акцию",
+                "разводненная прибыль на акцию (в российских рублях за акцию)",
+                "разводненная прибыль на акцию (руб. на акцию)",
+                "разводненная прибыль на акцию (рублей)"
+              ],
+              "variants": [
+                {
+                  "selector": "2807bec752bf18b8e20a0c3f",
+                  "ticker": "SBER",
+                  "metric_code": "fin.eps_diluted",
+                  "name": null,
+                  "variant": "2807bec752bf18b8e20a0c3f",
+                  "accounting_basis": "IFRS",
+                  "consolidation_scope": "consolidated",
+                  "methodology": "ifrs_diluted_eps",
+                  "dimensions": {}
+                }
+              ],
+              "details_truncated": false
+            },
+            {
+              "id": "d38a1d59-8de3-46bc-b4ca-0a61faadc824",
+              "code": "fin.net_income",
+              "name_ru": "Чистая прибыль",
+              "name_en": "Net income",
+              "description": "Profit for the reporting period after income tax.",
+              "comparability_policy": "Distinguish total group profit from profit attributable to owners.",
+              "scope": "universal",
+              "owner_id": null,
+              "industry": null,
+              "domain": "financial",
+              "statement": "income_statement",
+              "parent_code": null,
+              "measure_type": "flow",
+              "canonical_unit": "currency",
+              "accounting_basis": "IFRS",
+              "active": true,
+              "version": 1,
+              "methodologies": [
+                {
+                  "id": "7fe5af0f-b214-442f-9490-839f6203b1af",
+                  "code": "ifrs_reported_net_income",
+                  "name": "IFRS reported net income",
+                  "accounting_basis": "IFRS",
+                  "comparability_key": "ifrs.net_income.group",
+                  "formula": "Reported profit for the period."
+                }
+              ],
+              "aliases": [
+                "(убыток) / прибыль за период",
+                "fin.net_income",
+                "net income",
+                "net profit",
+                "profit (loss) for the year",
+                "profit for the period",
+                "profit for the year",
+                "прибыль (убыток) за год",
+                "прибыль (убыток) за период",
+                "прибыль / (убыток) за отчетный период",
+                "прибыль за год",
+                "прибыль за отчетный период",
+                "прибыль за период",
+                "прибыль/(убыток) за отчетный период",
+                "прибыль/(убыток) за период",
+                "убыток за год",
+                "убыток за отчетный период",
+                "убыток за период",
+                "чистая прибыль",
+                "чистая прибыль (убыток)",
+                "чистая прибыль (убыток) за год",
+                "чистая прибыль (убыток) за период",
+                "чистая прибыль за год",
+                "чистая прибыль за период",
+                "чистая прибыль/(убыток)",
+                "чистый (убыток)/прибыль за период",
+                "чистый убыток",
+                "чистый убыток за год",
+                "чистый убыток за период"
+              ],
+              "variants": [
+                {
+                  "selector": "bd9b263a12cc65f7236cfc0e",
+                  "ticker": "SBER",
+                  "metric_code": "fin.net_income",
+                  "name": null,
+                  "variant": "bd9b263a12cc65f7236cfc0e",
+                  "accounting_basis": "IFRS",
+                  "consolidation_scope": "consolidated",
+                  "methodology": "ifrs_reported_net_income",
+                  "dimensions": {}
+                }
+              ],
+              "details_truncated": false
+            },
+            {
+              "id": "331e452d-d823-4ab2-b9b0-21fdeb0016aa",
+              "code": "fin.profit_before_tax",
+              "name_ru": "Прибыль до налогообложения",
+              "name_en": "Profit before tax",
+              "description": "Consolidated profit before income tax.",
+              "comparability_policy": "Compare matching reporting and consolidation scopes.",
+              "scope": "universal",
+              "owner_id": null,
+              "industry": null,
+              "domain": "financial",
+              "statement": "income_statement",
+              "parent_code": null,
+              "measure_type": "flow",
+              "canonical_unit": "currency",
+              "accounting_basis": "IFRS",
+              "active": true,
+              "version": 1,
+              "methodologies": [
+                {
+                  "id": "65582ee2-1b8d-4601-88a4-a6d547232498",
+                  "code": "ifrs_reported_profit_before_tax",
+                  "name": "IFRS reported profit before tax",
+                  "accounting_basis": "IFRS",
+                  "comparability_key": "ifrs.profit_before_tax.reported",
+                  "formula": "Reported IFRS line item."
+                }
+              ],
+              "aliases": [
+                "(убыток) / прибыль до налогообложения",
+                "(убыток)/прибыль до налогообложения",
+                "fin.profit_before_tax",
+                "profit (loss) before tax",
+                "profit before income tax",
+                "profit before tax",
+                "прибыль (убыток) до налогообложения",
+                "прибыль / (убыток) до налогообложения",
+                "прибыль до налога на прибыль",
+                "прибыль до налогообложения",
+                "прибыль/(убыток) до налога на прибыль",
+                "прибыль/(убыток) до налогообложения",
+                "убыток до налога на прибыль",
+                "убыток до налогообложения"
+              ],
+              "variants": [
+                {
+                  "selector": "0663c028b13761d71d5c3d4f",
+                  "ticker": "SBER",
+                  "metric_code": "fin.profit_before_tax",
+                  "name": null,
+                  "variant": "0663c028b13761d71d5c3d4f",
+                  "accounting_basis": "IFRS",
+                  "consolidation_scope": "consolidated",
+                  "methodology": "ifrs_reported_profit_before_tax",
+                  "dimensions": {
+                    "operation_scope": "continuing_operations"
+                  }
+                },
+                {
+                  "selector": "483fbb6edeb24c452d1aea6c",
+                  "ticker": "SBER",
+                  "metric_code": "fin.profit_before_tax",
+                  "name": null,
+                  "variant": "483fbb6edeb24c452d1aea6c",
+                  "accounting_basis": "IFRS",
+                  "consolidation_scope": "consolidated",
+                  "methodology": "ifrs_reported_profit_before_tax",
+                  "dimensions": {}
+                }
+              ],
+              "details_truncated": false
+            }
+          ],
+          "choices": []
+        }
+      ],
+      "interest_metrics": [
+        {
+          "dataset": {
+            "version": "20261102T093659Z-6c5d7d2f",
+            "schema_version": 1,
+            "built_at": "2026-11-02T09:36:59.656860Z",
+            "published_at": "2026-11-02T09:41:25.196779Z",
+            "source_updated_at": "2026-11-02T01:33:34.649371+03:00"
+          },
+          "status": "ok",
+          "message": null,
+          "page": {
+            "returned": 1,
+            "limit": 20,
+            "next_cursor": null
+          },
+          "items": [
+            {
+              "id": "07e2caca-c808-45ed-986f-dbce28abdfef",
+              "code": "bank.net_interest_income",
+              "name_ru": "Чистый процентный доход банка",
+              "name_en": "Bank net interest income",
+              "description": "Net interest income reported by a bank under its accounting policy.",
+              "comparability_policy": "Compare only matching accounting basis, consolidation scope, and period.",
+              "scope": "industry",
+              "owner_id": null,
+              "industry": "bank",
+              "domain": "financial",
+              "statement": "income_statement",
+              "parent_code": null,
+              "measure_type": "flow",
+              "canonical_unit": "currency",
+              "accounting_basis": "IFRS",
+              "active": true,
+              "version": 1,
+              "methodologies": [
+                {
+                  "id": "c230c8ec-3a5b-43ca-867a-7a882895d0bf",
+                  "code": "bank_reported_net_interest_income_continuing_sber",
+                  "name": "Bank reported net interest income — continuing operations",
+                  "accounting_basis": "IFRS",
+                  "comparability_key": "bank.net_interest_income.reported.continuing_operations",
+                  "formula": "Reported net interest income. Only the explicitly printed continuing-operations section; do not combine with an unspecified operation scope."
+                },
+                {
+                  "id": "b192c85d-c2ec-4bd6-a4b6-756a65f212ad",
+                  "code": "bank_reported_net_interest_income",
+                  "name": "Bank reported net interest income",
+                  "accounting_basis": "IFRS",
+                  "comparability_key": "bank.net_interest_income.reported",
+                  "formula": "Reported net interest income."
+                }
+              ],
+              "aliases": [
+                "bank net interest income",
+                "bank.net_interest_income",
+                "чистый процентный доход",
+                "чистый процентный доход банка"
+              ],
+              "variants": [
+                {
+                  "selector": "2d089a33d4360240de6024e6",
+                  "ticker": "SBER",
+                  "metric_code": "bank.net_interest_income",
+                  "name": null,
+                  "variant": "2d089a33d4360240de6024e6",
+                  "accounting_basis": "IFRS",
+                  "consolidation_scope": "consolidated",
+                  "methodology": "bank_reported_net_interest_income_continuing_sber",
+                  "dimensions": {
+                    "business_segment": "all",
+                    "geography": "group"
+                  }
+                },
+                {
+                  "selector": "cbfa1163c7d5133431dcdd79",
+                  "ticker": "SBER",
+                  "metric_code": "bank.net_interest_income",
+                  "name": null,
+                  "variant": "cbfa1163c7d5133431dcdd79",
+                  "accounting_basis": "IFRS",
+                  "consolidation_scope": "consolidated",
+                  "methodology": "bank_reported_net_interest_income",
+                  "dimensions": {
+                    "business_segment": "all",
+                    "geography": "group"
+                  }
+                },
+                {
+                  "selector": "e7e36cdf48f569cd984d165a",
+                  "ticker": "SBER",
+                  "metric_code": "bank.net_interest_income",
+                  "name": null,
+                  "variant": "e7e36cdf48f569cd984d165a",
+                  "accounting_basis": "IFRS",
+                  "consolidation_scope": "consolidated",
+                  "methodology": "bank_reported_net_interest_income",
+                  "dimensions": {}
+                }
+              ],
+              "details_truncated": false
+            }
+          ],
+          "choices": []
+        }
+      ],
+      "coverage": [
+        {
+          "dataset": {
+            "version": "20261102T093659Z-6c5d7d2f",
+            "schema_version": 1,
+            "built_at": "2026-11-02T09:36:59.656860Z",
+            "published_at": "2026-11-02T09:41:25.196779Z",
+            "source_updated_at": "2026-11-02T01:33:34.649371+03:00"
+          },
+          "status": "ok",
+          "message": null,
+          "page": {
+            "returned": 9,
+            "limit": 20,
+            "next_cursor": null
+          },
+          "items": [
+            {
+              "ticker": "SBER",
+              "metric_code": "fin.net_income",
+              "period_key": "2023-FY",
+              "availability": "missing",
+              "variants": 0,
+              "updated_at": null
+            },
+            {
+              "ticker": "SBER",
+              "metric_code": "fin.net_income",
+              "period_key": "2024-H1",
+              "availability": "missing",
+              "variants": 0,
+              "updated_at": null
+            },
+            {
+              "ticker": "SBER",
+              "metric_code": "fin.net_income",
+              "period_key": "2024-FY",
+              "availability": "available",
+              "variants": 1,
+              "updated_at": "2026-10-20T00:43:50.722930+03:00"
+            },
+            {
+              "ticker": "SBER",
+              "metric_code": "bank.net_interest_income",
+              "period_key": "2023-FY",
+              "availability": "available",
+              "variants": 1,
+              "updated_at": "2026-10-19T18:10:39.810224+03:00"
+            },
+            {
+              "ticker": "SBER",
+              "metric_code": "bank.net_interest_income",
+              "period_key": "2024-H1",
+              "availability": "available",
+              "variants": 1,
+              "updated_at": "2026-10-19T18:10:39.810224+03:00"
+            },
+            {
+              "ticker": "SBER",
+              "metric_code": "bank.net_interest_income",
+              "period_key": "2024-FY",
+              "availability": "available",
+              "variants": 1,
+              "updated_at": "2026-10-19T18:10:39.810224+03:00"
+            },
+            {
+              "ticker": "SBER",
+              "metric_code": "bank.net_fee_commission_income",
+              "period_key": "2023-FY",
+              "availability": "missing",
+              "variants": 0,
+              "updated_at": null
+            },
+            {
+              "ticker": "SBER",
+              "metric_code": "bank.net_fee_commission_income",
+              "period_key": "2024-H1",
+              "availability": "missing",
+              "variants": 0,
+              "updated_at": null
+            },
+            {
+              "ticker": "SBER",
+              "metric_code": "bank.net_fee_commission_income",
+              "period_key": "2024-FY",
+              "availability": "missing",
+              "variants": 0,
+              "updated_at": null
+            }
+          ],
+          "choices": []
+        }
+      ],
+      "series": [
+        {
+          "dataset": {
+            "version": "20261102T093659Z-6c5d7d2f",
+            "schema_version": 1,
+            "built_at": "2026-11-02T09:36:59.656860Z",
+            "published_at": "2026-11-02T09:41:25.196779Z",
+            "source_updated_at": "2026-11-02T01:33:34.649371+03:00"
+          },
+          "status": "ok",
+          "message": null,
+          "page": {
+            "returned": 4,
+            "limit": 20,
+            "next_cursor": null
+          },
+          "items": [
+            {
+              "id": "59b1d398-5942-4856-9560-1c386d786ce6",
+              "source_id": "700fab87-fb00-4a00-bdb9-c8466875108d",
+              "ticker": "SBER",
+              "metric_code": "bank.net_interest_income",
+              "layer": "canonical",
+              "period": {
+                "source_key": "FLOW:2024-01-01:2024-12-31",
+                "key": "2024-FY",
+                "kind": "duration",
+                "start": "2024-01-01",
+                "end": "2024-12-31",
+                "code": "FY",
+                "calendar_year": 2024,
+                "is_cumulative": true,
+                "group": "annual"
+              },
+              "value": "2999600000000.0000000000",
+              "reported_value": "2999.6000000000",
+              "reported_unit": "billion_currency",
+              "scale_multiplier": "1000000000",
+              "unit": "currency",
+              "currency": "RUB",
+              "as_of_date": null,
+              "accounting_basis": "IFRS",
+              "consolidation_scope": "consolidated",
+              "methodology": {
+                "id": "b192c85d-c2ec-4bd6-a4b6-756a65f212ad",
+                "code": "bank_reported_net_interest_income",
+                "name": "Bank reported net interest income",
+                "accounting_basis": "IFRS",
+                "comparability_key": "bank.net_interest_income.reported",
+                "formula": "Reported net interest income."
+              },
+              "dimensions": {
+                "business_segment": "all",
+                "geography": "group"
+              },
+              "status": "canonical",
+              "review_status": "reviewed",
+              "has_source_conflict": false,
+              "supersedes_id": null,
+              "selection_reason": "initial",
+              "updated_at": "2026-10-19T18:10:39.810224+03:00"
+            },
+            {
+              "id": "e472f436-76ff-47c8-acb8-c1e9fb92a8d7",
+              "source_id": "0b739f84-b72f-4f6a-9754-15b0eb258e5e",
+              "ticker": "SBER",
+              "metric_code": "bank.net_interest_income",
+              "layer": "canonical",
+              "period": {
+                "source_key": "FLOW:2024-01-01:2024-06-30",
+                "key": "2024-H1",
+                "kind": "duration",
+                "start": "2024-01-01",
+                "end": "2024-06-30",
+                "code": "H1",
+                "calendar_year": 2024,
+                "is_cumulative": true,
+                "group": "interim"
+              },
+              "value": "1413100000000.0000000000",
+              "reported_value": "1413.1000000000",
+              "reported_unit": "billion_currency",
+              "scale_multiplier": "1000000000",
+              "unit": "currency",
+              "currency": "RUB",
+              "as_of_date": null,
+              "accounting_basis": "IFRS",
+              "consolidation_scope": "consolidated",
+              "methodology": {
+                "id": "b192c85d-c2ec-4bd6-a4b6-756a65f212ad",
+                "code": "bank_reported_net_interest_income",
+                "name": "Bank reported net interest income",
+                "accounting_basis": "IFRS",
+                "comparability_key": "bank.net_interest_income.reported",
+                "formula": "Reported net interest income."
+              },
+              "dimensions": {
+                "business_segment": "all",
+                "geography": "group"
+              },
+              "status": "canonical",
+              "review_status": "reviewed",
+              "has_source_conflict": false,
+              "supersedes_id": null,
+              "selection_reason": "initial",
+              "updated_at": "2026-10-19T18:10:39.810224+03:00"
+            },
+            {
+              "id": "5bf90abb-9720-479b-9e37-f6e4d74d313d",
+              "source_id": "c3cfa0d1-16d6-44af-8d31-088dfa74a110",
+              "ticker": "SBER",
+              "metric_code": "bank.net_interest_income",
+              "layer": "canonical",
+              "period": {
+                "source_key": "FLOW:2023-01-01:2023-12-31",
+                "key": "2023-FY",
+                "kind": "duration",
+                "start": "2023-01-01",
+                "end": "2023-12-31",
+                "code": "FY",
+                "calendar_year": 2023,
+                "is_cumulative": true,
+                "group": "annual"
+              },
+              "value": "2564600000000.0000000000",
+              "reported_value": "2564.6000000000",
+              "reported_unit": "billion_currency",
+              "scale_multiplier": "1000000000",
+              "unit": "currency",
+              "currency": "RUB",
+              "as_of_date": null,
+              "accounting_basis": "IFRS",
+              "consolidation_scope": "consolidated",
+              "methodology": {
+                "id": "b192c85d-c2ec-4bd6-a4b6-756a65f212ad",
+                "code": "bank_reported_net_interest_income",
+                "name": "Bank reported net interest income",
+                "accounting_basis": "IFRS",
+                "comparability_key": "bank.net_interest_income.reported",
+                "formula": "Reported net interest income."
+              },
+              "dimensions": {
+                "business_segment": "all",
+                "geography": "group"
+              },
+              "status": "canonical",
+              "review_status": "reviewed",
+              "has_source_conflict": false,
+              "supersedes_id": null,
+              "selection_reason": "initial",
+              "updated_at": "2026-10-19T18:10:39.810224+03:00"
+            },
+            {
+              "id": "047f9e9d-10be-4950-99c8-e19b3b7c087f",
+              "source_id": "e92218df-2c28-4c3c-8cff-8c4bd32bd0c6",
+              "ticker": "SBER",
+              "metric_code": "fin.net_income",
+              "layer": "canonical",
+              "period": {
+                "source_key": "FLOW:2024-01-01:2024-12-31",
+                "key": "2024-FY",
+                "kind": "duration",
+                "start": "2024-01-01",
+                "end": "2024-12-31",
+                "code": "FY",
+                "calendar_year": 2024,
+                "is_cumulative": true,
+                "group": "annual"
+              },
+              "value": "1580300000000.0000000000",
+              "reported_value": "1580.3000000000",
+              "reported_unit": "billion_currency",
+              "scale_multiplier": "1000000000.0000000000",
+              "unit": "currency",
+              "currency": "RUB",
+              "as_of_date": null,
+              "accounting_basis": "IFRS",
+              "consolidation_scope": "consolidated",
+              "methodology": {
+                "id": "7fe5af0f-b214-442f-9490-839f6203b1af",
+                "code": "ifrs_reported_net_income",
+                "name": "IFRS reported net income",
+                "accounting_basis": "IFRS",
+                "comparability_key": "ifrs.net_income.group",
+                "formula": "Reported profit for the period."
+              },
+              "dimensions": {},
+              "status": "canonical",
+              "review_status": "reviewed",
+              "has_source_conflict": false,
+              "supersedes_id": null,
+              "selection_reason": "initial",
+              "updated_at": "2026-10-20T00:43:50.722930+03:00"
+            }
+          ],
+          "choices": []
+        }
+      ],
+      "evidence": [
+        {
+          "dataset": {
+            "version": "20261102T093659Z-6c5d7d2f",
+            "schema_version": 1,
+            "built_at": "2026-11-02T09:36:59.656860Z",
+            "published_at": "2026-11-02T09:41:25.196779Z",
+            "source_updated_at": "2026-11-02T01:33:34.649371+03:00"
+          },
+          "status": "ok",
+          "message": null,
+          "page": {
+            "returned": 3,
+            "limit": 20,
+            "next_cursor": null
+          },
+          "items": [
+            {
+              "source_id": "700fab87-fb00-4a00-bdb9-c8466875108d",
+              "kind": "document",
+              "document_id": "d00163cf-bea7-488f-ac42-47a77a5f7fff",
+              "title": "reporting_q4_aolql6na_2025.pdf",
+              "document_date": null,
+              "official_url": null,
+              "sha256": "06ac4bd4164d576e8256c1458730b04e505a5a784868fb93a81041e92e00f91f",
+              "locator": {
+                "page": 6,
+                "table": 1,
+                "row": 7,
+                "column": 3,
+                "sheet": null,
+                "cell_expression": null,
+                "cell": null
+              },
+              "source_class": "other_official",
+              "review_status": "reviewed",
+              "reviewed_at": "2026-10-19T18:10:39.810224+03:00",
+              "calculation": null,
+              "original_available": false,
+              "verification_scope": "stored_metadata"
+            },
+            {
+              "source_id": "0b739f84-b72f-4f6a-9754-15b0eb258e5e",
+              "kind": "document",
+              "document_id": "e59e0a3d-2692-438e-ab49-e75036f1cfe9",
+              "title": "2024_j8tfslv1_reporting.pdf",
+              "document_date": null,
+              "official_url": null,
+              "sha256": "44e423398dfb4e3c98058627c5da7178f5f5628cf0346c66bb1dae56133d74bc",
+              "locator": {
+                "page": 6,
+                "table": 1,
+                "row": 7,
+                "column": 2,
+                "sheet": null,
+                "cell_expression": null,
+                "cell": null
+              },
+              "source_class": "other_official",
+              "review_status": "reviewed",
+              "reviewed_at": "2026-10-19T18:10:39.810224+03:00",
+              "calculation": null,
+              "original_available": false,
+              "verification_scope": "stored_metadata"
+            },
+            {
+              "source_id": "c3cfa0d1-16d6-44af-8d31-088dfa74a110",
+              "kind": "document",
+              "document_id": "66eeb409-eff0-4edf-bcff-e29c25a18e22",
+              "title": "2023_ifrs_reporting.pdf",
+              "document_date": null,
+              "official_url": null,
+              "sha256": "724849f5047bb32bb1e13cb1d736b609a16d25974c9baf6ed805db4ed6a05b87",
+              "locator": {
+                "page": 6,
+                "table": 1,
+                "row": 7,
+                "column": 2,
+                "sheet": null,
+                "cell_expression": null,
+                "cell": null
+              },
+              "source_class": "other_official",
+              "review_status": "reviewed",
+              "reviewed_at": "2026-10-19T18:10:39.810224+03:00",
+              "calculation": null,
+              "original_available": false,
+              "verification_scope": "stored_metadata"
+            }
+          ],
+          "choices": []
+        }
+      ]
+    },
+    "LKOH": {
+      "search": [
+        {
+          "dataset": {
+            "version": "20261102T093659Z-6c5d7d2f",
+            "schema_version": 1,
+            "built_at": "2026-11-02T09:36:59.656860Z",
+            "published_at": "2026-11-02T09:41:25.196779Z",
+            "source_updated_at": "2026-11-02T01:33:34.649371+03:00"
+          },
+          "status": "ok",
+          "message": null,
+          "page": {
+            "returned": 1,
+            "limit": 20,
+            "next_cursor": null
+          },
+          "items": [
+            {
+              "id": "2c3963d2-16ad-4980-a94a-77c1b6c17837",
+              "ticker": "LKOH",
+              "name": "ПАО «ЛУКОЙЛ»",
+              "industry": null
+            }
+          ],
+          "choices": []
+        }
+      ],
+      "metrics": [
+        {
+          "dataset": {
+            "version": "20261102T093659Z-6c5d7d2f",
+            "schema_version": 1,
+            "built_at": "2026-11-02T09:36:59.656860Z",
+            "published_at": "2026-11-02T09:41:25.196779Z",
+            "source_updated_at": "2026-11-02T01:33:34.649371+03:00"
+          },
+          "status": "ok",
+          "message": null,
+          "page": {
+            "returned": 2,
+            "limit": 20,
+            "next_cursor": null
+          },
+          "items": [
+            {
+              "id": "c6a7d6e1-1bb2-44d1-9218-7b4947d46c43",
+              "code": "fin.revenue",
+              "name_ru": "Выручка",
+              "name_en": "Revenue",
+              "description": "Income arising in the course of the entity's ordinary activities.",
+              "comparability_policy": "Compare only matching accounting basis, consolidation scope, period, and continuing-operation scope.",
+              "scope": "universal",
+              "owner_id": null,
+              "industry": null,
+              "domain": "financial",
+              "statement": "income_statement",
+              "parent_code": null,
+              "measure_type": "flow",
+              "canonical_unit": "currency",
+              "accounting_basis": "IFRS",
+              "active": true,
+              "version": 1,
+              "methodologies": [
+                {
+                  "id": "51a5322d-dbdb-4712-8123-daff543a2e6d",
+                  "code": "ifrs_reported_revenue",
+                  "name": "IFRS reported revenue",
+                  "accounting_basis": "IFRS",
+                  "comparability_key": "ifrs.revenue.reported",
+                  "formula": "Reported revenue under the IFRS standards applicable to the reporting period and the issuer's accounting policy."
+                }
+              ],
+              "aliases": [
+                "fin.revenue",
+                "revenue",
+                "sales revenue",
+                "total revenue",
+                "выручка",
+                "выручка от продаж",
+                "выручка от реализации",
+                "выручка по договорам с покупателями",
+                "доходы от реализации"
+              ],
+              "variants": [
+                {
+                  "selector": "10d4fb7513ff6e18fdefb82b",
+                  "ticker": "LKOH",
+                  "metric_code": "fin.revenue",
+                  "name": null,
+                  "variant": "10d4fb7513ff6e18fdefb82b",
+                  "accounting_basis": "IFRS",
+                  "consolidation_scope": "consolidated",
+                  "methodology": "ifrs_reported_revenue",
+                  "dimensions": {}
+                },
+                {
+                  "selector": "6ebe0f4a2cbbfae9154ae7d7",
+                  "ticker": "LKOH",
+                  "metric_code": "fin.revenue",
+                  "name": null,
+                  "variant": "6ebe0f4a2cbbfae9154ae7d7",
+                  "accounting_basis": "IFRS",
+                  "consolidation_scope": "consolidated",
+                  "methodology": "ifrs_reported_revenue",
+                  "dimensions": {
+                    "geography": "group",
+                    "business_segment": "all"
+                  }
+                },
+                {
+                  "selector": "f6301659a636de8da00591da",
+                  "ticker": "LKOH",
+                  "metric_code": "fin.revenue",
+                  "name": null,
+                  "variant": "f6301659a636de8da00591da",
+                  "accounting_basis": "IFRS",
+                  "consolidation_scope": "consolidated",
+                  "methodology": "ifrs_reported_revenue",
+                  "dimensions": {
+                    "geography": "group",
+                    "business_segment": "all"
+                  }
+                }
+              ],
+              "details_truncated": false
+            },
+            {
+              "id": "50d73811-b20f-409a-90e9-b4f6aea8daa8",
+              "code": "fin.us_gaap.revenue_including_excise_export_duties",
+              "name_ru": "US GAAP: выручка с акцизами и экспортными пошлинами",
+              "name_en": "US GAAP revenue including excise and export duties",
+              "description": "Published US GAAP sales revenue explicitly including excise taxes and export duties. Duties and excise are not subtracted. Distinct from IFRS/RAS revenue and from net-of-tax revenue.",
+              "comparability_policy": "Compare only the same metric, source composition, accounting basis/policy, full interval, currency, consolidation scope and operation scope. Do not substitute a different income subtotal.",
+              "scope": "universal",
+              "owner_id": null,
+              "industry": null,
+              "domain": "financial",
+              "statement": "income_statement",
+              "parent_code": null,
+              "measure_type": "flow",
+              "canonical_unit": "currency",
+              "accounting_basis": "US_GAAP",
+              "active": true,
+              "version": 1,
+              "methodologies": [
+                {
+                  "id": "2238ec92-a027-4c23-a810-bd2cbb08c502",
+                  "code": "us_gaap_reported_revenue_including_excise_export_duties",
+                  "name": "US GAAP revenue including excise and export duties",
+                  "accounting_basis": "US_GAAP",
+                  "comparability_key": "fin.us_gaap.revenue_including_excise_export_duties.reported",
+                  "formula": "Published US GAAP sales revenue explicitly including excise taxes and export duties. Duties and excise are not subtracted. Distinct from IFRS/RAS revenue and from net-of-tax revenue."
+                }
+              ],
+              "aliases": [
+                "fin.us_gaap.revenue_including_excise_export_duties",
+                "us gaap revenue including excise and export duties",
+                "us gaap: выручка с акцизами и экспортными пошлинами"
+              ],
+              "variants": [
+                {
+                  "selector": "7554eabfe9e42c0dc299277f",
+                  "ticker": "LKOH",
+                  "metric_code": "fin.us_gaap.revenue_including_excise_export_duties",
+                  "name": null,
+                  "variant": "7554eabfe9e42c0dc299277f",
+                  "accounting_basis": "US_GAAP",
+                  "consolidation_scope": "consolidated",
+                  "methodology": "us_gaap_reported_revenue_including_excise_export_duties",
+                  "dimensions": {
+                    "business_segment": "all",
+                    "geography": "group"
+                  }
+                }
+              ],
+              "details_truncated": false
+            }
+          ],
+          "choices": []
+        }
+      ],
+      "coverage": [
+        {
+          "dataset": {
+            "version": "20261102T093659Z-6c5d7d2f",
+            "schema_version": 1,
+            "built_at": "2026-11-02T09:36:59.656860Z",
+            "published_at": "2026-11-02T09:41:25.196779Z",
+            "source_updated_at": "2026-11-02T01:33:34.649371+03:00"
+          },
+          "status": "ok",
+          "message": null,
+          "page": {
+            "returned": 12,
+            "limit": 20,
+            "next_cursor": null
+          },
+          "items": [
+            {
+              "ticker": "LKOH",
+              "metric_code": "fin.revenue",
+              "period_key": "2023-FY",
+              "availability": "available",
+              "variants": 1,
+              "updated_at": "2026-08-12T12:00:00+03:00"
+            },
+            {
+              "ticker": "LKOH",
+              "metric_code": "fin.revenue",
+              "period_key": "2024-H1",
+              "availability": "available",
+              "variants": 1,
+              "updated_at": "2026-08-12T12:00:00+03:00"
+            },
+            {
+              "ticker": "LKOH",
+              "metric_code": "fin.revenue",
+              "period_key": "2024-FY",
+              "availability": "available",
+              "variants": 1,
+              "updated_at": "2026-08-12T12:00:00+03:00"
+            },
+            {
+              "ticker": "LKOH",
+              "metric_code": "fin.net_income",
+              "period_key": "2023-FY",
+              "availability": "available",
+              "variants": 1,
+              "updated_at": "2026-08-12T12:00:00+03:00"
+            },
+            {
+              "ticker": "LKOH",
+              "metric_code": "fin.net_income",
+              "period_key": "2024-H1",
+              "availability": "available",
+              "variants": 1,
+              "updated_at": "2026-08-12T12:00:00+03:00"
+            },
+            {
+              "ticker": "LKOH",
+              "metric_code": "fin.net_income",
+              "period_key": "2024-FY",
+              "availability": "available",
+              "variants": 1,
+              "updated_at": "2026-08-12T12:00:00+03:00"
+            },
+            {
+              "ticker": "LKOH",
+              "metric_code": "fin.ebitda",
+              "period_key": "2023-FY",
+              "availability": "missing",
+              "variants": 0,
+              "updated_at": null
+            },
+            {
+              "ticker": "LKOH",
+              "metric_code": "fin.ebitda",
+              "period_key": "2024-H1",
+              "availability": "missing",
+              "variants": 0,
+              "updated_at": null
+            },
+            {
+              "ticker": "LKOH",
+              "metric_code": "fin.ebitda",
+              "period_key": "2024-FY",
+              "availability": "missing",
+              "variants": 0,
+              "updated_at": null
+            },
+            {
+              "ticker": "LKOH",
+              "metric_code": "fin.interest_bearing_debt",
+              "period_key": "2023-FY",
+              "availability": "missing",
+              "variants": 0,
+              "updated_at": null
+            },
+            {
+              "ticker": "LKOH",
+              "metric_code": "fin.interest_bearing_debt",
+              "period_key": "2024-H1",
+              "availability": "missing",
+              "variants": 0,
+              "updated_at": null
+            },
+            {
+              "ticker": "LKOH",
+              "metric_code": "fin.interest_bearing_debt",
+              "period_key": "2024-FY",
+              "availability": "missing",
+              "variants": 0,
+              "updated_at": null
+            }
+          ],
+          "choices": []
+        }
+      ],
+      "series": [
+        {
+          "dataset": {
+            "version": "20261102T093659Z-6c5d7d2f",
+            "schema_version": 1,
+            "built_at": "2026-11-02T09:36:59.656860Z",
+            "published_at": "2026-11-02T09:41:25.196779Z",
+            "source_updated_at": "2026-11-02T01:33:34.649371+03:00"
+          },
+          "status": "ok",
+          "message": null,
+          "page": {
+            "returned": 6,
+            "limit": 20,
+            "next_cursor": null
+          },
+          "items": [
+            {
+              "id": "f11f3563-2047-4384-a5ab-9b22320899cd",
+              "source_id": "3ce9d2ba-c974-4134-8467-1e5f312ee3d4",
+              "ticker": "LKOH",
+              "metric_code": "fin.net_income",
+              "layer": "canonical",
+              "period": {
+                "source_key": "FY2024",
+                "key": "2024-FY",
+                "kind": "duration",
+                "start": "2024-01-01",
+                "end": "2024-12-31",
+                "code": "FY",
+                "calendar_year": 2024,
+                "is_cumulative": true,
+                "group": "annual"
+              },
+              "value": "851546000000.0000000000",
+              "reported_value": "851546.0000000000",
+              "reported_unit": "million_RUB",
+              "scale_multiplier": "1000000.0000000000",
+              "unit": "RUB",
+              "currency": "RUB",
+              "as_of_date": null,
+              "accounting_basis": "IFRS",
+              "consolidation_scope": "consolidated",
+              "methodology": {
+                "id": "7fe5af0f-b214-442f-9490-839f6203b1af",
+                "code": "ifrs_reported_net_income",
+                "name": "IFRS reported net income",
+                "accounting_basis": "IFRS",
+                "comparability_key": "ifrs.net_income.group",
+                "formula": "Reported profit for the period."
+              },
+              "dimensions": {
+                "business_segment": "all",
+                "geography": "group"
+              },
+              "status": "canonical",
+              "review_status": "reviewed",
+              "has_source_conflict": false,
+              "supersedes_id": null,
+              "selection_reason": "initial",
+              "updated_at": "2026-08-12T12:00:00+03:00"
+            },
+            {
+              "id": "5e1a7e06-804d-47ee-bf56-9416ab98bd9a",
+              "source_id": "7d3f185a-1729-40c3-9476-2784413c6f0e",
+              "ticker": "LKOH",
+              "metric_code": "fin.net_income",
+              "layer": "canonical",
+              "period": {
+                "source_key": "H1-2024",
+                "key": "2024-H1",
+                "kind": "duration",
+                "start": "2024-01-01",
+                "end": "2024-06-30",
+                "code": "H1",
+                "calendar_year": 2024,
+                "is_cumulative": true,
+                "group": "interim"
+              },
+              "value": "591542000000.0000000000",
+              "reported_value": "591542.0000000000",
+              "reported_unit": "million_RUB",
+              "scale_multiplier": "1000000.0000000000",
+              "unit": "RUB",
+              "currency": "RUB",
+              "as_of_date": null,
+              "accounting_basis": "IFRS",
+              "consolidation_scope": "consolidated",
+              "methodology": {
+                "id": "7fe5af0f-b214-442f-9490-839f6203b1af",
+                "code": "ifrs_reported_net_income",
+                "name": "IFRS reported net income",
+                "accounting_basis": "IFRS",
+                "comparability_key": "ifrs.net_income.group",
+                "formula": "Reported profit for the period."
+              },
+              "dimensions": {
+                "business_segment": "all",
+                "geography": "group"
+              },
+              "status": "canonical",
+              "review_status": "reviewed",
+              "has_source_conflict": false,
+              "supersedes_id": null,
+              "selection_reason": "initial",
+              "updated_at": "2026-08-12T12:00:00+03:00"
+            },
+            {
+              "id": "43c4af32-4362-473b-a5bb-b0365ff4dc00",
+              "source_id": "698760ab-6123-43a5-87e9-8ee96ace28ba",
+              "ticker": "LKOH",
+              "metric_code": "fin.net_income",
+              "layer": "canonical",
+              "period": {
+                "source_key": "FY2023",
+                "key": "2023-FY",
+                "kind": "duration",
+                "start": "2023-01-01",
+                "end": "2023-12-31",
+                "code": "FY",
+                "calendar_year": 2023,
+                "is_cumulative": true,
+                "group": "annual"
+              },
+              "value": "1160271000000.0000000000",
+              "reported_value": "1160271.0000000000",
+              "reported_unit": "million_RUB",
+              "scale_multiplier": "1000000.0000000000",
+              "unit": "RUB",
+              "currency": "RUB",
+              "as_of_date": null,
+              "accounting_basis": "IFRS",
+              "consolidation_scope": "consolidated",
+              "methodology": {
+                "id": "7fe5af0f-b214-442f-9490-839f6203b1af",
+                "code": "ifrs_reported_net_income",
+                "name": "IFRS reported net income",
+                "accounting_basis": "IFRS",
+                "comparability_key": "ifrs.net_income.group",
+                "formula": "Reported profit for the period."
+              },
+              "dimensions": {
+                "business_segment": "all",
+                "geography": "group"
+              },
+              "status": "canonical",
+              "review_status": "reviewed",
+              "has_source_conflict": false,
+              "supersedes_id": null,
+              "selection_reason": "initial",
+              "updated_at": "2026-08-12T12:00:00+03:00"
+            },
+            {
+              "id": "edf26d5f-4702-4f31-a9da-99899a7ecfb3",
+              "source_id": "fcc46ccc-f436-4dbe-99b6-b198f225614f",
+              "ticker": "LKOH",
+              "metric_code": "fin.revenue",
+              "layer": "canonical",
+              "period": {
+                "source_key": "FY2024",
+                "key": "2024-FY",
+                "kind": "duration",
+                "start": "2024-01-01",
+                "end": "2024-12-31",
+                "code": "FY",
+                "calendar_year": 2024,
+                "is_cumulative": true,
+                "group": "annual"
+              },
+              "value": "8621561000000.0000000000",
+              "reported_value": "8621561.0000000000",
+              "reported_unit": "million_RUB",
+              "scale_multiplier": "1000000.0000000000",
+              "unit": "RUB",
+              "currency": "RUB",
+              "as_of_date": null,
+              "accounting_basis": "IFRS",
+              "consolidation_scope": "consolidated",
+              "methodology": {
+                "id": "51a5322d-dbdb-4712-8123-daff543a2e6d",
+                "code": "ifrs_reported_revenue",
+                "name": "IFRS reported revenue",
+                "accounting_basis": "IFRS",
+                "comparability_key": "ifrs.revenue.reported",
+                "formula": "Reported revenue under the IFRS standards applicable to the reporting period and the issuer's accounting policy."
+              },
+              "dimensions": {
+                "geography": "group",
+                "business_segment": "all"
+              },
+              "status": "canonical",
+              "review_status": "reviewed",
+              "has_source_conflict": false,
+              "supersedes_id": null,
+              "selection_reason": "initial",
+              "updated_at": "2026-08-12T12:00:00+03:00"
+            },
+            {
+              "id": "b115d273-195f-4bc0-b90c-76190d7e812b",
+              "source_id": "daa5e2ce-a726-4293-85d7-e291fafda067",
+              "ticker": "LKOH",
+              "metric_code": "fin.revenue",
+              "layer": "canonical",
+              "period": {
+                "source_key": "H1-2024",
+                "key": "2024-H1",
+                "kind": "duration",
+                "start": "2024-01-01",
+                "end": "2024-06-30",
+                "code": "H1",
+                "calendar_year": 2024,
+                "is_cumulative": true,
+                "group": "interim"
+              },
+              "value": "4333568000000.0000000000",
+              "reported_value": "4333568.0000000000",
+              "reported_unit": "million_RUB",
+              "scale_multiplier": "1000000.0000000000",
+              "unit": "RUB",
+              "currency": "RUB",
+              "as_of_date": null,
+              "accounting_basis": "IFRS",
+              "consolidation_scope": "consolidated",
+              "methodology": {
+                "id": "51a5322d-dbdb-4712-8123-daff543a2e6d",
+                "code": "ifrs_reported_revenue",
+                "name": "IFRS reported revenue",
+                "accounting_basis": "IFRS",
+                "comparability_key": "ifrs.revenue.reported",
+                "formula": "Reported revenue under the IFRS standards applicable to the reporting period and the issuer's accounting policy."
+              },
+              "dimensions": {
+                "geography": "group",
+                "business_segment": "all"
+              },
+              "status": "canonical",
+              "review_status": "reviewed",
+              "has_source_conflict": false,
+              "supersedes_id": null,
+              "selection_reason": "initial",
+              "updated_at": "2026-08-12T12:00:00+03:00"
+            },
+            {
+              "id": "e16288ee-90e8-4d14-a738-8b2e765fd5b1",
+              "source_id": "d8385915-13a4-4d39-9ee0-7ea2d62812d7",
+              "ticker": "LKOH",
+              "metric_code": "fin.revenue",
+              "layer": "canonical",
+              "period": {
+                "source_key": "FY2023",
+                "key": "2023-FY",
+                "kind": "duration",
+                "start": "2023-01-01",
+                "end": "2023-12-31",
+                "code": "FY",
+                "calendar_year": 2023,
+                "is_cumulative": true,
+                "group": "annual"
+              },
+              "value": "7928303000000.0000000000",
+              "reported_value": "7928303.0000000000",
+              "reported_unit": "million_RUB",
+              "scale_multiplier": "1000000.0000000000",
+              "unit": "RUB",
+              "currency": "RUB",
+              "as_of_date": null,
+              "accounting_basis": "IFRS",
+              "consolidation_scope": "consolidated",
+              "methodology": {
+                "id": "51a5322d-dbdb-4712-8123-daff543a2e6d",
+                "code": "ifrs_reported_revenue",
+                "name": "IFRS reported revenue",
+                "accounting_basis": "IFRS",
+                "comparability_key": "ifrs.revenue.reported",
+                "formula": "Reported revenue under the IFRS standards applicable to the reporting period and the issuer's accounting policy."
+              },
+              "dimensions": {
+                "geography": "group",
+                "business_segment": "all"
+              },
+              "status": "canonical",
+              "review_status": "reviewed",
+              "has_source_conflict": false,
+              "supersedes_id": null,
+              "selection_reason": "initial",
+              "updated_at": "2026-08-12T12:00:00+03:00"
+            }
+          ],
+          "choices": []
+        }
+      ],
+      "evidence": [
+        {
+          "dataset": {
+            "version": "20261102T093659Z-6c5d7d2f",
+            "schema_version": 1,
+            "built_at": "2026-11-02T09:36:59.656860Z",
+            "published_at": "2026-11-02T09:41:25.196779Z",
+            "source_updated_at": "2026-11-02T01:33:34.649371+03:00"
+          },
+          "status": "ok",
+          "message": null,
+          "page": {
+            "returned": 3,
+            "limit": 20,
+            "next_cursor": null
+          },
+          "items": [
+            {
+              "source_id": "3ce9d2ba-c974-4134-8467-1e5f312ee3d4",
+              "kind": "document",
+              "document_id": "f1e2c876-1582-4e69-bde3-d59edca17c0a",
+              "title": "Повторно опубликованная консолидированная финансовая отчётность ПАО «ЛУКОЙЛ» за 2024 год",
+              "document_date": null,
+              "official_url": null,
+              "sha256": "fa0516cd39fa058228a6e963b7a877b50187936bd21591eb458412083d0088cf",
+              "locator": {
+                "page": 7,
+                "table": null,
+                "row": 21,
+                "column": null,
+                "sheet": null,
+                "cell_expression": null,
+                "cell": null
+              },
+              "source_class": "other_official",
+              "review_status": "reviewed",
+              "reviewed_at": "2026-08-12T12:00:00+03:00",
+              "calculation": null,
+              "original_available": false,
+              "verification_scope": "stored_metadata"
+            },
+            {
+              "source_id": "7d3f185a-1729-40c3-9476-2784413c6f0e",
+              "kind": "document",
+              "document_id": "187d9f94-2a99-48b2-9cf0-3e69fd6398f8",
+              "title": "Раскрываемая консолидированная финансовая отчётность ПАО «ЛУКОЙЛ» за 6 месяцев 2024 года",
+              "document_date": null,
+              "official_url": null,
+              "sha256": "4d4e829ccd64d9ba7af611616b74257058d03066d8828b1fbab1400e0b923d69",
+              "locator": {
+                "page": 5,
+                "table": null,
+                "row": 22,
+                "column": null,
+                "sheet": null,
+                "cell_expression": null,
+                "cell": null
+              },
+              "source_class": "other_official",
+              "review_status": "reviewed",
+              "reviewed_at": "2026-08-12T12:00:00+03:00",
+              "calculation": null,
+              "original_available": false,
+              "verification_scope": "stored_metadata"
+            },
+            {
+              "source_id": "698760ab-6123-43a5-87e9-8ee96ace28ba",
+              "kind": "document",
+              "document_id": "0fe760de-96af-4453-a9aa-b43cb22a42c9",
+              "title": "Повторно опубликованная консолидированная финансовая отчётность ПАО «ЛУКОЙЛ» за 2023 год",
+              "document_date": null,
+              "official_url": null,
+              "sha256": "8bcd648a9465ccfd2158eb18f1de2eb54246c02741c517923cb0b03ea76a7e94",
+              "locator": {
+                "page": 7,
+                "table": null,
+                "row": 22,
+                "column": null,
+                "sheet": null,
+                "cell_expression": null,
+                "cell": null
+              },
+              "source_class": "other_official",
+              "review_status": "reviewed",
+              "reviewed_at": "2026-08-12T12:00:00+03:00",
+              "calculation": null,
+              "original_available": false,
+              "verification_scope": "stored_metadata"
+            }
+          ],
+          "choices": []
+        }
+      ]
+    }
+  }
+}
