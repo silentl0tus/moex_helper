@@ -1,0 +1,39 @@
+name: Update Magellan Cache
+
+on:
+  schedule:
+    # Каждый будний день в 09:15 по Москве (06:15 UTC) перед открытием торгов
+    - cron: '15 6 * * 1-5'
+  # Позволяет запустить вручную из GitHub UI
+  workflow_dispatch:
+
+jobs:
+  fetch-magellan:
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run Magellan parser
+        run: python scripts/fetch_magellan.py
+
+      - name: Commit and push updated cache
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add data/magellan_cache.json
+          git diff --staged --quiet || git commit -m "chore: update magellan cache [$(date +'%Y-%m-%d %H:%M UTC')]"
+          git push

@@ -432,8 +432,7 @@ def fetch_magellan_order_flow(period: str = "today") -> dict:
     try:
         from src.magellan_gateway import MagellanGateway
         return MagellanGateway().get_order_flow(period)
-    except Exception as exc:
-        st.sidebar.warning(f"Ошибка загрузки Order Flow (Magellan): {exc}")
+    except Exception:
         return {}
 
 @st.cache_data(ttl=1800)
@@ -441,8 +440,7 @@ def fetch_magellan_banks_summary() -> dict:
     try:
         from src.magellan_gateway import MagellanGateway
         return MagellanGateway().get_banks_summary()
-    except Exception as exc:
-        st.sidebar.warning(f"Ошибка загрузки банков (Magellan): {exc}")
+    except Exception:
         return {}
 
 @st.cache_data(ttl=1800)
@@ -458,8 +456,7 @@ def fetch_bonds_stress_radar() -> dict:
     try:
         from src.magellan_gateway import MagellanGateway
         return MagellanGateway().get_bonds_stress_radar()
-    except Exception as exc:
-        st.sidebar.warning(f"Ошибка загрузки долгового радара: {exc}")
+    except Exception:
         return {}
 
 @st.cache_data(ttl=1800)
