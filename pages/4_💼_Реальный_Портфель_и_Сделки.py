@@ -422,7 +422,12 @@ with tab_timeline:
     st.subheader("📈 Историческая траектория капитала vs Зеркальные Бенчмарки")
     st.caption("Сравнение фактической динамики портфеля со сценарием: что было бы, если бы те же самые суммы пополнений в те же даты инвестировались в Индекс полной доходности MCFTRR или ценовой IMOEX (как на izi.invest).")
 
-    timeline_df, bench_ret_pct = calculate_mirror_benchmark_timeline(df_trades, tot_val, bench_symbol="MCFTRR")
+    timeline_df, bench_ret_pct = calculate_mirror_benchmark_timeline(
+        df_trades,
+        tot_val,
+        bench_symbol="MCFTRR",
+        portfolio_timeline=portfolio_data.get("portfolio_timeline")
+    )
 
     if not timeline_df.empty:
         metrics_dict = timeline_df.attrs.get("metrics", {})
