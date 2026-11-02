@@ -434,7 +434,7 @@ with tab1:
             st.write(f"Рекомендуемый фильтр ROE: **≥ {rec_roe}%**")
             st.write(f"Рекомендуемый лимит долга Debt/EBITDA: **≤ {rec_debt}x**")
             
-            if st.button("⚡ Применить к Скринеру (Шаг 2)", use_container_width=True):
+            if st.button("⚡ Применить к Скринеру (Шаг 2)", width="stretch"):
                 st.session_state["wizard_min_roe"] = rec_roe
                 st.session_state["wizard_max_debt"] = rec_debt
                 st.success("✅ Параметры применены! Переходите на вкладку «2. Фундаментальный скринер».")
@@ -607,7 +607,7 @@ with tab2:
                 "Н1.0 (ЦБ) %": st.column_config.NumberColumn("Н1.0 (ЦБ) %", format="%.1f%%", help="Норматив достаточности совокупного капитала ЦБ РФ (Только для банков, норматив >= 8.0%)"),
                 "Дивиденд ₽": st.column_config.NumberColumn("Дивиденд ₽", format="%.2f ₽", help="Выплаченный или прогнозный дивиденд на акцию LTM"),
             },
-            use_container_width=True,
+            width="stretch",
             height=360
         )
 
@@ -635,14 +635,14 @@ with tab2:
         with c_pick2:
             st.write("")
             top_3 = filtered['ticker'].head(3).tolist()
-            if st.button(f"⚡ Взять Топ-3 ({', '.join(top_3)})", use_container_width=True):
+            if st.button(f"⚡ Взять Топ-3 ({', '.join(top_3)})", width="stretch"):
                 st.session_state["wizard_basket"] = top_3
                 for t in top_3:
                     st.session_state["wizard_sentiment_flags"][t] = True
                 st.rerun()
 
             top_5 = filtered['ticker'].head(5).tolist()
-            if st.button(f"⚡ Взять Топ-5", use_container_width=True):
+            if st.button(f"⚡ Взять Топ-5", width="stretch"):
                 st.session_state["wizard_basket"] = top_5
                 for t in top_5:
                     st.session_state["wizard_sentiment_flags"][t] = True
@@ -938,7 +938,7 @@ with tab4:
                     "Вес (%)": st.column_config.NumberColumn("Вес (%)", format="%.1f%%"),
                     "Сумма покупки (₽)": st.column_config.NumberColumn("Сумма покупки (₽)", format="%.0f ₽"),
                 },
-                use_container_width=True
+                width="stretch"
             )
 
             if cash_buffer_pct > 0.1:
@@ -992,7 +992,7 @@ with tab5:
                 "Транш 2 (Коррекция -3%, 30%)": st.column_config.NumberColumn("Транш 2 (30%)", format="%.0f ₽"),
                 "Транш 3 (Тренд, 30%)": st.column_config.NumberColumn("Транш 3 (30%)", format="%.0f ₽"),
             },
-            use_container_width=True
+            width="stretch"
         )
 
         st.divider()

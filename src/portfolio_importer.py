@@ -28,15 +28,58 @@ except ImportError:
 # Безопасный лимит размера файла брокерского отчета (DoS/OOM защита)
 MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024  # 25 МБ
 
-# Известные сплиты и консолидации акций на MOEX
+# Известные сплиты, консолидации и корпоративные увеличения капитала на MOEX
 # format: {ticker: [(split_date, ratio)]}
-# ratio: во сколько раз изменилось количество акций
+# ratio: во сколько раз изменилось количество акций (цена делится на ratio)
 # TRNFP: 1:100 сплит 14.02.2024 (1 старая акция -> 100 новых)
 # VTBR: 5000:1 консолидация 09.07.2024 (5000 старых акций -> 1 новая)
+# BELU/NOVA: 1:8 увеличение капитала с бесплатным начислением 7 бонусных акций на 1 имеющуюся (август 2024 г., отсечка 16.08.2024, возобновление торгов 22.08.2024)
 STOCK_SPLITS: Dict[str, List[Tuple[pd.Timestamp, float]]] = {
     "TRNFP": [(pd.to_datetime("2024-02-14"), 100.0)],
     "VTBR": [(pd.to_datetime("2024-07-09"), 1.0 / 5000.0)],
+    "BELU": [(pd.to_datetime("2024-08-20"), 8.0)],
+    "NOVA": [(pd.to_datetime("2024-08-20"), 8.0)],
 }
+
+# Сплиты, требующие ручной корректировки исторических рядов котировок (candles)
+# MOEX ISS автоматически скорректировал историю для TRNFP и VTBR, но НЕ скорректировал для BELU,
+# так как юридически распределение бонусных акций оформлялось через допэмиссию уставного капитала.
+CANDLE_SERIES_SPLITS: Dict[str, List[Tuple[pd.Timestamp, float]]] = {
+    "BELU": [(pd.to_datetime("2024-08-20"), 8.0)],
+    "NOVA": [(pd.to_datetime("2024-08-20"), 8.0)],
+}
+
+def adjust_series_for_splits(ticker: str, s: pd.Series) -> pd.Series:
+    """
+    Корректирует исторический ряд цен акций (close candles) под корпоративные сплиты.
+    Для BELU/NOVA пересчитывает цены до 20.08.2024 делением на 8.0,
+    устраняя искусственный обвал котировок (с 3800-4700 ₽ до 250-700 ₽) в бэктестах и графиках.
+    """
+    if s is None or s.empty:
+        return s
+
+    splits = CANDLE_SERIES_SPLITS.get(ticker.upper())
+    if not splits:
+        return s
+
+    s_adj = s.copy()
+    try:
+        s_idx = pd.to_datetime(s_adj.index)
+        if hasattr(s_idx, "tz_localize") and getattr(s_idx, "tz", None) is not None:
+            s_idx = s_idx.tz_localize(None)
+
+        for split_date, mult in splits:
+            s_dt = pd.to_datetime(split_date)
+            if hasattr(s_dt, "tz_localize") and getattr(s_dt, "tz", None) is not None:
+                s_dt = s_dt.tz_localize(None)
+
+            mask = s_idx < s_dt
+            if mult != 0 and mask.any():
+                s_adj.iloc[mask] = (s_adj.iloc[mask] / mult).round(2)
+    except Exception:
+        pass
+
+    return s_adj
 
 def adjust_trade_for_splits(ticker: str, trade_date: pd.Timestamp, qty: float, price: float) -> Tuple[float, float]:
     """
@@ -341,8 +384,10 @@ def reconstruct_positions_from_trades(trades_df: pd.DataFrame) -> pd.DataFrame:
                 cost = cost * fx
             price_rub = get_bond_rub_valuation(t, price, 1000.0, 0.0, curr, fx_rates)
         else:
-            # Корректировка на корпоративные сплиты (TRNFP 1:100, VTBR 1:5000)
-            qty, price = adjust_trade_for_splits(t, trade_date, qty, price)
+            # Корректировка на корпоративные сплиты (TRNFP 1:100, VTBR 1:5000, BELU 1:8)
+            # Применяем только если trades_df еще не был нормализован при парсинге
+            if not getattr(trades, "attrs", {}).get("splits_adjusted", False):
+                qty, price = adjust_trade_for_splits(t, trade_date, qty, price)
             price_rub = price
 
         if cost == 0.0 and price_rub > 0:
@@ -627,11 +672,42 @@ def parse_izi_invest_excel(file_bytes: bytes, source_id: str = "export", identif
             if "Сумма" not in t_df.columns:
                 t_df["Сумма"] = t_df["Количество"] * t_df["Цена"]
 
+            # Нормализация сделок с учетом корпоративных сплитов (TRNFP 1:100, VTBR 1:5000, BELU/NOVA 1:8)
+            adj_qtys = []
+            adj_prices = []
+            adj_sums = []
+            for _, r_tr in t_df.iterrows():
+                tr_t = str(r_tr.get("Тикер", "")).strip().upper()
+                tr_d = r_tr.get("Дата")
+                tr_q = float(r_tr.get("Количество", 0.0) or 0.0)
+                tr_p = float(r_tr.get("Цена", 0.0) or 0.0)
+                tr_s = float(r_tr.get("Сумма", 0.0) or 0.0)
+
+                if tr_t in STOCK_SPLITS and tr_d is not None and not pd.isna(tr_d):
+                    adj_q, adj_p = adjust_trade_for_splits(tr_t, tr_d, abs(tr_q), tr_p)
+                    if tr_q < 0:
+                        adj_q = -abs(adj_q)
+                    adj_qtys.append(adj_q)
+                    adj_prices.append(adj_p)
+                    if tr_s == 0.0 and adj_p > 0:
+                        adj_sums.append(round(abs(adj_q) * adj_p, 2))
+                    else:
+                        adj_sums.append(tr_s)
+                else:
+                    adj_qtys.append(tr_q)
+                    adj_prices.append(tr_p)
+                    adj_sums.append(tr_s)
+
+            t_df["Количество"] = adj_qtys
+            t_df["Цена"] = adj_prices
+            t_df["Сумма"] = adj_sums
+
             bank_fee = t_df.get("Комиссия банка", pd.Series(0.0, index=t_df.index))
             ts_fee = t_df.get("Комиссия ТС", pd.Series(0.0, index=t_df.index))
             t_df["Комиссия, ₽"] = (pd.to_numeric(bank_fee, errors="coerce").fillna(0.0).abs() + pd.to_numeric(ts_fee, errors="coerce").fillna(0.0).abs()).round(2)
 
             trades_df = t_df.sort_values(by="Дата", ascending=False).reset_index(drop=True)
+            trades_df.attrs["splits_adjusted"] = True
 
     # 2. Парсинг открытых позиций
     positions_df = pd.DataFrame()
@@ -700,6 +776,28 @@ def parse_izi_invest_excel(file_bytes: bytes, source_id: str = "export", identif
             p_df["Средняя цена"] = avg_prices_rub
             p_df["Количество"] = p_df.get("Количество", 0.0).astype(float)
 
+            # Защитная нормализация открытых позиций под сплиты, если в файле старые непересчитанные данные
+            norm_qtys = []
+            norm_avg_prices = []
+            for _, r_p in p_df.iterrows():
+                pt = str(r_p.get("Тикер", "")).strip().upper()
+                pq = float(r_p.get("Количество", 0.0) or 0.0)
+                pa = float(r_p.get("Средняя цена", 0.0) or 0.0)
+                if pt in ["BELU", "NOVA"] and pa > 800.0:
+                    # Досплитная цена Белуги (3800 ₽ и т.д.) -> пересчитываем себестоимость делением на 8
+                    pa = round(pa / 8.0, 2)
+                    pq = pq * 8.0
+                elif pt == "TRNFP" and pa > 10000.0:
+                    pa = round(pa / 100.0, 2)
+                    pq = pq * 100.0
+                elif pt == "VTBR" and 0.0 < pa < 1.0:
+                    pa = round(pa * 5000.0, 4)
+                    pq = pq / 5000.0
+                norm_qtys.append(pq)
+                norm_avg_prices.append(pa)
+            p_df["Количество"] = norm_qtys
+            p_df["Средняя цена"] = norm_avg_prices
+
             p_df["Текущая стоимость"] = p_df["Количество"] * p_df["Текущая цена"]
             p_df["Вложенная сумма"] = p_df["Количество"] * p_df["Средняя цена"]
             p_df["Прибыль, ₽"] = p_df["Текущая стоимость"] - p_df["Вложенная сумма"]
@@ -761,6 +859,39 @@ def parse_izi_invest_excel(file_bytes: bytes, source_id: str = "export", identif
             f_df["Цена покупки"] = pd.to_numeric(f_df[buy_p], errors="coerce").fillna(0.0)
             f_df["Цена продажи"] = pd.to_numeric(f_df[sell_p], errors="coerce").fillna(0.0)
             f_df["Кол."] = pd.to_numeric(f_df.get("Кол.", f_df.get("Количество", 1.0)), errors="coerce").fillna(1.0)
+
+            # Защитная нормализация цен и объемов закрытых сделок FIFO под сплиты
+            ticker_fifo_col = next((c for c in f_df.columns if any(k in str(c).lower() for k in ["тикер", "ticker", "secid"])), None)
+            if ticker_fifo_col:
+                adj_buy_prices = []
+                adj_sell_prices = []
+                adj_qtys = []
+                for _, r_f in f_df.iterrows():
+                    f_t = str(r_f.get(ticker_fifo_col, "")).strip().upper()
+                    bp = float(r_f.get("Цена покупки", 0.0) or 0.0)
+                    sp = float(r_f.get("Цена продажи", 0.0) or 0.0)
+                    q = float(r_f.get("Кол.", 1.0) or 1.0)
+                    if f_t in ["BELU", "NOVA"] and bp > 800.0:
+                        bp = round(bp / 8.0, 2)
+                        q = q * 8.0
+                        if sp > 800.0:
+                            sp = round(sp / 8.0, 2)
+                    elif f_t == "TRNFP" and bp > 10000.0:
+                        bp = round(bp / 100.0, 2)
+                        q = q * 100.0
+                        if sp > 10000.0:
+                            sp = round(sp / 100.0, 2)
+                    elif f_t == "VTBR" and 0.0 < bp < 1.0:
+                        bp = round(bp * 5000.0, 4)
+                        q = q / 5000.0
+                        if 0.0 < sp < 1.0:
+                            sp = round(sp * 5000.0, 4)
+                    adj_buy_prices.append(bp)
+                    adj_sell_prices.append(sp)
+                    adj_qtys.append(q)
+                f_df["Цена покупки"] = adj_buy_prices
+                f_df["Цена продажи"] = adj_sell_prices
+                f_df["Кол."] = adj_qtys
 
             f_df["Прибыль, ₽"] = (f_df["Цена продажи"] - f_df["Цена покупки"]) * f_df["Кол."]
             f_df["Доходность, %"] = np.where(f_df["Цена покупки"] > 0, ((f_df["Цена продажи"] / f_df["Цена покупки"]) - 1.0) * 100.0, 0.0)
@@ -928,6 +1059,34 @@ def parse_broker_file(file_content: Any, filename: str) -> Dict[str, Any]:
                     "Сумма": pd.to_numeric(df[col_map.get("Сумма", 0)], errors="coerce").fillna(0.0),
                     "Комиссия, ₽": 0.0
                 }).sort_values(by="Дата", ascending=False).reset_index(drop=True)
+
+                # Нормализация сделок с учетом корпоративных сплитов (TRNFP 1:100, VTBR 1:5000, BELU/NOVA 1:8)
+                adj_qtys = []
+                adj_prices = []
+                adj_sums = []
+                for _, r_tr in trades_df.iterrows():
+                    tr_t = str(r_tr.get("Тикер", "")).strip().upper()
+                    tr_d = r_tr.get("Дата")
+                    tr_q = float(r_tr.get("Количество", 0.0) or 0.0)
+                    tr_p = float(r_tr.get("Цена", 0.0) or 0.0)
+                    tr_s = float(r_tr.get("Сумма", 0.0) or 0.0)
+
+                    if tr_t in STOCK_SPLITS and tr_d is not None and not pd.isna(tr_d):
+                        adj_q, adj_p = adjust_trade_for_splits(tr_t, tr_d, abs(tr_q), tr_p)
+                        if tr_q < 0:
+                            adj_q = -abs(adj_q)
+                        adj_qtys.append(adj_q)
+                        adj_prices.append(adj_p)
+                        adj_sums.append(tr_s if tr_s != 0.0 else round(abs(adj_q) * adj_p, 2))
+                    else:
+                        adj_qtys.append(tr_q)
+                        adj_prices.append(tr_p)
+                        adj_sums.append(tr_s)
+
+                trades_df["Количество"] = adj_qtys
+                trades_df["Цена"] = adj_prices
+                trades_df["Сумма"] = adj_sums
+                trades_df.attrs["splits_adjusted"] = True
 
                 positions_df = reconstruct_positions_from_trades(trades_df)
                 total_val = float(positions_df["Текущая стоимость"].sum()) if not positions_df.empty else 0.0

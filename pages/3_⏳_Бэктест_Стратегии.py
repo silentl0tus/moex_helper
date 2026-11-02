@@ -44,6 +44,12 @@ try:
 except ImportError:
     Ticker = None
 
+try:
+    from src.portfolio_importer import adjust_series_for_splits
+except ImportError:
+    def adjust_series_for_splits(ticker: str, s: pd.Series) -> pd.Series:
+        return s
+
 DEFAULT_PORTFOLIO_TICKERS = [
     "MGNT", "SBER", "ROSN", "NMTP", "LKOH",
     "T", "SIBN", "BELU", "CHMF", "NLMK",
@@ -176,7 +182,7 @@ def _fetch_single_board_candles(ticker: str, board: str, start_date: datetime.da
         if "close" in df.columns and "begin" in df.columns:
             df["begin"] = pd.to_datetime(df["begin"])
             df = df.drop_duplicates(subset=["begin"]).sort_values(by="begin")
-            df.set_index("begin", inplace=True)
+            df = df.set_index("begin")
             return df["close"].astype(float).sort_index()
 
     return pd.Series(dtype=float)
@@ -184,7 +190,7 @@ def _fetch_single_board_candles(ticker: str, board: str, start_date: datetime.da
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_ticker_candles(ticker: str, start_date: datetime.date, end_date: datetime.date) -> pd.Series:
-    """Загружает дневные свечи акции или облигации с Мосбиржи через MOEX ISS API с пагинацией и сшивкой редомициляций."""
+    """Загружает дневные свечи акции или облигации с Мосбиржи через MOEX ISS API с пагинацией, сшивкой редомициляций и учетом сплитов."""
     # 1. Попытка через moexalgo (только если покрывает требуемый диапазон от начала до конца)
     if Ticker is not None:
         try:
@@ -197,12 +203,12 @@ def fetch_ticker_candles(ticker: str, start_date: datetime.date, end_date: datet
                     if "begin" in df.columns:
                         df["begin"] = pd.to_datetime(df["begin"])
                         df = df.drop_duplicates(subset=["begin"]).sort_values(by="begin")
-                        df.set_index("begin", inplace=True)
+                        df = df.set_index("begin")
                     s = df["close"].astype(float).sort_index()
                     is_start_cov = (s.index[0].date() <= start_date + timedelta(days=45)) or ((end_date - start_date).days <= 60)
                     is_end_cov = s.index[-1].date() >= end_date - timedelta(days=15)
                     if len(s) > 10 and is_start_cov and is_end_cov:
-                        return s
+                        return adjust_series_for_splits(ticker, s)
         except Exception:
             pass
 
@@ -228,7 +234,7 @@ def fetch_ticker_candles(ticker: str, start_date: datetime.date, end_date: datet
                 else:
                     s = s_pred
 
-    return s
+    return adjust_series_for_splits(ticker, s)
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -246,7 +252,7 @@ def fetch_benchmark_candles(symbol: str, start_date: datetime.date, end_date: da
                     if "begin" in df.columns:
                         df["begin"] = pd.to_datetime(df["begin"])
                         df = df.drop_duplicates(subset=["begin"]).sort_values(by="begin")
-                        df.set_index("begin", inplace=True)
+                        df = df.set_index("begin")
                     s = df["close"].astype(float).sort_index()
                     is_start_cov = (s.index[0].date() <= start_date + timedelta(days=45)) or ((end_date - start_date).days <= 60)
                     is_end_cov = s.index[-1].date() >= end_date - timedelta(days=15)
@@ -291,7 +297,7 @@ def fetch_benchmark_candles(symbol: str, start_date: datetime.date, end_date: da
         if "close" in df.columns and "begin" in df.columns:
             df["begin"] = pd.to_datetime(df["begin"])
             df = df.drop_duplicates(subset=["begin"]).sort_values(by="begin")
-            df.set_index("begin", inplace=True)
+            df = df.set_index("begin")
             return df["close"].astype(float).sort_index()
 
     return pd.Series(dtype=float)

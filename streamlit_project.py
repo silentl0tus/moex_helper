@@ -289,7 +289,15 @@ def fetch_technical_indicators(tickers):
                 df = pd.DataFrame(data['candles']['data'], columns=data['candles']['columns'])
                 if len(df) < 50:
                     return {"ticker": ticker, "SMA_50": float('nan'), "SMA_200": float('nan'), "RSI": float('nan'), "Price": float('nan')}
-                close = df['close']
+                close = df['close'].astype(float)
+                if ticker.upper() in ["BELU", "NOVA"] and 'begin' in df.columns:
+                    b_dates = pd.to_datetime(df['begin'])
+                    if hasattr(b_dates, "dt") and hasattr(b_dates.dt, "tz_localize") and b_dates.dt.tz is not None:
+                        b_dates = b_dates.dt.tz_localize(None)
+                    mask = b_dates < pd.to_datetime("2024-08-20")
+                    if mask.any():
+                        close = close.copy()
+                        close.loc[mask] = (close.loc[mask] / 8.0).round(2)
                 sma_50 = close.rolling(50).mean().iloc[-1]
                 sma_200 = close.rolling(200).mean().iloc[-1] if len(df) >= 200 else float('nan')
                 rsi = calculate_rsi(close).iloc[-1]
@@ -2388,7 +2396,7 @@ with tab1:
                                         y=alt.Y("Значение:Q", title=f"{chosen_metric_name} ({df_chart['Единица'].iloc[0]})"),
                                         tooltip=["Период", alt.Tooltip("Значение:Q", format=",.1f"), "Единица"]
                                     ).properties(height=320)
-                                    st.altair_chart(c_bars, use_container_width=True)
+                                    st.altair_chart(c_bars, width="stretch")
 
                         # Provenance and Sources Audit Expander
                         with st.expander("🔍 Аудит данных: Официальные источники и локаторы формул (get_evidence)", expanded=False):

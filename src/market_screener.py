@@ -817,6 +817,6 @@ def render_market_view_component(
                 "С начала года (YTD %)": st.column_config.NumberColumn(format="%+.1f%%"),
                 "Оборот (млн ₽)": st.column_config.NumberColumn(format="%.1f млн ₽")
             },
-            use_container_width=True,
+            width="stretch",
             hide_index=True
         )
