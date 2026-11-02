@@ -41,6 +41,190 @@ CANDLE_SPLITS: Dict[str, list[Tuple[str, float]]] = {
 
 
 # =====================================================================
+# ИНТЕГРАЦИЯ С DATA FOUNDRY MCP (ФУНДАМЕНТАЛЬНЫЕ ДАННЫЕ)
+# =====================================================================
+def period_sort_key(k: str) -> Tuple[int, int, str]:
+    """Сортирует финансовые периоды (2024-FY, ASOF:2024-12-31, 2025-H1) хронологически."""
+    clean_k = k.replace("ASOF:", "")
+    parts = clean_k.split("-")
+    year = int(parts[0]) if parts and parts[0].isdigit() else 0
+    sub = parts[1] if len(parts) > 1 else ""
+    order = {"Q1": 1, "03": 1, "H1": 2, "06": 2, "9M": 3, "09": 3, "FY": 4, "12": 4}
+    sub_rank = 0
+    for prefix, rank in order.items():
+        if sub.startswith(prefix):
+            sub_rank = rank
+            break
+    return (year, sub_rank, k)
+
+
+@st.cache_data(ttl=900)
+def fetch_fundamental_metrics_from_mcp(
+    ticker: str,
+    accounting_basis: str = "IFRS",
+) -> Optional[Dict[str, Any]]:
+    """
+    Запрашивает финансовую отчётность компании напрямую из Data Foundry MCP (https://mcp.vrednyj-investor.ru/mcp)
+    и рассчитывает фундаментальные мультипликаторы для Чёрной линии:
+    - Чистая прибыль (fin.net_income)
+    - Собственный капитал (fin.total_equity / fin.equity_attributable_to_owners)
+    - Выручка (fin.revenue)
+    - Операционная прибыль / EBITDA (fin.operating_profit / fin.ebitda)
+    - Денежные средства (fin.cash_and_equivalents)
+    - Процентный долг (fin.interest_bearing_debt)
+    - P/E = Market Cap / Net Income
+    - P/BV = Market Cap / Equity
+    - ROE = (Net Income / Equity) * 100%
+    - Debt/EBITDA = (Debt - Cash) / EBITDA
+    - Темп прироста выручки г/г
+    """
+    try:
+        from src.foundry_client import (
+            get_foundry_status,
+            get_series,
+            fetch_moex_market_snapshot,
+        )
+    except Exception:
+        return None
+
+    status = get_foundry_status()
+    if not status.get("ok"):
+        return None
+
+    ver = status.get("dataset_version")
+    if not ver:
+        return None
+
+    ticker_clean = str(ticker).upper().strip()
+    snap = fetch_moex_market_snapshot(ticker_clean)
+    price = snap.get("price")
+    mcap = snap.get("market_cap")
+
+    # Запрашиваем метрики пачками для предотвращения конфликтов параллелизма HTTP
+    groups = [
+        ("fin.net_income", "fin.revenue"),
+        ("fin.total_equity", "fin.equity_attributable_to_owners"),
+        ("fin.operating_profit", "fin.ebitda"),
+        ("fin.cash_and_equivalents", "fin.interest_bearing_debt"),
+        ("bank.net_interest_income", "fin.total_assets"),
+    ]
+
+    all_items = []
+    for g in groups:
+        try:
+            items = get_series((ticker_clean,), g, None, ver)
+            if items:
+                all_items.extend(items)
+        except Exception:
+            pass
+
+    if not all_items:
+        return None
+
+    allowed_bases = (accounting_basis, "APM", "IFRS") if accounting_basis == "IFRS" else (accounting_basis,)
+    by_code: Dict[str, list[Tuple[str, float, Any]]] = {}
+
+    for it in all_items:
+        std = it.get("accounting_basis")
+        if std and std not in allowed_bases:
+            continue
+        c = it.get("metric_code")
+        pk = it.get("period", {}).get("key")
+        v = it.get("value")
+        if v is not None and pk:
+            try:
+                fv = float(v)
+                if c not in by_code:
+                    by_code[c] = []
+                by_code[c].append((pk, fv, it))
+            except Exception:
+                pass
+
+    if not by_code:
+        return None
+
+    # Поиск наиболее свежего значения для каждого показателя
+    latest: Dict[str, Tuple[str, float, Any]] = {}
+    for c, tuples in by_code.items():
+        fy_tuples = [t for t in tuples if "-FY" in t[0] or "12-31" in t[0]]
+        sorted_tuples = sorted(fy_tuples if fy_tuples else tuples, key=lambda x: period_sort_key(x[0]))
+        latest[c] = sorted_tuples[-1]
+
+    # Для Net Income выбираем подтвержденный положительный период
+    ni_tuple = latest.get("fin.net_income")
+    if "fin.net_income" in by_code:
+        pos_fy = [t for t in by_code["fin.net_income"] if ("-FY" in t[0] or "12-31" in t[0]) and t[1] > 0]
+        if pos_fy:
+            pos_sorted = sorted(pos_fy, key=lambda x: period_sort_key(x[0]))
+            latest_year = period_sort_key(latest["fin.net_income"][0])[0]
+            pos_year = period_sort_key(pos_sorted[-1][0])[0]
+            if latest_year - pos_year <= 2:
+                ni_tuple = pos_sorted[-1]
+
+    eq_tuple = latest.get("fin.total_equity") or latest.get("fin.equity_attributable_to_owners")
+    rev_tuple = latest.get("fin.revenue")
+    ebitda_tuple = latest.get("fin.ebitda") or latest.get("fin.operating_profit")
+    cash_tuple = latest.get("fin.cash_and_equivalents")
+    debt_tuple = latest.get("fin.interest_bearing_debt")
+
+    ni = ni_tuple[1] if ni_tuple else None
+    eq = eq_tuple[1] if eq_tuple else None
+    rev = rev_tuple[1] if rev_tuple else None
+    ebitda = ebitda_tuple[1] if ebitda_tuple else None
+    cash = cash_tuple[1] if cash_tuple else None
+    debt = debt_tuple[1] if debt_tuple else None
+
+    # Расчет темпа прироста выручки г/г
+    rev_growth = None
+    if rev_tuple and "fin.revenue" in by_code:
+        fy_revs = [t for t in by_code["fin.revenue"] if "-FY" in t[0]]
+        fy_revs_sorted = sorted(fy_revs, key=lambda x: period_sort_key(x[0]))
+        if len(fy_revs_sorted) >= 2:
+            last_r = fy_revs_sorted[-1][1]
+            prev_r = fy_revs_sorted[-2][1]
+            if prev_r > 0:
+                rev_growth = round(((last_r - prev_r) / prev_r) * 100.0, 1)
+
+    # Мультипликаторы, рассчитанные напрямую из отчетности MCP
+    pe = round(mcap / ni, 2) if (mcap and ni and ni > 0) else None
+    pb = round(mcap / eq, 2) if (mcap and eq and eq > 0) else None
+    roe = round((ni / eq) * 100.0, 1) if (ni and eq and eq > 0) else None
+
+    net_debt = None
+    debt_ebitda = None
+    if debt is not None and cash is not None:
+        net_debt = debt - cash
+        if ebitda and ebitda > 0:
+            debt_ebitda = round(net_debt / ebitda, 2)
+        elif debt <= cash:
+            debt_ebitda = -0.5  # Отрицательный чистый долг (кубышка)
+
+    period_str = ni_tuple[0] if ni_tuple else (rev_tuple[0] if rev_tuple else (eq_tuple[0] if eq_tuple else "LTM"))
+
+    return {
+        "ticker": ticker_clean,
+        "price": price,
+        "market_cap": mcap,
+        "pe": pe,
+        "pb": pb,
+        "roe": roe,
+        "debt_ebitda": debt_ebitda,
+        "rev_growth": rev_growth,
+        "net_income": ni,
+        "equity": eq,
+        "revenue": rev,
+        "ebitda": ebitda,
+        "cash": cash,
+        "debt": debt,
+        "net_debt": net_debt,
+        "period": period_str,
+        "dataset_version": ver,
+        "data_source": f"Data Foundry MCP ({accounting_basis})",
+        "mcp_active": True,
+    }
+
+
+# =====================================================================
 # РАСЧЕТ ЧЕРНОЙ ЛИНИИ (FUNDAMENTAL FAIR PRICE)
 # =====================================================================
 def calculate_black_line_valuation(
@@ -53,9 +237,13 @@ def calculate_black_line_valuation(
     rev_growth: Optional[float] = None,
     div_rub: Optional[float] = None,
     key_rate: float = 16.0,
+    mcp_data: Optional[Dict[str, Any]] = None,
+    use_mcp: bool = False,
+    accounting_basis: str = "IFRS",
 ) -> Dict[str, Any]:
     """
     Рассчитывает справедливую цену ("Чёрную линию") на основе фундаментальных мультипликаторов.
+    Поддерживает прямое извлечение и расчет мультипликаторов из Data Foundry MCP (МСФО/РСБУ).
     
     Модели:
     1. Банки: Модель Гордона Justified P/BV = ROE / (Key_Rate * 0.6 + 6.0%) -> Fair = BVPS * P/BV_justified.
@@ -67,6 +255,31 @@ def calculate_black_line_valuation(
     7. Токсичные / Дистресс: Ликвидационная стоимость с глубоким дисконтом (0.25x BV).
     """
     ticker_clean = str(ticker).upper().strip()
+
+    # 1. Попытка получить мультипликаторы из Data Foundry MCP
+    if mcp_data is None and use_mcp:
+        try:
+            mcp_data = fetch_fundamental_metrics_from_mcp(ticker_clean, accounting_basis=accounting_basis)
+        except Exception:
+            mcp_data = None
+
+    data_source = "Кэш отчетности (Fallback)"
+    mcp_details = {}
+    if mcp_data and mcp_data.get("mcp_active"):
+        data_source = mcp_data.get("data_source", "Data Foundry MCP")
+        mcp_details = mcp_data
+        if mcp_data.get("pe") is not None:
+            pe = mcp_data["pe"]
+        if mcp_data.get("pb") is not None:
+            pb = mcp_data["pb"]
+        if mcp_data.get("roe") is not None:
+            roe = mcp_data["roe"]
+        if mcp_data.get("debt_ebitda") is not None:
+            debt_ebitda = mcp_data["debt_ebitda"]
+        if mcp_data.get("rev_growth") is not None:
+            rev_growth = mcp_data["rev_growth"]
+        if (price is None or price <= 0) and mcp_data.get("price"):
+            price = mcp_data["price"]
     
     # Защита от нулевой/отрицательной цены
     market_price = float(price) if price and not np.isnan(price) and price > 0 else 1.0
@@ -253,6 +466,8 @@ def calculate_black_line_valuation(
         "roe": round(roe_val, 1),
         "debt_ebitda": round(debt_val, 2),
         "rev_growth": round(growth_val, 1),
+        "data_source": data_source,
+        "mcp_details": mcp_details,
     }
 
 
@@ -505,6 +720,32 @@ def render_black_line_widget(
         growth = fund_row.get("Rev_Growth_%")
         div_rub = fund_row.get("Div_RUB")
 
+    # 1. Верхняя панель управления: Интерактивный тумблер ON/OFF и выбор стандарта отчётности
+    ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([2.2, 1.1, 1.2])
+    with ctrl_col1:
+        st.markdown(f"#### 📈 {ticker_clean} — Котировки MOEX vs Чёрная Линия (Fair Value)")
+    with ctrl_col2:
+        basis_choice = st.radio(
+            "Стандарт MCP:",
+            ["МСФО (IFRS)", "РСБУ (RAS)"],
+            horizontal=True,
+            key=f"{key_prefix}_basis_{ticker_clean}",
+            help="Выберите стандарт отчетности для запроса финансовых рядов из Data Foundry MCP"
+        )
+        accounting_basis = "IFRS" if "IFRS" in basis_choice else "RAS"
+    with ctrl_col3:
+        st.write("")
+        show_black_line = st.toggle(
+            "🖤 Чёрная Линия",
+            value=default_show,
+            key=f"{key_prefix}_toggle_{ticker_clean}",
+            help="Включает или выключает отображение линии фундаментальной справедливой стоимости (Black Line / Fair Value), рассчитанной из мультипликаторов компании.",
+        )
+
+    # 1.1 Получение фундаментальных данных напрямую из Data Foundry MCP
+    with st.spinner(f"Запрос фундаментальных данных {ticker_clean} из Data Foundry MCP ({accounting_basis})..."):
+        mcp_data = fetch_fundamental_metrics_from_mcp(ticker_clean, accounting_basis=accounting_basis)
+
     # Загрузка свечей котировок с МосБиржи
     with st.spinner(f"Загрузка истории торгов {ticker_clean} с MOEX ISS..."):
         candles_df = fetch_stock_candles(ticker_clean, days=365)
@@ -527,6 +768,9 @@ def render_black_line_widget(
         rev_growth=growth,
         div_rub=div_rub,
         key_rate=key_rate,
+        mcp_data=mcp_data,
+        use_mcp=True,
+        accounting_basis=accounting_basis,
     )
 
     fair_p = fair_info["fair_price"]
@@ -536,20 +780,18 @@ def render_black_line_widget(
     model_name = fair_info["model_name"]
     formula_latex = fair_info["formula_latex"]
     thesis = fair_info["thesis"]
+    source_name = fair_info.get("data_source", "Кэш отчётности")
+    mcp_details = fair_info.get("mcp_details", {})
 
-    # 1. Верхняя панель управления: Интерактивный тумблер ON/OFF
-    ctrl_col1, ctrl_col2 = st.columns([3, 1])
-    with ctrl_col1:
-        st.markdown(f"#### 📈 {ticker_clean} — Котировки MOEX vs Чёрная Линия (Fair Value)")
-    with ctrl_col2:
-        show_black_line = st.toggle(
-            "🖤 Показать Чёрную Линию",
-            value=default_show,
-            key=f"{key_prefix}_toggle_{ticker_clean}",
-            help="Включает или выключает отображение линии фундаментальной справедливой стоимости (Black Line / Fair Value), рассчитанной из мультипликаторов компании.",
+    # Индикатор источника данных
+    if mcp_details and mcp_details.get("mcp_active"):
+        period_lbl = mcp_details.get("period", "FY")
+        ver_lbl = mcp_details.get("dataset_version", "v1")
+        st.caption(
+            f"📡 **Источник данных:** `{source_name}` │ Период отчёта: **{period_lbl}** │ Версия схемы MCP: `{ver_lbl[:19]}` ✅"
         )
-
-    # 2. Четыре ключевые метрики
+    else:
+        st.caption(f"ℹ️ **Источник данных:** `{source_name}` (Data Foundry MCP временно недоступен или эмитент не раскрыл отчёт)")
     m_col1, m_col2, m_col3, m_col4 = st.columns(4)
     with m_col1:
         st.metric(
@@ -614,6 +856,24 @@ def render_black_line_widget(
             c_f1, c_f2, c_f3, c_f4, c_f5 = st.columns(5)
             c_f1.metric("EPS (Прибыль/акцию)", f"{fair_info['eps']:.2f} ₽" if fair_info['eps'] > 0 else "Н/Д")
             c_f2.metric("BVPS (Капитал/акцию)", f"{fair_info['bvps']:.2f} ₽" if fair_info['bvps'] > 0 else "Н/Д")
-            c_f3.metric("P/E (Текущий)", f"{fair_info['pe']:.2f}x")
-            c_f4.metric("P/BV (Текущий)", f"{fair_info['pb']:.2f}x")
+            c_f3.metric("P/E (Расчётный)", f"{fair_info['pe']:.2f}x")
+            c_f4.metric("P/BV (Расчётный)", f"{fair_info['pb']:.2f}x")
             c_f5.metric("ROE (Рентабельность)", f"{fair_info['roe']:.1f}%")
+
+            # Исходные финансовые данные из MCP
+            if mcp_details and mcp_details.get("mcp_active"):
+                st.markdown("##### 🏛️ Исходная финансовая отчётность из Data Foundry MCP:")
+                st.caption(f"Период отчёта: **{mcp_details.get('period', 'FY')}** │ Стандарт: **{mcp_details.get('data_source', '')}** │ Версия датасета: `{mcp_details.get('dataset_version', 'v1')}`")
+                m_r1, m_r2, m_r3, m_r4, m_r5 = st.columns(5)
+                
+                ni_val = mcp_details.get('net_income')
+                eq_val = mcp_details.get('equity')
+                rev_val = mcp_details.get('revenue')
+                nd_val = mcp_details.get('net_debt')
+                mc_val = mcp_details.get('market_cap')
+                
+                m_r1.metric("Чистая прибыль (MCP)", f"{ni_val/1e9:,.1f} млрд ₽" if ni_val is not None else "Н/Д")
+                m_r2.metric("Капитал (MCP)", f"{eq_val/1e9:,.1f} млрд ₽" if eq_val is not None else "Н/Д")
+                m_r3.metric("Выручка (MCP)", f"{rev_val/1e9:,.1f} млрд ₽" if rev_val is not None else "Н/Д")
+                m_r4.metric("Чистый долг (MCP)", f"{nd_val/1e9:,.1f} млрд ₽" if nd_val is not None else "Н/Д")
+                m_r5.metric("Капитализация (MOEX)", f"{mc_val/1e9:,.1f} млрд ₽" if mc_val is not None else "Н/Д")
