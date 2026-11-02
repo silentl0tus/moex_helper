@@ -651,6 +651,42 @@ with tab2:
         st.divider()
 
         # =====================================================================
+        # АУДИТ ПО ЧЁРНОЙ ЛИНИИ (BLACK LINE / FAIR VALUE)
+        # =====================================================================
+        st.subheader("🖤 Фундаментальный аудит: График котировок vs Чёрная Линия (Black Line)")
+        st.caption("Проверьте любую акцию перед покупкой: оцените запас прочности (Margin of Safety) и внутреннюю стоимость бизнеса. Включайте и выключайте Чёрную Линию тумблером.")
+
+        c_wiz_sel, _ = st.columns([2, 2])
+        with c_wiz_sel:
+            wiz_bl_ticker = st.selectbox(
+                "Выберите актив для анализа Чёрной линии:",
+                options=all_available_tickers,
+                index=0 if not st.session_state["wizard_basket"] else (
+                    all_available_tickers.index(st.session_state["wizard_basket"][0]) 
+                    if st.session_state["wizard_basket"][0] in all_available_tickers else 0
+                ),
+                key="wizard_black_line_sel",
+                format_func=lambda x: f"{x} — {COMPANY_NAMES.get(x, x)}"
+            )
+
+        if wiz_bl_ticker:
+            row_wb = screener_df[screener_df['ticker'] == wiz_bl_ticker]
+            wb_fund = row_wb.iloc[0] if not row_wb.empty else None
+            wb_price = wb_fund.get('Price', 0.0) if wb_fund is not None else 0.0
+            
+            from src.black_line import render_black_line_widget
+            render_black_line_widget(
+                ticker=wiz_bl_ticker,
+                current_price=wb_price,
+                fund_row=wb_fund,
+                key_rate=16.0,
+                default_show=True,
+                key_prefix="wiz_screen"
+            )
+
+        st.divider()
+
+        # =====================================================================
         # ПОЛНЫЙ СПРАВОЧНИК МУЛЬТИПЛИКАТОРОВ
         # =====================================================================
         st.markdown("""
