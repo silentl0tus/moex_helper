@@ -1,11 +1,11 @@
 {
   "AFKS": {
-    "score": 0.31,
-    "pos_words": 10,
+    "score": 0.42,
+    "pos_words": 13,
     "neg_words": 5,
     "posts_analyzed": 26,
     "has_recent_posts": true,
-    "timestamp": 1794148964.7187371
+    "timestamp": 1794244109.1464007
   },
   "AFLT": {
     "score": 0.76,
@@ -13,15 +13,15 @@
     "neg_words": 2,
     "posts_analyzed": 28,
     "has_recent_posts": true,
-    "timestamp": 1794148966.2241328
+    "timestamp": 1794244110.636876
   },
   "ALRS": {
-    "score": 0.42,
-    "pos_words": 13,
-    "neg_words": 5,
+    "score": 0.46,
+    "pos_words": 9,
+    "neg_words": 3,
     "posts_analyzed": 29,
     "has_recent_posts": true,
-    "timestamp": 1794148970.7272782
+    "timestamp": 1794244117.9390953
   },
   "AQUA": {
     "score": 0.46,
@@ -29,15 +29,15 @@
     "neg_words": 3,
     "posts_analyzed": 29,
     "has_recent_posts": true,
-    "timestamp": 1794148973.0519853
+    "timestamp": 1794244124.8081505
   },
   "ASTR": {
-    "score": 0.75,
-    "pos_words": 10,
+    "score": 0.8,
+    "pos_words": 13,
     "neg_words": 1,
     "posts_analyzed": 27,
     "has_recent_posts": true,
-    "timestamp": 1794148975.2582076
+    "timestamp": 1794244126.2347236
   },
   "BANE": {
     "score": 0.74,
@@ -47,52 +47,52 @@
     "timestamp": 1792187710.029247
   },
   "BELU": {
-    "score": 0.45,
+    "score": 0.38,
     "pos_words": 14,
-    "neg_words": 5,
+    "neg_words": 6,
     "posts_analyzed": 29,
     "has_recent_posts": true,
-    "timestamp": 1794148979.3323436
+    "timestamp": 1794244129.1886578
   },
   "BSPB": {
-    "score": 0.58,
-    "pos_words": 20,
-    "neg_words": 5,
+    "score": 0.54,
+    "pos_words": 21,
+    "neg_words": 6,
     "posts_analyzed": 29,
     "has_recent_posts": true,
-    "timestamp": 1794148980.796624
+    "timestamp": 1794244131.1931558
   },
   "CBOM": {
-    "score": 0.7,
-    "pos_words": 8,
+    "score": 0.67,
+    "pos_words": 7,
     "neg_words": 1,
-    "posts_analyzed": 22,
+    "posts_analyzed": 20,
     "has_recent_posts": true,
-    "timestamp": 1793997749.131032
+    "timestamp": 1794244135.5456502
   },
   "CHMF": {
-    "score": 0.18,
-    "pos_words": 19,
-    "neg_words": 13,
+    "score": 0.22,
+    "pos_words": 16,
+    "neg_words": 10,
     "posts_analyzed": 29,
     "has_recent_posts": true,
-    "timestamp": 1794148982.297569
+    "timestamp": 1794244136.9861896
   },
   "CNRU": {
-    "score": 0.58,
-    "pos_words": 20,
+    "score": 0.56,
+    "pos_words": 19,
     "neg_words": 5,
     "posts_analyzed": 29,
     "has_recent_posts": true,
-    "timestamp": 1794148983.7450664
+    "timestamp": 1794244138.657267
   },
   "DATA": {
-    "score": 0.68,
-    "pos_words": 18,
-    "neg_words": 3,
-    "posts_analyzed": 23,
+    "score": 0.75,
+    "pos_words": 17,
+    "neg_words": 2,
+    "posts_analyzed": 21,
     "has_recent_posts": true,
-    "timestamp": 1793997762.3513565
+    "timestamp": 1794244140.1350071
   },
   "DIAS": {
     "score": 0.9,
@@ -104,59 +104,59 @@
   },
   "DOMRF": {
     "score": 0.88,
-    "pos_words": 23,
+    "pos_words": 24,
     "neg_words": 1,
     "posts_analyzed": 28,
     "has_recent_posts": true,
-    "timestamp": 1794148986.180137
+    "timestamp": 1794244141.6282284
   },
   "ENPG": {
-    "score": 0.17,
-    "pos_words": 3,
+    "score": 0.0,
+    "pos_words": 2,
     "neg_words": 2,
-    "posts_analyzed": 14,
+    "posts_analyzed": 13,
     "has_recent_posts": true,
-    "timestamp": 1793997775.5727873
+    "timestamp": 1794244143.1132147
   },
   "FEES": {
-    "score": 0.53,
-    "pos_words": 14,
-    "neg_words": 4,
+    "score": 0.59,
+    "pos_words": 13,
+    "neg_words": 3,
     "posts_analyzed": 29,
     "has_recent_posts": true,
-    "timestamp": 1794148987.5787141
+    "timestamp": 1794244148.7341805
   },
   "FLOT": {
-    "score": -0.28,
-    "pos_words": 6,
-    "neg_words": 11,
+    "score": -0.32,
+    "pos_words": 8,
+    "neg_words": 16,
     "posts_analyzed": 28,
     "has_recent_posts": true,
-    "timestamp": 1794148990.7432792
+    "timestamp": 1794244151.7016892
   },
   "GAZP": {
-    "score": 0.67,
-    "pos_words": 7,
-    "neg_words": 1,
-    "posts_analyzed": 29,
+    "score": 0.22,
+    "pos_words": 5,
+    "neg_words": 3,
+    "posts_analyzed": 28,
     "has_recent_posts": true,
-    "timestamp": 1794148992.1608098
+    "timestamp": 1794244157.2791255
   },
   "HEAD": {
-    "score": 0.87,
+    "score": 0.79,
     "pos_words": 21,
-    "neg_words": 1,
-    "posts_analyzed": 29,
-    "has_recent_posts": true,
-    "timestamp": 1794148996.7528653
-  },
-  "HYDR": {
-    "score": 0.77,
-    "pos_words": 19,
     "neg_words": 2,
     "posts_analyzed": 29,
     "has_recent_posts": true,
-    "timestamp": 1794148998.7411938
+    "timestamp": 1794244163.17967
+  },
+  "HYDR": {
+    "score": 0.7,
+    "pos_words": 19,
+    "neg_words": 3,
+    "posts_analyzed": 29,
+    "has_recent_posts": true,
+    "timestamp": 1794244164.7689784
   },
   "IRAO": {
     "score": 0.68,
@@ -164,47 +164,47 @@
     "neg_words": 3,
     "posts_analyzed": 25,
     "has_recent_posts": true,
-    "timestamp": 1794149001.145257
+    "timestamp": 1794244166.0983338
   },
   "IVAT": {
-    "score": 0.86,
-    "pos_words": 6,
+    "score": 0.75,
+    "pos_words": 3,
     "neg_words": 0,
     "posts_analyzed": 12,
     "has_recent_posts": true,
-    "timestamp": 1793997843.0568137
+    "timestamp": 1794244167.450619
   },
   "LKOH": {
-    "score": 0.67,
+    "score": 0.07,
     "pos_words": 7,
-    "neg_words": 1,
+    "neg_words": 6,
     "posts_analyzed": 29,
     "has_recent_posts": true,
-    "timestamp": 1794149002.601029
+    "timestamp": 1794244171.3030162
   },
   "MAGN": {
-    "score": 0.12,
-    "pos_words": 18,
-    "neg_words": 14,
+    "score": 0.03,
+    "pos_words": 16,
+    "neg_words": 15,
     "posts_analyzed": 29,
     "has_recent_posts": true,
-    "timestamp": 1794149007.0498168
+    "timestamp": 1794244175.5749393
   },
   "MDMG": {
-    "score": 0.94,
+    "score": 0.82,
     "pos_words": 15,
-    "neg_words": 0,
-    "posts_analyzed": 18,
+    "neg_words": 1,
+    "posts_analyzed": 17,
     "has_recent_posts": true,
-    "timestamp": 1793976471.2491188
+    "timestamp": 1794244178.449672
   },
   "MGNT": {
-    "score": 0.56,
+    "score": 0.47,
     "pos_words": 12,
-    "neg_words": 3,
-    "posts_analyzed": 29,
+    "neg_words": 4,
+    "posts_analyzed": 27,
     "has_recent_posts": true,
-    "timestamp": 1794149008.4160528
+    "timestamp": 1794244180.0378773
   },
   "MOEX": {
     "score": 0.62,
@@ -212,15 +212,15 @@
     "neg_words": 2,
     "posts_analyzed": 28,
     "has_recent_posts": true,
-    "timestamp": 1794149009.8657534
+    "timestamp": 1794244181.4007137
   },
   "MTLR": {
-    "score": 0.27,
-    "pos_words": 9,
-    "neg_words": 5,
+    "score": 0.24,
+    "pos_words": 10,
+    "neg_words": 6,
     "posts_analyzed": 28,
     "has_recent_posts": true,
-    "timestamp": 1794149012.9809878
+    "timestamp": 1794244185.568752
   },
   "MTSS": {
     "score": 0.88,
@@ -228,15 +228,15 @@
     "neg_words": 0,
     "posts_analyzed": 29,
     "has_recent_posts": true,
-    "timestamp": 1794149014.3993466
+    "timestamp": 1794244188.2158835
   },
   "NLMK": {
-    "score": 0.29,
+    "score": 0.23,
     "pos_words": 13,
-    "neg_words": 7,
-    "posts_analyzed": 25,
+    "neg_words": 8,
+    "posts_analyzed": 26,
     "has_recent_posts": true,
-    "timestamp": 1794149015.8562152
+    "timestamp": 1794244190.9419546
   },
   "NMTP": {
     "score": 0.69,
@@ -244,23 +244,23 @@
     "neg_words": 5,
     "posts_analyzed": 29,
     "has_recent_posts": true,
-    "timestamp": 1794149017.6570635
+    "timestamp": 1794244192.4501631
   },
   "NVTK": {
-    "score": 0.83,
-    "pos_words": 5,
-    "neg_words": 0,
+    "score": 0.31,
+    "pos_words": 8,
+    "neg_words": 4,
     "posts_analyzed": 28,
     "has_recent_posts": true,
-    "timestamp": 1794149019.9505196
+    "timestamp": 1794244193.895631
   },
   "OZON": {
-    "score": 0.59,
-    "pos_words": 21,
-    "neg_words": 5,
+    "score": 0.5,
+    "pos_words": 19,
+    "neg_words": 6,
     "posts_analyzed": 27,
     "has_recent_posts": true,
-    "timestamp": 1794149021.3682344
+    "timestamp": 1794244197.1451466
   },
   "OZPH": {
     "score": 0.17,
@@ -271,12 +271,12 @@
     "timestamp": 1793917964.6421084
   },
   "PHOR": {
-    "score": 0.67,
-    "pos_words": 12,
-    "neg_words": 2,
+    "score": 0.5,
+    "pos_words": 10,
+    "neg_words": 3,
     "posts_analyzed": 29,
     "has_recent_posts": true,
-    "timestamp": 1794149023.7017596
+    "timestamp": 1794244198.7575834
   },
   "PIKK": {
     "score": 0.75,
@@ -286,36 +286,36 @@
     "timestamp": 1792187764.235423
   },
   "PLZL": {
-    "score": 0.1,
-    "pos_words": 5,
-    "neg_words": 4,
+    "score": 0.19,
+    "pos_words": 12,
+    "neg_words": 8,
     "posts_analyzed": 29,
     "has_recent_posts": true,
-    "timestamp": 1794149026.1825657
+    "timestamp": 1794244200.7623365
   },
   "POSI": {
-    "score": 0.9,
-    "pos_words": 9,
-    "neg_words": 0,
-    "posts_analyzed": 29,
-    "has_recent_posts": true,
-    "timestamp": 1794149027.6463802
-  },
-  "PRMD": {
-    "score": 0.8,
-    "pos_words": 13,
+    "score": 0.75,
+    "pos_words": 10,
     "neg_words": 1,
     "posts_analyzed": 29,
     "has_recent_posts": true,
-    "timestamp": 1793917969.9528906
+    "timestamp": 1794244202.2216587
   },
-  "RAGR": {
-    "score": -0.36,
-    "pos_words": 3,
-    "neg_words": 7,
+  "PRMD": {
+    "score": 0.58,
+    "pos_words": 9,
+    "neg_words": 2,
     "posts_analyzed": 29,
     "has_recent_posts": true,
-    "timestamp": 1794149029.043336
+    "timestamp": 1794244203.9234004
+  },
+  "RAGR": {
+    "score": -0.18,
+    "pos_words": 4,
+    "neg_words": 6,
+    "posts_analyzed": 29,
+    "has_recent_posts": true,
+    "timestamp": 1794244205.443331
   },
   "RENI": {
     "score": 0.31,
@@ -329,41 +329,41 @@
     "score": 0.89,
     "pos_words": 8,
     "neg_words": 0,
-    "posts_analyzed": 21,
+    "posts_analyzed": 18,
     "has_recent_posts": true,
-    "timestamp": 1793997952.4161618
+    "timestamp": 1794244208.6757345
   },
   "ROSN": {
-    "score": 0.36,
-    "pos_words": 7,
-    "neg_words": 3,
-    "posts_analyzed": 29,
-    "has_recent_posts": true,
-    "timestamp": 1794149031.3595936
-  },
-  "RTKM": {
     "score": 0.44,
-    "pos_words": 11,
-    "neg_words": 4,
-    "posts_analyzed": 26,
-    "has_recent_posts": true,
-    "timestamp": 1794149032.7893512
-  },
-  "RUAL": {
-    "score": 0.62,
     "pos_words": 6,
-    "neg_words": 1,
-    "posts_analyzed": 29,
-    "has_recent_posts": true,
-    "timestamp": 1794149034.179046
-  },
-  "SBER": {
-    "score": 0.32,
-    "pos_words": 12,
-    "neg_words": 6,
+    "neg_words": 2,
     "posts_analyzed": 28,
     "has_recent_posts": true,
-    "timestamp": 1794149037.1541393
+    "timestamp": 1794244211.3724742
+  },
+  "RTKM": {
+    "score": 0.36,
+    "pos_words": 9,
+    "neg_words": 4,
+    "posts_analyzed": 27,
+    "has_recent_posts": true,
+    "timestamp": 1794244212.8795252
+  },
+  "RUAL": {
+    "score": 0.38,
+    "pos_words": 5,
+    "neg_words": 2,
+    "posts_analyzed": 29,
+    "has_recent_posts": true,
+    "timestamp": 1794244215.4541395
+  },
+  "SBER": {
+    "score": 0.43,
+    "pos_words": 16,
+    "neg_words": 6,
+    "posts_analyzed": 29,
+    "has_recent_posts": true,
+    "timestamp": 1794244218.1016488
   },
   "SELG": {
     "score": 0.42,
@@ -371,15 +371,15 @@
     "neg_words": 3,
     "posts_analyzed": 29,
     "has_recent_posts": true,
-    "timestamp": 1794149045.831892
+    "timestamp": 1794244228.5530586
   },
   "SFIN": {
-    "score": 0.1,
-    "pos_words": 5,
-    "neg_words": 4,
-    "posts_analyzed": 19,
+    "score": 0.08,
+    "pos_words": 6,
+    "neg_words": 5,
+    "posts_analyzed": 20,
     "has_recent_posts": true,
-    "timestamp": 1794149047.290475
+    "timestamp": 1794244230.0319927
   },
   "SGZH": {
     "score": 0.15,
@@ -387,231 +387,231 @@
     "neg_words": 5,
     "posts_analyzed": 28,
     "has_recent_posts": true,
-    "timestamp": 1794149048.9732099
+    "timestamp": 1794244231.4559247
   },
   "SIBN": {
-    "score": 0.58,
-    "pos_words": 9,
-    "neg_words": 2,
+    "score": 0.42,
+    "pos_words": 8,
+    "neg_words": 3,
     "posts_analyzed": 27,
     "has_recent_posts": true,
-    "timestamp": 1794149050.4386005
+    "timestamp": 1794244232.8905725
   },
   "SMLT": {
-    "score": 0.22,
-    "pos_words": 5,
-    "neg_words": 3,
+    "score": 0.29,
+    "pos_words": 4,
+    "neg_words": 2,
     "posts_analyzed": 28,
     "has_recent_posts": true,
-    "timestamp": 1794149051.8743775
+    "timestamp": 1794244234.2144454
   },
   "SNGS": {
-    "score": -0.29,
-    "pos_words": 2,
-    "neg_words": 4,
-    "posts_analyzed": 28,
+    "score": -0.89,
+    "pos_words": 0,
+    "neg_words": 8,
+    "posts_analyzed": 29,
     "has_recent_posts": true,
-    "timestamp": 1794149053.2784073
+    "timestamp": 1794244235.8687136
   },
   "SNGSP": {
-    "score": -0.67,
+    "score": -0.5,
     "pos_words": 0,
-    "neg_words": 2,
+    "neg_words": 1,
     "posts_analyzed": 10,
     "has_recent_posts": true,
-    "timestamp": 1794149054.6602263
+    "timestamp": 1794244237.3180869
   },
   "SOFL": {
-    "score": 0.62,
+    "score": 0.44,
     "pos_words": 6,
-    "neg_words": 1,
+    "neg_words": 2,
     "posts_analyzed": 28,
     "has_recent_posts": true,
-    "timestamp": 1793998045.636713
+    "timestamp": 1794244239.8453972
   },
   "SVCB": {
-    "score": 0.77,
-    "pos_words": 19,
+    "score": 0.79,
+    "pos_words": 21,
     "neg_words": 2,
     "posts_analyzed": 26,
     "has_recent_posts": true,
-    "timestamp": 1794149056.2377086
+    "timestamp": 1794244245.1072502
   },
   "T": {
-    "score": 0.65,
-    "pos_words": 25,
+    "score": 0.67,
+    "pos_words": 27,
     "neg_words": 5,
     "posts_analyzed": 29,
     "has_recent_posts": true,
-    "timestamp": 1794149057.6987295
+    "timestamp": 1794244246.550869
   },
   "TATN": {
-    "score": 0.97,
-    "pos_words": 29,
+    "score": 0.96,
+    "pos_words": 26,
     "neg_words": 0,
     "posts_analyzed": 29,
     "has_recent_posts": true,
-    "timestamp": 1794149059.2882419
+    "timestamp": 1794244247.8845205
   },
   "TRMK": {
-    "score": 0.19,
+    "score": 0.14,
     "pos_words": 12,
-    "neg_words": 8,
+    "neg_words": 9,
     "posts_analyzed": 27,
     "has_recent_posts": true,
-    "timestamp": 1794149062.158374
+    "timestamp": 1794244252.1448147
   },
   "TRNFP": {
-    "score": 0.93,
-    "pos_words": 13,
-    "neg_words": 0,
+    "score": 0.82,
+    "pos_words": 15,
+    "neg_words": 1,
     "posts_analyzed": 29,
     "has_recent_posts": true,
-    "timestamp": 1794149063.5395093
+    "timestamp": 1794244253.6627903
   },
   "UGLD": {
     "score": 0.12,
     "pos_words": 9,
     "neg_words": 7,
-    "posts_analyzed": 29,
+    "posts_analyzed": 28,
     "has_recent_posts": true,
-    "timestamp": 1793918015.0297542
+    "timestamp": 1794244254.9876397
   },
   "UPRO": {
-    "score": 0.8,
-    "pos_words": 4,
-    "neg_words": 0,
-    "posts_analyzed": 10,
+    "score": 0.57,
+    "pos_words": 5,
+    "neg_words": 1,
+    "posts_analyzed": 11,
     "has_recent_posts": true,
-    "timestamp": 1794149064.9723525
+    "timestamp": 1794244256.4935281
   },
   "VKCO": {
-    "score": 0.19,
-    "pos_words": 15,
+    "score": -0.24,
+    "pos_words": 6,
     "neg_words": 10,
     "posts_analyzed": 29,
     "has_recent_posts": true,
-    "timestamp": 1794149066.4167383
+    "timestamp": 1794244258.203821
   },
   "VTBR": {
-    "score": 0.27,
-    "pos_words": 9,
-    "neg_words": 5,
-    "posts_analyzed": 29,
-    "has_recent_posts": true,
-    "timestamp": 1794149067.8041668
-  },
-  "WUSH": {
-    "score": 0.0,
-    "pos_words": 1,
-    "neg_words": 1,
-    "posts_analyzed": 29,
-    "has_recent_posts": true,
-    "timestamp": 1793998111.705192
-  },
-  "X5": {
-    "score": 0.88,
-    "pos_words": 24,
-    "neg_words": 1,
+    "score": 0.12,
+    "pos_words": 4,
+    "neg_words": 3,
     "posts_analyzed": 28,
     "has_recent_posts": true,
-    "timestamp": 1794149069.9510498
+    "timestamp": 1794244261.0604184
+  },
+  "WUSH": {
+    "score": -0.4,
+    "pos_words": 1,
+    "neg_words": 3,
+    "posts_analyzed": 28,
+    "has_recent_posts": true,
+    "timestamp": 1794244262.439296
+  },
+  "X5": {
+    "score": 0.67,
+    "pos_words": 22,
+    "neg_words": 4,
+    "posts_analyzed": 28,
+    "has_recent_posts": true,
+    "timestamp": 1794244263.90218
   },
   "YDEX": {
-    "score": 0.43,
-    "pos_words": 21,
-    "neg_words": 8,
+    "score": 0.37,
+    "pos_words": 20,
+    "neg_words": 9,
     "posts_analyzed": 29,
     "has_recent_posts": true,
-    "timestamp": 1794149071.9408493
+    "timestamp": 1794244265.4801006
   },
   "AKFB": {
-    "score": -0.25,
-    "pos_words": 1,
-    "neg_words": 2,
-    "posts_analyzed": 10,
-    "has_recent_posts": true,
-    "timestamp": 1794148967.7997565
-  },
-  "AKMB": {
-    "score": 0.25,
-    "pos_words": 2,
-    "neg_words": 1,
-    "posts_analyzed": 10,
-    "has_recent_posts": true,
-    "timestamp": 1793997691.662194
-  },
-  "AKMP": {
-    "score": 0.5,
-    "pos_words": 4,
-    "neg_words": 1,
-    "posts_analyzed": 10,
-    "has_recent_posts": true,
-    "timestamp": 1793976410.0310607
-  },
-  "AMNR": {
-    "score": 0.25,
-    "pos_words": 2,
-    "neg_words": 1,
-    "posts_analyzed": 10,
-    "has_recent_posts": true,
-    "timestamp": 1793997707.4572635
-  },
-  "BCSD": {
-    "score": -0.25,
-    "pos_words": 1,
-    "neg_words": 2,
-    "posts_analyzed": 10,
-    "has_recent_posts": true,
-    "timestamp": 1794148977.9036837
-  },
-  "CASH": {
-    "score": 0.5,
-    "pos_words": 4,
-    "neg_words": 1,
-    "posts_analyzed": 10,
-    "has_recent_posts": true,
-    "timestamp": 1793976428.7172236
-  },
-  "EQMX": {
-    "score": 0.67,
-    "pos_words": 2,
+    "score": 0.0,
+    "pos_words": 0,
     "neg_words": 0,
     "posts_analyzed": 10,
     "has_recent_posts": true,
-    "timestamp": 1793997777.0161946
+    "timestamp": 1794244112.1877587
+  },
+  "AKMB": {
+    "score": 0.0,
+    "pos_words": 0,
+    "neg_words": 0,
+    "posts_analyzed": 10,
+    "has_recent_posts": true,
+    "timestamp": 1794244113.5888822
+  },
+  "AKMP": {
+    "score": 0.0,
+    "pos_words": 0,
+    "neg_words": 0,
+    "posts_analyzed": 10,
+    "has_recent_posts": true,
+    "timestamp": 1794244116.4656951
+  },
+  "AMNR": {
+    "score": 0.0,
+    "pos_words": 0,
+    "neg_words": 0,
+    "posts_analyzed": 10,
+    "has_recent_posts": true,
+    "timestamp": 1794244120.5805242
+  },
+  "BCSD": {
+    "score": 0.0,
+    "pos_words": 0,
+    "neg_words": 0,
+    "posts_analyzed": 10,
+    "has_recent_posts": true,
+    "timestamp": 1794244127.545112
+  },
+  "CASH": {
+    "score": 0.0,
+    "pos_words": 0,
+    "neg_words": 0,
+    "posts_analyzed": 10,
+    "has_recent_posts": true,
+    "timestamp": 1794244134.0310478
+  },
+  "EQMX": {
+    "score": 0.0,
+    "pos_words": 0,
+    "neg_words": 0,
+    "posts_analyzed": 10,
+    "has_recent_posts": true,
+    "timestamp": 1794244144.6284795
   },
   "FIXR": {
-    "score": 0.78,
-    "pos_words": 28,
+    "score": 0.81,
+    "pos_words": 32,
     "neg_words": 3,
     "posts_analyzed": 29,
     "has_recent_posts": true,
-    "timestamp": 1794148989.1339087
+    "timestamp": 1794244150.169249
   },
   "FMMM": {
-    "score": 0.67,
-    "pos_words": 2,
+    "score": 0.0,
+    "pos_words": 0,
     "neg_words": 0,
     "posts_analyzed": 10,
     "has_recent_posts": true,
-    "timestamp": 1793997803.3826857
+    "timestamp": 1794244154.5781317
   },
   "GMKN": {
-    "score": 0.54,
-    "pos_words": 21,
+    "score": 0.55,
+    "pos_words": 22,
     "neg_words": 6,
     "posts_analyzed": 29,
     "has_recent_posts": true,
-    "timestamp": 1794148994.3659167
+    "timestamp": 1794244160.3676996
   },
   "GOLD": {
-    "score": 0.5,
+    "score": 0.0,
     "pos_words": 1,
-    "neg_words": 0,
-    "posts_analyzed": 4,
+    "neg_words": 1,
+    "posts_analyzed": 5,
     "has_recent_posts": true,
-    "timestamp": 1793997828.4890966
+    "timestamp": 1794244161.8210304
   },
   "LQDT": {
     "score": 0.0,
@@ -619,23 +619,23 @@
     "neg_words": 1,
     "posts_analyzed": 10,
     "has_recent_posts": true,
-    "timestamp": 1794149004.0567305
+    "timestamp": 1794244172.7885346
   },
   "LSRG": {
-    "score": -0.08,
-    "pos_words": 5,
-    "neg_words": 6,
-    "posts_analyzed": 28,
+    "score": -0.06,
+    "pos_words": 7,
+    "neg_words": 8,
+    "posts_analyzed": 29,
     "has_recent_posts": true,
-    "timestamp": 1794149005.5671306
+    "timestamp": 1794244174.1486235
   },
   "MBNK": {
-    "score": 0.71,
-    "pos_words": 14,
-    "neg_words": 2,
+    "score": 0.5,
+    "pos_words": 10,
+    "neg_words": 3,
     "posts_analyzed": 20,
     "has_recent_posts": true,
-    "timestamp": 1793917943.9471154
+    "timestamp": 1794244177.0562408
   },
   "MRKC": {
     "score": 0.74,
@@ -646,60 +646,60 @@
     "timestamp": 1793663294.9134212
   },
   "MSNG": {
-    "score": 0.54,
+    "score": 0.48,
     "pos_words": 18,
-    "neg_words": 5,
+    "neg_words": 6,
     "posts_analyzed": 29,
     "has_recent_posts": true,
-    "timestamp": 1794149011.323567
+    "timestamp": 1794244184.1692207
   },
   "SBFR": {
-    "score": -0.67,
+    "score": -0.5,
     "pos_words": 0,
-    "neg_words": 2,
-    "posts_analyzed": 10,
-    "has_recent_posts": true,
-    "timestamp": 1794149039.7598171
-  },
-  "SBMM": {
-    "score": 0.0,
-    "pos_words": 0,
-    "neg_words": 0,
-    "posts_analyzed": 4,
-    "has_recent_posts": true,
-    "timestamp": 1794149041.1911335
-  },
-  "SBMX": {
-    "score": 0.0,
-    "pos_words": 1,
     "neg_words": 1,
     "posts_analyzed": 10,
     "has_recent_posts": true,
-    "timestamp": 1793917988.8356445
+    "timestamp": 1794244221.2283719
   },
-  "SBRB": {
-    "score": -0.67,
+  "SBMM": {
+    "score": -0.5,
     "pos_words": 0,
-    "neg_words": 2,
-    "posts_analyzed": 8,
+    "neg_words": 1,
+    "posts_analyzed": 4,
     "has_recent_posts": true,
-    "timestamp": 1794149043.403837
+    "timestamp": 1794244222.6800256
   },
-  "TPAY": {
-    "score": -0.67,
+  "SBMX": {
+    "score": -0.5,
     "pos_words": 0,
-    "neg_words": 2,
+    "neg_words": 1,
     "posts_analyzed": 10,
     "has_recent_posts": true,
-    "timestamp": 1794149060.7218118
+    "timestamp": 1794244224.064402
+  },
+  "SBRB": {
+    "score": -0.5,
+    "pos_words": 0,
+    "neg_words": 1,
+    "posts_analyzed": 8,
+    "has_recent_posts": true,
+    "timestamp": 1794244225.6818326
+  },
+  "TPAY": {
+    "score": -0.5,
+    "pos_words": 0,
+    "neg_words": 1,
+    "posts_analyzed": 10,
+    "has_recent_posts": true,
+    "timestamp": 1794244250.6734517
   },
   "VSEH": {
-    "score": 0.74,
-    "pos_words": 16,
-    "neg_words": 2,
+    "score": 0.67,
+    "pos_words": 17,
+    "neg_words": 3,
     "posts_analyzed": 29,
     "has_recent_posts": true,
-    "timestamp": 1793998099.8237016
+    "timestamp": 1794244259.6976917
   },
   "BAZA": {
     "score": 0.83,
@@ -710,28 +710,28 @@
     "timestamp": 1793997721.849943
   },
   "MRKV": {
-    "score": 0.75,
+    "score": 0.62,
     "pos_words": 10,
-    "neg_words": 1,
+    "neg_words": 2,
     "posts_analyzed": 14,
     "has_recent_posts": true,
-    "timestamp": 1793997871.8081203
+    "timestamp": 1794244182.8479097
   },
   "RASP": {
-    "score": 0.32,
-    "pos_words": 16,
-    "neg_words": 8,
+    "score": 0.53,
+    "pos_words": 14,
+    "neg_words": 4,
     "posts_analyzed": 29,
     "has_recent_posts": true,
-    "timestamp": 1793663321.1877425
+    "timestamp": 1794244206.86417
   },
   "FLOW": {
-    "score": 0.67,
-    "pos_words": 2,
+    "score": 0.0,
+    "pos_words": 0,
     "neg_words": 0,
     "posts_analyzed": 10,
     "has_recent_posts": true,
-    "timestamp": 1793997802.2187676
+    "timestamp": 1794244152.9814682
   },
   "MRKU": {
     "score": 0.86,
@@ -761,9 +761,9 @@
     "score": 0.0,
     "pos_words": 6,
     "neg_words": 6,
-    "posts_analyzed": 27,
+    "posts_analyzed": 24,
     "has_recent_posts": true,
-    "timestamp": 1793976443.287496
+    "timestamp": 1794244146.2026272
   },
   "MSRS": {
     "score": 0.83,
@@ -803,7 +803,7 @@
     "neg_words": 3,
     "posts_analyzed": 29,
     "has_recent_posts": true,
-    "timestamp": 1793997816.4184606
+    "timestamp": 1794244158.9604821
   },
   "SBCB": {
     "score": 0.0,
@@ -814,20 +814,20 @@
     "timestamp": 1793304304.823379
   },
   "SVAV": {
-    "score": 0.12,
-    "pos_words": 4,
+    "score": 0.0,
+    "pos_words": 3,
     "neg_words": 3,
-    "posts_analyzed": 18,
+    "posts_analyzed": 17,
     "has_recent_posts": true,
-    "timestamp": 1793976527.6687834
+    "timestamp": 1794244243.6623034
   },
   "BTBR": {
-    "score": 0.74,
-    "pos_words": 16,
+    "score": 0.79,
+    "pos_words": 21,
     "neg_words": 2,
     "posts_analyzed": 29,
     "has_recent_posts": true,
-    "timestamp": 1793997736.17689
+    "timestamp": 1794244132.670166
   },
   "AKRN": {
     "score": 0.31,
@@ -862,12 +862,12 @@
     "timestamp": 1793663296.1531448
   },
   "MVID": {
-    "score": 0.63,
-    "pos_words": 15,
+    "score": 0.61,
+    "pos_words": 14,
     "neg_words": 3,
     "posts_analyzed": 29,
     "has_recent_posts": true,
-    "timestamp": 1793997899.353856
+    "timestamp": 1794244189.6126935
   },
   "OBLG": {
     "score": 0.0,
@@ -878,12 +878,12 @@
     "timestamp": 1793917961.991085
   },
   "AMNY": {
-    "score": 0.67,
-    "pos_words": 2,
+    "score": 0.0,
+    "pos_words": 0,
     "neg_words": 0,
     "posts_analyzed": 10,
     "has_recent_posts": true,
-    "timestamp": 1793997708.7558196
+    "timestamp": 1794244122.1629488
   },
   "TGKN": {
     "score": 0.8,
@@ -892,5 +892,21 @@
     "posts_analyzed": 10,
     "has_recent_posts": true,
     "timestamp": 1793918009.6366065
+  },
+  "KMAZ": {
+    "score": -0.1,
+    "pos_words": 4,
+    "neg_words": 5,
+    "posts_analyzed": 21,
+    "has_recent_posts": true,
+    "timestamp": 1794244168.9565964
+  },
+  "OGKB": {
+    "score": 0.0,
+    "pos_words": 2,
+    "neg_words": 2,
+    "posts_analyzed": 16,
+    "has_recent_posts": true,
+    "timestamp": 1794244195.50384
   }
 }
