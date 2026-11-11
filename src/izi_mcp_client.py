@@ -385,6 +385,9 @@ def get_portfolio_model(portfolio_id: int) -> Dict[str, Any]:
         "summary": {
             "total_val": total_val,
             "total_inv": total_inv,
+            "balance": total_val,
+            "yield": pnl_rub,
+            "yield_perc": pnl_pct,
             "pnl_rub": pnl_rub,
             "pnl_pct": pnl_pct,
             "cash_rub": cash_rur,
