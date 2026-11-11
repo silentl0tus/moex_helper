@@ -840,7 +840,7 @@ def render_black_line_widget(
             show_black_line=show_black_line,
             height=420,
         )
-        st.altair_chart(chart, use_container_width=True)
+        st.altair_chart(chart, width="stretch")
         st.caption("Легенда: 🔵 Котировки закрытия (Close) | 🟠 SMA 50 | 🟣 SMA 200 | 🖤 **Чёрная линия** (Справедливая фундаментальная цена) | 🟩 Запас прочности (Margin of Safety ±15%)")
     else:
         st.info(f"Исторические свечи для {ticker_clean} временно недоступны на MOEX ISS.")

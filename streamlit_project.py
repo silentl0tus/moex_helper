@@ -723,6 +723,8 @@ with st.sidebar:
             try:
                 with st.spinner(f"Синхронизация {port_name_map.get(selected_port_id, '')} через MCP..."):
                     mcp_data = fetch_izi_mcp_portfolio(selected_port_id)
+                if mcp_data and mcp_data.get("from_cache"):
+                    st.caption("ℹ️ *Данные загружены из сохранённого кэша (сервер izi-invest ответил с задержкой). Нажмите 🔄 для обновления.*")
             except Exception as e:
                 st.error(f"Ошибка загрузки через MCP: {e}")
                 mcp_data = None

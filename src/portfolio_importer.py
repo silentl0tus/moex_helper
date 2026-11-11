@@ -477,6 +477,7 @@ def fetch_izi_mcp_portfolio(portfolio_id: Optional[int] = None) -> Dict[str, Any
         "reserves_market_value": model.get("reserves_market_value", 0.0),
         "blocked_total": model.get("blocked_total", 0.0),
         "is_mcp": True,
+        "from_cache": bool(model.get("from_cache", False)),
     }
 
 

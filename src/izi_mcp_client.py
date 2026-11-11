@@ -9,7 +9,8 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
+import time
 
 import pandas as pd
 import requests
@@ -91,8 +92,58 @@ def get_izi_config() -> IziConfig:
     return IziConfig({"url": final_url, "token": final_token})
 
 
-def _call_izi_rpc(method: str, params: Dict[str, Any], timeout: float = 10.0) -> Optional[Dict[str, Any]]:
-    """Выполняет низкоуровневый JSON-RPC 2.0 запрос к izi-invest MCP."""
+CACHE_DIR = Path("data/cache_mcp")
+
+
+def _save_to_disk_cache(key: str, data: Any) -> None:
+    """Сохраняет успешный ответ MCP на диск для офлайн-отказоустойчивости."""
+    try:
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        f_path = CACHE_DIR / f"{key}.json"
+        if isinstance(data, dict):
+            clean_data = {k: v for k, v in data.items() if not k.startswith("_")}
+        else:
+            clean_data = data
+        f_path.write_text(json.dumps(clean_data, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as e:
+        logger.debug(f"Не удалось записать кэш {key}: {e}")
+
+
+def _load_from_disk_cache(key: str) -> Optional[Any]:
+    """Считывает резервный снимок данных из дискового кэша."""
+    try:
+        f_path = CACHE_DIR / f"{key}.json"
+        if f_path.exists():
+            data = json.loads(f_path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                data["_is_cached"] = True
+            return data
+    except Exception as e:
+        logger.debug(f"Не удалось прочитать кэш {key}: {e}")
+    return None
+
+
+_http_session: Optional[requests.Session] = None
+
+
+def _get_http_session() -> requests.Session:
+    """Возвращает переиспользуемую HTTP-сессию с пулом соединений."""
+    global _http_session
+    if _http_session is None:
+        _http_session = requests.Session()
+        adapter = requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=20, max_retries=1)
+        _http_session.mount("https://", adapter)
+        _http_session.mount("http://", adapter)
+    return _http_session
+
+
+def _call_izi_rpc(
+    method: str,
+    params: Dict[str, Any],
+    timeout: Union[float, Tuple[float, float]] = (8.0, 35.0),
+    max_retries: int = 2,
+) -> Optional[Dict[str, Any]]:
+    """Выполняет JSON-RPC 2.0 запрос к izi-invest MCP с переиспользованием сессии и повторными попытками."""
     url, token = get_izi_config()
     headers = {
         "Authorization": f"Bearer {token}",
@@ -105,23 +156,38 @@ def _call_izi_rpc(method: str, params: Dict[str, Any], timeout: float = 10.0) ->
         "method": method,
         "params": params,
     }
+    session = _get_http_session()
 
-    try:
-        resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
-        if resp.status_code != 200:
-            logger.warning(f"izi-invest MCP вернул статус {resp.status_code}: {resp.text[:200]}")
-            return None
-        data = resp.json()
-        if "error" in data:
-            logger.error(f"izi-invest MCP вернул RPC ошибку: {data['error']}")
-            return None
-        return data.get("result")
-    except Exception as e:
-        logger.warning(f"Ошибка подключения к izi-invest MCP ({url}): {e}")
-        return None
+    last_err = None
+    for attempt in range(max_retries + 1):
+        try:
+            resp = session.post(url, headers=headers, json=payload, timeout=timeout)
+            if resp.status_code != 200:
+                logger.warning(f"izi-invest MCP вернул статус {resp.status_code}: {resp.text[:200]}")
+                return None
+            data = resp.json()
+            if "error" in data:
+                logger.error(f"izi-invest MCP вернул RPC ошибку: {data['error']}")
+                return None
+            return data.get("result")
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+            last_err = e
+            if attempt < max_retries:
+                time.sleep(1.2 * (attempt + 1))
+                continue
+        except Exception as e:
+            last_err = e
+            break
+
+    logger.warning(f"Ошибка подключения к izi-invest MCP ({url}): {last_err}")
+    return None
 
 
-def _call_izi_tool(tool_name: str, arguments: Dict[str, Any], timeout: float = 12.0) -> Optional[Any]:
+def _call_izi_tool(
+    tool_name: str,
+    arguments: Dict[str, Any],
+    timeout: Union[float, Tuple[float, float]] = (8.0, 35.0),
+) -> Optional[Any]:
     """Вызывает конкретный инструмент MCP и распарсивает JSON-контент ответа."""
     res = _call_izi_rpc("tools/call", {"name": tool_name, "arguments": arguments}, timeout=timeout)
     if not res:
@@ -142,10 +208,17 @@ def get_user_portfolios() -> List[Dict[str, Any]]:
     """
     Запрашивает список всех портфелей пользователя через MCP:
     [{id, name, currency, broker_title, url, icon, ...}, ...]
+    При сбое сети прозрачно возвращает сохранённый локальный снимок.
     """
-    res = _call_izi_tool("get_user_portfolios", {"full": False}, timeout=8.0)
-    if isinstance(res, list):
+    res = _call_izi_tool("get_user_portfolios", {"full": False}, timeout=(6.0, 30.0))
+    if isinstance(res, list) and res:
+        _save_to_disk_cache("user_portfolios", res)
         return res
+    # Fallback на сохранённый дисковый кэш
+    cached = _load_from_disk_cache("user_portfolios")
+    if isinstance(cached, list) and cached:
+        logger.info("Использован сохранённый кэш списка портфелей из-за задержки сети.")
+        return cached
     return []
 
 
@@ -157,16 +230,24 @@ def fetch_portfolio_raw(
 ) -> Optional[Dict[str, Any]]:
     """
     Запрашивает сырые данные портфеля по блокам: summary, positions, structure, chart.
+    При сетевом таймауте возвращает последний сохранённый снимок.
     """
     if blocks is None:
         blocks = ["summary", "positions", "structure", "chart"]
+    cache_key = f"portfolio_{portfolio_id}"
     res = _call_izi_tool(
         "get_portfolio",
         {"portfolio_id": int(portfolio_id), "blocks": blocks, "points": points},
-        timeout=12.0,
+        timeout=(10.0, 45.0),
     )
-    if isinstance(res, dict):
+    if isinstance(res, dict) and res:
+        _save_to_disk_cache(cache_key, res)
         return res
+    # Fallback на сохранённый дисковый кэш
+    cached = _load_from_disk_cache(cache_key)
+    if isinstance(cached, dict) and cached:
+        logger.info(f"Использован сохранённый кэш портфеля #{portfolio_id} из-за таймаута izi-invest MCP.")
+        return cached
     return None
 
 
@@ -176,9 +257,14 @@ def fetch_portfolio_analysis(portfolio_id: int) -> Optional[Dict[str, Any]]:
     Запрашивает глубокую аналитику портфеля от izi-invest:
     риски (HHI, топ-5), бенчмарки (XIRR, AAR vs IMOEX/ЦБ), диагностику.
     """
-    res = _call_izi_tool("get_analysis", {"portfolio_id": int(portfolio_id)}, timeout=10.0)
-    if isinstance(res, dict):
+    cache_key = f"analysis_{portfolio_id}"
+    res = _call_izi_tool("get_analysis", {"portfolio_id": int(portfolio_id)}, timeout=(6.0, 30.0))
+    if isinstance(res, dict) and res:
+        _save_to_disk_cache(cache_key, res)
         return res
+    cached = _load_from_disk_cache(cache_key)
+    if isinstance(cached, dict) and cached:
+        return cached
     return None
 
 
@@ -410,4 +496,5 @@ def get_portfolio_model(portfolio_id: int) -> Dict[str, Any]:
         "chart_df": chart_df,
         "analysis": analysis,
         "is_mcp": True,
+        "from_cache": bool(raw.get("_is_cached", False)),
     }

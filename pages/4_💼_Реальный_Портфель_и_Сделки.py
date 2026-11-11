@@ -273,6 +273,8 @@ if is_demo:
     st.info("💡 **Демонстрационный режим:** загружен демонстрационный отчёт («Ликвидная часть»). Чтобы проанализировать **свой личный отчёт**, выберите ваш файл в поле загрузки в боковой панели слева 👈")
 else:
     st.success(f"✅ Успешно загружен и обработан ваш отчёт: **`{portfolio_data.get('identifier', 'файл')}`**")
+    if portfolio_data.get("from_cache"):
+        st.caption("ℹ️ *Данные получены из сохранённого локального кэша (удалённый сервер izi-invest ответил с задержкой). Все расчеты и Черная Линия активны.*")
 
 open_pos_cnt = summary.get("open_positions_count", len(df_pos))
 total_trades_cnt = summary.get("total_trades_count", len(df_trades))
