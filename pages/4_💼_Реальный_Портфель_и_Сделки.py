@@ -240,7 +240,7 @@ if not portfolio_data:
     st.stop()
 
 transfers = portfolio_data.get("transfers", [])
-enable_transfers = True
+enable_transfers = bool(transfers)
 if transfers:
     with st.sidebar:
         st.divider()
@@ -252,16 +252,16 @@ if transfers:
         )
 
 if enable_transfers and "adj_positions" in portfolio_data:
-    df_pos = portfolio_data["adj_positions"].copy()
-    df_fifo = portfolio_data["adj_fifo"].copy()
+    df_pos = portfolio_data.get("adj_positions", portfolio_data.get("positions", pd.DataFrame())).copy()
+    df_fifo = portfolio_data.get("adj_fifo", portfolio_data.get("fifo", pd.DataFrame())).copy()
 else:
-    df_pos = portfolio_data.get("raw_positions", portfolio_data["positions"]).copy()
-    df_fifo = portfolio_data.get("raw_fifo", portfolio_data["fifo"]).copy()
+    df_pos = portfolio_data.get("raw_positions", portfolio_data.get("positions", pd.DataFrame())).copy()
+    df_fifo = portfolio_data.get("raw_fifo", portfolio_data.get("fifo", pd.DataFrame())).copy()
 
-summary = portfolio_data["summary"]
-df_trades = portfolio_data["trades"].copy()
-df_div = portfolio_data["dividends"].copy()
-df_coup = portfolio_data["coupons"].copy()
+summary = portfolio_data.get("summary", {})
+df_trades = portfolio_data.get("trades", pd.DataFrame()).copy()
+df_div = portfolio_data.get("dividends", pd.DataFrame()).copy()
+df_coup = portfolio_data.get("coupons", pd.DataFrame()).copy()
 
 # ==========================================
 # 4. ВЕРХНИЙ ДАШБОРД (СВОДНЫЕ МЕТРИКИ)
@@ -274,20 +274,27 @@ if is_demo:
 else:
     st.success(f"✅ Успешно загружен и обработан ваш отчёт: **`{portfolio_data.get('identifier', 'файл')}`**")
 
+open_pos_cnt = summary.get("open_positions_count", len(df_pos))
+total_trades_cnt = summary.get("total_trades_count", len(df_trades))
+closed_deals_cnt = summary.get("closed_deals_count", len(df_fifo))
+
 st.markdown(
-    f"Открытых позиций: **{summary['open_positions_count']}** &nbsp;|&nbsp; "
-    f"Всего операций в истории: **{summary['total_trades_count']}** &nbsp;|&nbsp; "
-    f"Закрытых сделок FIFO: **{summary['closed_deals_count']}**"
+    f"Открытых позиций: **{open_pos_cnt}** &nbsp;|&nbsp; "
+    f"Всего операций в истории: **{total_trades_cnt}** &nbsp;|&nbsp; "
+    f"Закрытых сделок FIFO: **{closed_deals_cnt}**"
 )
 
 kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
 
-tot_val = summary["total_value"]
-net_inv = summary["net_invested"]
-pnl_rub = summary["total_profit_rub"]
-pnl_pct = summary["total_profit_pct"]
-xirr_pct = summary["xirr_pct"]
-pass_income = summary["total_passive_income"]
+tot_val = float(summary.get("total_value", 0.0))
+net_inv = float(summary.get("net_invested", 0.0))
+pnl_rub = float(summary.get("total_profit_rub", 0.0))
+pnl_pct = float(summary.get("total_profit_pct", 0.0))
+xirr_pct = float(summary.get("xirr_pct", 0.0))
+pass_income = float(summary.get("total_passive_income", 0.0))
+total_dep = float(summary.get("total_deposits", net_inv))
+total_div = float(summary.get("total_dividends", 0.0))
+total_coup = float(summary.get("total_coupons", 0.0))
 
 kpi1.metric(
     label="Текущая стоимость",
@@ -298,7 +305,7 @@ kpi1.metric(
 kpi2.metric(
     label="Вложено (Net Cash)",
     value=f"{net_inv:,.0f} ₽",
-    delta=f"Введено {summary['total_deposits']:,.0f} ₽",
+    delta=f"Введено {total_dep:,.0f} ₽",
     delta_color="off"
 )
 
@@ -317,7 +324,7 @@ kpi4.metric(
 kpi5.metric(
     label="Дивиденды + Купоны",
     value=f"{pass_income:,.0f} ₽",
-    delta=f"Див: {summary['total_dividends']:,.0f} ₽ | Куп: {summary['total_coupons']:,.0f} ₽",
+    delta=f"Див: {total_div:,.0f} ₽ | Куп: {total_coup:,.0f} ₽",
     delta_color="off"
 )
 
