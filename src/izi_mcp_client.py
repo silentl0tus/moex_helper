@@ -282,6 +282,32 @@ def get_portfolio_model(portfolio_id: int) -> Dict[str, Any]:
 
     # Резервы (облигации + кэш)
     reserves_market_val = bonds_val + total_cash_rub
+
+    # Если загружается сводный портфель «Ликвидная часть» (47933), автоматически обогащаем
+    # заблокированными фондами FinEx из суб-портфеля LOCK (43551), чтобы инвестор видел полный капитал
+    if int(portfolio_id) == 47933 and not my_blocked_dict:
+        try:
+            lock_raw = fetch_portfolio_raw(43551)
+            if lock_raw and isinstance(lock_raw.get("positions"), dict):
+                lock_items = lock_raw["positions"].get("items", [])
+                for it in lock_items:
+                    uid = it.get("uid", "")
+                    tk = uid.split(":")[0] if ":" in uid else uid
+                    tk = tk.upper().strip()
+                    c_cnt = float(it.get("cnt", 0))
+                    c_sum = float(it.get("summa", 0.0))
+                    c_avg = float(it.get("average_price_pc", 0.0))
+                    c_inv = c_avg * c_cnt if c_avg > 0 else c_sum
+                    my_blocked_dict[tk] = {
+                        "count": c_cnt,
+                        "invested": c_inv,
+                        "avg_price": c_avg,
+                        "val": c_sum,
+                        "name": it.get("name", tk)
+                    }
+        except Exception:
+            pass
+
     blocked_total_val = sum(v["val"] for v in my_blocked_dict.values())
 
     # 3. Обработка исторического графика (Chart)

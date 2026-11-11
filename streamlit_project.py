@@ -682,12 +682,22 @@ with st.sidebar:
     if port_source == "⚡ izi-invest (MCP онлайн)":
         user_ports = get_user_portfolios()
         if user_ports:
+            PORTFOLIO_ROLE_TITLES = {
+                47933: "💼 Единый рабочий портфель (Альфа + ВТБ)",
+                43431: "📈 Основной: Акции (Альфа-Банк)",
+                43436: "💵 Валютный щит: Резерв / Облигации (ВТБ)",
+                43551: "🔒 Заблокировано: Фонды FinEx (LOCK)",
+            }
             port_name_map = {}
             default_idx = 0
             for idx, p in enumerate(user_ports):
-                b_title = f" ({p['broker_title']})" if p.get('broker_title') and p['broker_title'] != "Без брокера" else ""
-                port_name_map[p["id"]] = f"{p['name']}{b_title}"
-                if p.get("merged") or p.get("id") == 47933:
+                pid = p["id"]
+                custom_title = PORTFOLIO_ROLE_TITLES.get(pid)
+                if not custom_title:
+                    b_title = f" ({p['broker_title']})" if p.get('broker_title') and p['broker_title'] != "Без брокера" else ""
+                    custom_title = f"{p['name']}{b_title}"
+                port_name_map[pid] = custom_title
+                if p.get("merged") or pid == 47933:
                     default_idx = idx
 
             c_sel, c_ref = st.columns([4, 1])
@@ -703,6 +713,8 @@ with st.sidebar:
                 if st.button("🔄", help="Сбросить кэш и обновить данные izi-invest"):
                     st.cache_data.clear()
                     st.rerun()
+
+            st.caption("💡 **Структура капитала:** Альфа (акции) + ВТБ (валютный щит от девальвации) + LOCK (заблокированный FinEx).")
 
             try:
                 with st.spinner(f"Синхронизация {port_name_map.get(selected_port_id, '')} через MCP..."):
@@ -1015,12 +1027,12 @@ with st.sidebar:
     if my_portfolio:
         st.session_state["my_portfolio"] = my_portfolio
         portfolio_tickers_list = list(my_portfolio.keys())
-        st.success(f"Загружено {len(portfolio_tickers_list)} акций из портфеля")
+        st.success(f"Загружено {len(portfolio_tickers_list)} акций из портфеля (Альфа-Банк)")
         if my_reserves_invested > 0:
-            st.info(f"💵 Облигации / Резервы: {my_reserves_invested:,.0f} ₽")
-            with st.expander("Детализация резервов"):
+            st.info(f"💵 Валютный щит / Облигации (ВТБ): {my_reserves_invested:,.0f} ₽")
+            with st.expander("Детализация резервов (Хедж девальвации)"):
                 if cash_rub > 0:
-                    st.write(f"Кэш (RUB): **{cash_rub:,.0f} ₽**")
+                    st.write(f"Свободный кэш (RUB + CNY): **{cash_rub:,.0f} ₽**")
                 for sym, d in _reserves_detail.items():
                     pnl     = d["market"] - d["cost"]
                     pnl_pct = (pnl / d["cost"] * 100) if d["cost"] else 0
@@ -1031,7 +1043,7 @@ with st.sidebar:
                         f"Позиция: {d['count']}"
                     )
         if my_blocked_invested > 0:
-            st.warning(f"🔒 Заблокированные фонды (FinEx/Иностранные): {my_blocked_invested:,.0f} ₽")
+            st.warning(f"🔒 Заблокировано FinEx (из Альфы): {my_blocked_invested:,.0f} ₽")
     else:
         portfolio_tickers_list = PORTFOLIO_TICKERS
         
@@ -2302,11 +2314,13 @@ else:
         st.caption("Анализ распределения долей, безопасных резервов и расчет балансировки капитала.")
         
         if my_portfolio:
-            port_r1, port_r2, port_r3, port_r4 = st.columns(4)
-            port_r1.metric("Акции (MOEX)", f"{total_val:,.0f} ₽", f"{pnl_rub:+,.0f} ₽ ({pnl_pct:+.1f}%)")
-            port_r2.metric("Облигации / Резервы", f"{my_reserves_invested:,.0f} ₽", "Ликвидная подушка")
-            port_r3.metric("Заблокировано (FinEx)", f"{my_blocked_invested:,.0f} ₽", "Иностранные фонды")
-            port_r4.metric("Свободный кэш", f"{cash_rub:,.0f} ₽", "Готов к покупкам")
+            port_r1, port_r2, port_r3, port_r4, port_r5 = st.columns(5)
+            full_cap = total_val + my_reserves_invested + my_blocked_invested
+            port_r1.metric("📈 Акции (Альфа-Банк)", f"{total_val:,.0f} ₽", f"{pnl_rub:+,.0f} ₽ ({pnl_pct:+.1f}%)")
+            port_r2.metric("💵 Валютный щит (ВТБ)", f"{my_reserves_invested:,.0f} ₽", "Хедж девальвации / Облигации")
+            port_r3.metric("🔒 Заблокировано FinEx", f"{my_blocked_invested:,.0f} ₽", "Иностранные фонды (Альфа)")
+            port_r4.metric("💰 Свободный кэш", f"{cash_rub:,.0f} ₽", "Готов к покупкам")
+            port_r5.metric("🏛️ Всего капитал", f"{full_cap:,.0f} ₽", f"Ликвидный: {total_val + my_reserves_invested:,.0f} ₽")
             
             st.markdown("---")
             

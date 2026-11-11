@@ -127,12 +127,22 @@ has_sample = os.path.exists(sample_file_path)
 if source_mode == "⚡ izi-invest (MCP онлайн по токену)":
     user_ports = get_user_portfolios()
     if user_ports:
+        PORTFOLIO_ROLE_TITLES = {
+            47933: "💼 Единый рабочий портфель (Альфа + ВТБ)",
+            43431: "📈 Основной: Акции (Альфа-Банк)",
+            43436: "💵 Валютный щит: Резерв / Облигации (ВТБ)",
+            43551: "🔒 Заблокировано: Фонды FinEx (LOCK)",
+        }
         port_name_map = {}
         default_idx = 0
         for idx, p in enumerate(user_ports):
-            b_title = f" ({p['broker_title']})" if p.get('broker_title') and p['broker_title'] != "Без брокера" else ""
-            port_name_map[p["id"]] = f"{p['name']}{b_title}"
-            if p.get("merged") or p.get("id") == 47933:
+            pid = p["id"]
+            custom_title = PORTFOLIO_ROLE_TITLES.get(pid)
+            if not custom_title:
+                b_title = f" ({p['broker_title']})" if p.get('broker_title') and p['broker_title'] != "Без брокера" else ""
+                custom_title = f"{p['name']}{b_title}"
+            port_name_map[pid] = custom_title
+            if p.get("merged") or pid == 47933:
                 default_idx = idx
 
         col_p1, col_p2 = st.sidebar.columns([3, 1])
@@ -147,6 +157,8 @@ if source_mode == "⚡ izi-invest (MCP онлайн по токену)":
             if st.button("🔄", help="Сбросить кэш и обновить"):
                 st.cache_data.clear()
                 st.rerun()
+
+        st.sidebar.caption("💡 **1 единый портфель:** Альфа (акции) + ВТБ (валютный щит от девальвации) + LOCK (заблокированный FinEx).")
 
         with st.spinner(f"Загрузка портфеля {port_name_map.get(selected_port_id, '')} через MCP..."):
             try:
