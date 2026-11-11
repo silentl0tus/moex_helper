@@ -101,7 +101,11 @@ st.sidebar.title("💼 Учёт сделок и Портфель")
 st.sidebar.caption("Загрузите свой отчёт брокера или экспорта для анализа позиций от цен входа.")
 
 izi_cfg = get_izi_config()
-has_izi_mcp = bool(izi_cfg.get("token"))
+has_izi_mcp = bool(
+    izi_cfg.get("token")
+    if hasattr(izi_cfg, "get")
+    else (izi_cfg[1] if isinstance(izi_cfg, (list, tuple)) and len(izi_cfg) > 1 else None)
+)
 
 source_options = []
 if has_izi_mcp:

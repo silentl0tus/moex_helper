@@ -21,7 +21,34 @@ DEFAULT_MCP_URL = "https://izi-invest.ru/mcp"
 DEFAULT_TOKEN = "izi_857d331baed3ff52d18941dce9c1f1d08bba2e90ca806430551d27190c7239c4"
 
 
-def get_izi_config() -> Tuple[str, str]:
+class IziConfig(dict):
+    """Конфигурация подключения к izi-invest MCP.
+
+    Поддерживает:
+      - Обращение как к словарю: cfg.get("token"), cfg["token"], cfg.get("url")
+      - Распаковку как кортеж (url, token): `url, token = get_izi_config()`
+      - Индексацию по индексу: cfg[0] -> url, cfg[1] -> token
+      - Доступ через атрибуты: cfg.url, cfg.token
+    """
+    def __iter__(self):
+        yield self.get("url", "")
+        yield self.get("token", "")
+
+    def __getitem__(self, item):
+        if isinstance(item, int):
+            return self.get("url", "") if item == 0 else self.get("token", "")
+        return super().__getitem__(item)
+
+    @property
+    def url(self) -> str:
+        return self.get("url", "")
+
+    @property
+    def token(self) -> str:
+        return self.get("token", "")
+
+
+def get_izi_config() -> IziConfig:
     """Возвращает актуальный URL и токен доступа к izi-invest MCP."""
     token = None
     url = None
@@ -61,7 +88,7 @@ def get_izi_config() -> Tuple[str, str]:
 
     final_token = token if token else DEFAULT_TOKEN
     final_url = url if url else DEFAULT_MCP_URL
-    return final_url, final_token
+    return IziConfig({"url": final_url, "token": final_token})
 
 
 def _call_izi_rpc(method: str, params: Dict[str, Any], timeout: float = 10.0) -> Optional[Dict[str, Any]]:

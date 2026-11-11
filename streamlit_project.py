@@ -657,7 +657,11 @@ with st.sidebar:
     )
     st.header("Мой Портфель")
     izi_cfg = get_izi_config()
-    has_izi = bool(izi_cfg.get("token"))
+    has_izi = bool(
+        izi_cfg.get("token")
+        if hasattr(izi_cfg, "get")
+        else (izi_cfg[1] if isinstance(izi_cfg, (list, tuple)) and len(izi_cfg) > 1 else None)
+    )
 
     source_options = []
     if has_izi:
