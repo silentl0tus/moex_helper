@@ -22,8 +22,11 @@ from src.portfolio_importer import (
     calculate_mirror_benchmark_timeline,
     calculate_xirr,
     fetch_izi_invest_data,
+    fetch_izi_mcp_portfolio,
     parse_broker_file,
 )
+from src.izi_mcp_client import get_izi_config, get_user_portfolios
+from src.black_line import calculate_black_line_valuation
 
 # ==========================================
 # 1. КОНФИГУРАЦИЯ СТРАНИЦЫ
@@ -97,12 +100,20 @@ def load_portfolio_from_url(url_or_id: str):
 st.sidebar.title("💼 Учёт сделок и Портфель")
 st.sidebar.caption("Загрузите свой отчёт брокера или экспорта для анализа позиций от цен входа.")
 
+izi_cfg = get_izi_config()
+has_izi_mcp = bool(izi_cfg.get("token"))
+
+source_options = []
+if has_izi_mcp:
+    source_options.append("⚡ izi-invest (MCP онлайн по токену)")
+source_options.extend([
+    "📂 Загрузить файл отчёта (XLSX / XLS / CSV)",
+    "🌐 Сервис izi-invest.ru (по ссылке)"
+])
+
 source_mode = st.sidebar.radio(
     "Способ добавления портфеля:",
-    options=[
-        "📂 Загрузить файл отчёта (XLSX / XLS / CSV)",
-        "🌐 Сервис izi-invest.ru (по ссылке)"
-    ],
+    options=source_options,
     index=0
 )
 
@@ -113,7 +124,39 @@ is_demo = False
 sample_file_path = "data/sample_portfolio.xlsx"
 has_sample = os.path.exists(sample_file_path)
 
-if source_mode == "📂 Загрузить файл отчёта (XLSX / XLS / CSV)":
+if source_mode == "⚡ izi-invest (MCP онлайн по токену)":
+    user_ports = get_user_portfolios()
+    if user_ports:
+        port_name_map = {}
+        default_idx = 0
+        for idx, p in enumerate(user_ports):
+            b_title = f" ({p['broker_title']})" if p.get('broker_title') and p['broker_title'] != "Без брокера" else ""
+            port_name_map[p["id"]] = f"{p['name']}{b_title}"
+            if p.get("merged") or p.get("id") == 47933:
+                default_idx = idx
+
+        col_p1, col_p2 = st.sidebar.columns([3, 1])
+        with col_p1:
+            selected_port_id = st.selectbox(
+                "Портфель из izi-invest:",
+                options=list(port_name_map.keys()),
+                format_func=lambda pid: port_name_map[pid],
+                index=default_idx
+            )
+        with col_p2:
+            if st.button("🔄", help="Сбросить кэш и обновить"):
+                st.cache_data.clear()
+                st.rerun()
+
+        with st.spinner(f"Загрузка портфеля {port_name_map.get(selected_port_id, '')} через MCP..."):
+            try:
+                portfolio_data = fetch_izi_mcp_portfolio(selected_port_id)
+            except Exception as e:
+                load_error = str(e)
+    else:
+        load_error = "Не удалось подключиться к izi-invest MCP. Проверьте токен в .env"
+
+elif source_mode == "📂 Загрузить файл отчёта (XLSX / XLS / CSV)":
     uploaded_file = st.sidebar.file_uploader(
         "Выберите файл отчёта:",
         type=["xlsx", "xls", "csv"],
@@ -264,15 +307,73 @@ kpi5.metric(
 
 st.divider()
 
-# Перенос структуры в Бэктест
-col_export_msg, col_export_btn = st.columns([4, 1])
+# Перенос структуры в Бэктест и Пульт решений
+col_export_msg, col_bt_btn, col_de_btn = st.columns([3, 1, 1])
 with col_export_msg:
-    st.caption("🚀 Хотите проверить устойчивость ваших текущих позиций на исторических кризисах (2020 COVID, 2022 СВО, 2024 ДКП)?")
-with col_export_btn:
-    if st.button("🧪 Отправить в Бэктест", width="stretch", type="primary"):
-        st.session_state["backtest_custom_weights"] = portfolio_data["weights_dict"]
+    st.caption("🚀 Отправьте портфель в «Пульт решений» для поиска рокировок или проверьте его на исторических кризисах в «Бэктесте».")
+with col_bt_btn:
+    if st.button("🧪 В Бэктест", width="stretch"):
+        weights_map = {}
+        for _, r in df_pos.iterrows():
+            t = str(r["Тикер"]).strip().upper()
+            w = float(r.get("Вес, %", 0.0) or 0.0)
+            if w > 0.01:
+                weights_map[t] = round(w, 2)
+        st.session_state["backtest_custom_weights"] = weights_map
         st.session_state["backtest_custom_capital"] = tot_val
-        st.success("Структура скопирована! Перейдите на вкладку «⏳ Бэктест Стратегии» в левом меню.")
+        st.success("Структура скопирована! Перейдите на вкладку «⏳ Бэктест Стратегии».")
+with col_de_btn:
+    if st.button("🎯 В Пульт решений", width="stretch", type="primary"):
+        if "my_portfolio_dict" in portfolio_data and portfolio_data["my_portfolio_dict"]:
+            st.session_state["my_portfolio"] = portfolio_data["my_portfolio_dict"]
+        else:
+            p_dict = {}
+            for _, r in df_pos.iterrows():
+                t = str(r["Тикер"]).strip().upper()
+                p_dict[t] = {
+                    "count": float(r.get("Количество", 0.0) or 0.0),
+                    "invested": float(r.get("Вложенная сумма", 0.0) or 0.0),
+                    "avg_price": float(r.get("Средняя цена", 0.0) or 0.0)
+                }
+            st.session_state["my_portfolio"] = p_dict
+        st.success("Портфель передан на главный экран! Откройте «📊 Экран инвестора».")
+
+# Диагностика рисков и потоков из izi-invest MCP
+if portfolio_data.get("analysis"):
+    an = portfolio_data["analysis"]
+    with st.expander("⚡ Диагностика рисков и денежного потока (izi-invest MCP)", expanded=True):
+        an_c1, an_c2, an_c3 = st.columns(3)
+        risk = an.get("risk", {})
+        cashflow = an.get("cashflow", {})
+        bench = an.get("benchmark", {})
+
+        with an_c1:
+            st.markdown("##### ⚖️ Концентрация капитала")
+            top5_share = risk.get("top5_share", 0.0)
+            hhi = risk.get("hhi", 0)
+            st.metric("Доля Топ-5 позиций", f"{top5_share:.1f}%", f"HHI {hhi} (Умеренная)")
+            top5_items = risk.get("top5", {})
+            if top5_items:
+                top5_str = " • ".join([f"**{k.split(':')[0]}**: {v:.1f}%" for k, v in top5_items.items()])
+                st.caption(f"Ключевые доли: {top5_str}")
+
+        with an_c2:
+            st.markdown("##### 💵 Пассивный денежный поток")
+            rec_12m = cashflow.get("received_12m_total", 0.0)
+            next_12m = cashflow.get("next_12m_total", 0.0)
+            st.metric("Получено за 12 мес", f"{rec_12m:,.0f} ₽", f"Прогноз: {next_12m:,.0f} ₽", delta_color="normal")
+            st.caption("Фактические дивиденды и купоны на счета инвестора")
+
+        with an_c3:
+            st.markdown("##### 🎯 Сравнение с бенчмарками")
+            p_xirr = bench.get("portfolio_xirr", 0.0)
+            cbr = bench.get("cbr_rate", 14.0)
+            imoex_ann = bench.get("imoex", {}).get("annualized_perc", -8.35)
+            st.metric("XIRR портфеля vs IMOEX", f"{p_xirr:+.2f}%", f"IMOEX: {imoex_ann:+.1f}% годовых")
+            if p_xirr < cbr:
+                st.caption(f"⚠️ Доходность {p_xirr:.1f}% отстаёт от ставки ЦБ ({cbr:.0f}%). Используйте рокировки в Пульте решений для выхода в лидеры.")
+            else:
+                st.caption("🟢 Доходность портфеля выше депозитной ставки ЦБ.")
 
 if transfers:
     if enable_transfers:
@@ -364,7 +465,19 @@ with tab_positions:
             df_pos["Учёт"] = df_pos["Сквозной перенос"].apply(lambda x: "🔄 Сквозной" if x is True else "Обычный")
             display_cols.append("Учёт")
 
-        df_display = df_pos[display_cols].copy()
+        df_display = df_pos[[c for c in display_cols if c in df_pos.columns]].copy()
+
+        # Обогащение фундаментальной оценкой "Чёрная Линия" (Black Line / Fair Value)
+        fair_prices = []
+        mos_pcts = []
+        for _, r in df_display.iterrows():
+            sym = str(r.get("Тикер", "")).strip().upper()
+            p = float(r.get("Текущая цена", 0.0) or 0.0)
+            res = calculate_black_line_valuation(ticker=sym, price=p)
+            fair_prices.append(res.get("fair_price", p))
+            mos_pcts.append(res.get("upside_pct", 0.0))
+        df_display["Чёрная Линия (₽)"] = fair_prices
+        df_display["Запас прочности (%)"] = mos_pcts
 
         # Форматирование и подсветка
         st_styled_pos = df_display.style.format({
@@ -375,7 +488,9 @@ with tab_positions:
             "Вложенная сумма": "{:,.0f} ₽",
             "Прибыль, ₽": "{:+,.0f} ₽",
             "Доходность от входа, %": "{:+.2f}%",
-            "Вес, %": "{:.2f}%"
+            "Вес, %": "{:.2f}%",
+            "Чёрная Линия (₽)": "{:,.2f} ₽",
+            "Запас прочности (%)": "{:+.1f}%"
         })
 
         def _color_pnl(val):
@@ -388,9 +503,9 @@ with tab_positions:
             return ""
 
         if hasattr(st_styled_pos, "map"):
-            st_styled_pos = st_styled_pos.map(_color_pnl, subset=["Прибыль, ₽", "Доходность от входа, %"])
+            st_styled_pos = st_styled_pos.map(_color_pnl, subset=["Прибыль, ₽", "Доходность от входа, %", "Запас прочности (%)"])
         elif hasattr(st_styled_pos, "applymap"):
-            st_styled_pos = st_styled_pos.applymap(_color_pnl, subset=["Прибыль, ₽", "Доходность от входа, %"])
+            st_styled_pos = st_styled_pos.applymap(_color_pnl, subset=["Прибыль, ₽", "Доходность от входа, %", "Запас прочности (%)"])
 
         st.dataframe(st_styled_pos, width="stretch", hide_index=True)
 

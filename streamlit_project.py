@@ -46,6 +46,8 @@ from src.black_line import (
     render_black_line_widget,
     fetch_stock_candles,
 )
+from src.izi_mcp_client import get_izi_config, get_user_portfolios
+from src.portfolio_importer import fetch_izi_mcp_portfolio
 
 PORTFOLIO_TICKERS = [
     "MGNT", "SBER", "ROSN", "NMTP", "SVCB",
@@ -654,35 +656,101 @@ with st.sidebar:
         f"{len(moex_tickers)} тикеров"
     )
     st.header("Мой Портфель")
-    uploaded_file = st.file_uploader("Загрузить Портфель (JSON / Excel / CSV)", type=["json", "xlsx", "csv"])
-    
+    izi_cfg = get_izi_config()
+    has_izi = bool(izi_cfg.get("token"))
+
+    source_options = []
+    if has_izi:
+        source_options.append("⚡ izi-invest (MCP онлайн)")
+    source_options.append("📁 Загрузить файл (Excel / CSV / JSON)")
     sample_file_path = Path("data/sample_portfolio.xlsx")
     has_sample = sample_file_path.exists()
+    if has_sample:
+        source_options.append("🧪 Демо-портфель")
+
+    port_source = st.radio(
+        "Источник портфеля:",
+        options=source_options,
+        index=0 if has_izi else (0 if len(source_options) == 1 else 1),
+        label_visibility="collapsed"
+    )
+
+    mcp_data = None
+    uploaded_file = None
     use_sample = False
-    if uploaded_file is None and has_sample:
-        use_sample = st.checkbox(
-            "Показать демонстрационный портфель",
-            value=True,
-            help="Активирует реальный пример портфеля со сделками для демонстрации аудита, рисков и рокировок."
-        )
-        if use_sample:
+
+    if port_source == "⚡ izi-invest (MCP онлайн)":
+        user_ports = get_user_portfolios()
+        if user_ports:
+            port_name_map = {}
+            default_idx = 0
+            for idx, p in enumerate(user_ports):
+                b_title = f" ({p['broker_title']})" if p.get('broker_title') and p['broker_title'] != "Без брокера" else ""
+                port_name_map[p["id"]] = f"{p['name']}{b_title}"
+                if p.get("merged") or p.get("id") == 47933:
+                    default_idx = idx
+
+            c_sel, c_ref = st.columns([4, 1])
+            with c_sel:
+                selected_port_id = st.selectbox(
+                    "Активный портфель izi:",
+                    options=list(port_name_map.keys()),
+                    format_func=lambda pid: port_name_map[pid],
+                    index=default_idx,
+                    help="Выберите портфель для синхронизации и аудита"
+                )
+            with c_ref:
+                if st.button("🔄", help="Сбросить кэш и обновить данные izi-invest"):
+                    st.cache_data.clear()
+                    st.rerun()
+
             try:
-                with open(sample_file_path, "rb") as sf:
-                    sample_bytes = sf.read()
-                uploaded_file = BytesIO(sample_bytes)
-                uploaded_file.name = "sample_portfolio.xlsx"
-                uploaded_file.size = len(sample_bytes)
-            except Exception:
-                uploaded_file = None
-    
+                with st.spinner(f"Синхронизация {port_name_map.get(selected_port_id, '')} через MCP..."):
+                    mcp_data = fetch_izi_mcp_portfolio(selected_port_id)
+            except Exception as e:
+                st.error(f"Ошибка загрузки через MCP: {e}")
+                mcp_data = None
+        else:
+            st.warning("Не удалось получить список портфелей из izi-invest. Проверьте токен в .env.")
+
+    elif port_source == "📁 Загрузить файл (Excel / CSV / JSON)":
+        uploaded_file = st.file_uploader("Загрузить Портфель (JSON / Excel / CSV)", type=["json", "xlsx", "csv"])
+
+    elif port_source == "🧪 Демо-портфель":
+        try:
+            with open(sample_file_path, "rb") as sf:
+                sample_bytes = sf.read()
+            uploaded_file = BytesIO(sample_bytes)
+            uploaded_file.name = "sample_portfolio.xlsx"
+            uploaded_file.size = len(sample_bytes)
+        except Exception:
+            uploaded_file = None
+
     my_portfolio = {}
     my_reserves_invested = 0.0
     my_blocked_invested = 0.0
     cash_rub = 0.0
-    
+    _reserves_detail = {}
+
     FX_RATES = {"USD": 95.0, "EUR": 103.0, "CNY": 13.5, "RUB": 1.0, "RUR": 1.0, "CASH": 1.0}
 
-    if uploaded_file is not None:
+    if mcp_data is not None:
+        my_portfolio = mcp_data.get("my_portfolio_dict", {})
+        my_reserves = mcp_data.get("my_reserves_dict", {})
+        my_blocked = mcp_data.get("my_blocked_dict", {})
+        cash_rub = mcp_data.get("cash_rub", 0.0)
+        my_reserves_invested = mcp_data.get("reserves_market_value", 0.0)
+        my_blocked_invested = mcp_data.get("blocked_total", 0.0)
+        _reserves_detail = {
+            sym: {"market": v.get("val", 0.0), "cost": v.get("invested", 0.0), "count": v.get("count", 0.0)}
+            for sym, v in my_reserves.items()
+        }
+        st.session_state["mcp_analysis"] = mcp_data.get("analysis", {})
+        st.session_state["mcp_summary"] = mcp_data.get("summary", {})
+        st.session_state["mcp_chart"] = mcp_data.get("chart_df", pd.DataFrame())
+        st.session_state["mcp_active_portfolio_name"] = mcp_data.get("identifier", "")
+
+    elif uploaded_file is not None:
         if uploaded_file.size > 25 * 1024 * 1024:
             st.error("Размер файла превышает безопасный лимит (25 МБ).")
             uploaded_file = None
@@ -1631,6 +1699,25 @@ if df_ranked.empty:
     st.error("Аварийная остановка: Ни один актив не прошел проверку качества.")
     st.info("Для анализа фундаментальных показателей выберите тикеры в sidebar.")
 else:
+    # Обогащение фундаментальной оценкой "Чёрная Линия" (Black Line / Fair Value)
+    key_rate_for_bl = float(market_context.get("KEY_RATE", 16.0)) if isinstance(market_context, dict) and market_context.get("KEY_RATE") else 16.0
+    def calc_bl_metrics(row):
+        p = row.get('Price', 0.0)
+        res = calculate_black_line_valuation(
+            ticker=row['ticker'],
+            price=p,
+            pe=row.get('P_E'),
+            pb=row.get('P_BV'),
+            roe=row.get('ROE_%'),
+            debt_ebitda=row.get('Debt_EBITDA'),
+            rev_growth=row.get('Rev_Growth_%'),
+            div_rub=row.get('Div_RUB'),
+            key_rate=key_rate_for_bl
+        )
+        return pd.Series([res['fair_price'], res['upside_pct']])
+
+    df_ranked[['Чёрная Линия (₽)', 'Margin of Safety (%)']] = df_ranked.apply(calc_bl_metrics, axis=1)
+
     # Обогащение данными портфеля инвестора
     if my_portfolio:
         def get_port_count(ticker): return my_portfolio.get(ticker, {}).get('count', 0)
@@ -1681,10 +1768,15 @@ else:
         debt_crisis_mask = (df_port['Debt_EBITDA'] > 3.0) & (df_port['ROE_%'] < 8.0)
         urgent_sells_df = df_port[toxic_mask | debt_crisis_mask].copy()
 
+        # Переоценка по Чёрной Линии (рыночная цена существенно выше внутренней стоимости)
+        overvalued_mask = (df_port['Margin of Safety (%)'] <= -25.0) & (~df_port['ticker'].isin(urgent_sells_df['ticker']))
+        overvalued_bl_df = df_port[overvalued_mask].copy()
+
         cyclical_mask = df_port['ticker'].isin(CYCLICAL_TICKERS + CONSUMER_TICKERS + OIL_TICKERS)
         safe_debt_mask = (df_port['Debt_EBITDA'] <= 1.8) | (df_port['Debt_EBITDA'] < 0)
         hold_cycle_df = df_port[
             (~df_port['ticker'].isin(urgent_sells_df['ticker'])) & 
+            (~df_port['ticker'].isin(overvalued_bl_df['ticker'])) &
             cyclical_mask & 
             safe_debt_mask & 
             (df_port['Health_Score'] < 1.25)
@@ -1692,28 +1784,32 @@ else:
 
         overweight_df = df_port[
             (~df_port['ticker'].isin(urgent_sells_df['ticker'])) &
+            (~df_port['ticker'].isin(overvalued_bl_df['ticker'])) &
             (~df_port['ticker'].isin(hold_cycle_df['ticker'])) &
             (df_port['Доля в портфеле (%)'] > target_max_pct + 1.0)
         ].copy()
 
         weak_stocks_df = df_port[
             (~df_port['ticker'].isin(urgent_sells_df['ticker'])) &
+            (~df_port['ticker'].isin(overvalued_bl_df['ticker'])) &
             (~df_port['ticker'].isin(hold_cycle_df['ticker'])) &
             (~df_port['ticker'].isin(overweight_df['ticker'])) &
             (df_port['Health_Score'] < 0.85)
         ].copy()
     else:
         urgent_sells_df = pd.DataFrame()
+        overvalued_bl_df = pd.DataFrame()
         hold_cycle_df = pd.DataFrame()
         overweight_df = pd.DataFrame()
         weak_stocks_df = pd.DataFrame()
 
-    # Топ покупок рынка
+    # Топ покупок рынка (активы с высоким Health Score и положительным запасом прочности по Чёрной Линии)
     market_buys = df_ranked[
         (~df_ranked['ticker'].isin(TOXIC_TICKERS)) &
         (df_ranked['Health_Score'] >= 1.15) &
         (df_ranked['Debt_EBITDA'] <= 1.8) &
-        (df_ranked['ROE_%'] >= 14.0)
+        (df_ranked['ROE_%'] >= 14.0) &
+        (df_ranked['Margin of Safety (%)'] >= 0.0)
     ].copy()
 
     if not df_port.empty:
@@ -1809,6 +1905,32 @@ else:
                 "effect": "Перекладка в актив с восходящей динамикой прибыли"
             })
 
+    if not overvalued_bl_df.empty and not top_buys_df.empty and len(smart_swaps) < 4:
+        for _, ov_row in overvalued_bl_df.head(1).iterrows():
+            ov_t = ov_row['ticker']
+            ov_val = ov_row['Текущая Стоимость']
+            buy_cand = top_buys_df.iloc[0]
+            b_t = buy_cand['ticker']
+            b_p = buy_cand['Price'] if buy_cand['Price'] > 0 else 1.0
+            lot_size = 10 if b_t in ['SBER', 'SBERP', 'VTBR'] else 1
+            shares_cnt = int(ov_val // b_p) if b_p > 0 else 0
+            lots_cnt = shares_cnt // lot_size if lot_size > 0 else shares_cnt
+            b_val = lots_cnt * lot_size * b_p
+            rem_cash = max(0.0, ov_val - b_val)
+            
+            smart_swaps.append({
+                "badge": "🔄 Рокировка: выход из переоценки по Чёрной Линии",
+                "sell_ticker": ov_t,
+                "sell_val": ov_val,
+                "sell_reason": f"Биржевая цена {ov_row['Price']:.1f} ₽ существенно выше Чёрной Линии {ov_row['Чёрная Линия (₽)']:.1f} ₽ ({ov_row['Margin of Safety (%)']:+.1f}%)",
+                "buy_ticker": b_t,
+                "buy_lots": lots_cnt,
+                "buy_val": b_val,
+                "rem_cash": rem_cash,
+                "buy_driver": f"Чёрная Линия {buy_cand.get('Чёрная Линия (₽)', 0):.1f} ₽ (Запас {buy_cand.get('Margin of Safety (%)', 0):+.1f}%), Health Score {buy_cand['Health_Score']:.2f}x",
+                "effect": "Фиксация переоцененного актива и перекладка в фундаментальный дисконт с запасом прочности"
+            })
+
     # Назначение статуса действия для таблицы Светофор
     def assign_action_badge(row):
         t = row['ticker']
@@ -1817,41 +1939,25 @@ else:
         roe = row.get('ROE_%', 0.0)
         in_p = row.get('Лоты', 0) > 0
         share = row.get('Доля в портфеле (%)', 0.0)
+        mos = row.get('Margin of Safety (%)', 0.0)
         
         if t in TOXIC_TICKERS or (debt > 3.0 and roe < 8.0):
             return "🔴 Срочно продать" if in_p else "🔴 Карантин (Риск)"
+        if in_p and mos <= -25.0:
+            return "🔴 Переоценено (Продать)"
         if in_p and not hold_cycle_df.empty and t in hold_cycle_df['ticker'].values:
             return "⏸️ Дно цикла (Держать)"
         if in_p and share > target_max_pct + 1.0:
             return "🟠 Сократить перевес"
         if in_p and hs < 0.85:
             return "⚠️ Слабый (Кандидат на выход)"
-        if hs >= 1.30 and debt <= 1.5 and roe >= 15.0:
-            return "🟢 Strong Buy"
-        if hs >= 1.05 and debt <= 2.0:
+        if hs >= 1.30 and debt <= 1.5 and roe >= 15.0 and mos >= 15.0:
+            return "🟢 Strong Buy (Margin of Safety)"
+        if hs >= 1.05 and debt <= 2.0 and mos >= 0.0:
             return "🔵 Наращивать"
         return "🟡 Держать"
 
     df_ranked['Статус (Действие)'] = df_ranked.apply(assign_action_badge, axis=1)
-
-    # Обогащение фундаментальной оценкой "Чёрная Линия" (Black Line / Fair Value)
-    key_rate_for_bl = float(market_context.get("KEY_RATE", 16.0)) if isinstance(market_context, dict) and market_context.get("KEY_RATE") else 16.0
-    def calc_bl_metrics(row):
-        p = row.get('Price', 0.0)
-        res = calculate_black_line_valuation(
-            ticker=row['ticker'],
-            price=p,
-            pe=row.get('P_E'),
-            pb=row.get('P_BV'),
-            roe=row.get('ROE_%'),
-            debt_ebitda=row.get('Debt_EBITDA'),
-            rev_growth=row.get('Rev_Growth_%'),
-            div_rub=row.get('Div_RUB'),
-            key_rate=key_rate_for_bl
-        )
-        return pd.Series([res['fair_price'], res['upside_pct']])
-
-    df_ranked[['Чёрная Линия (₽)', 'Margin of Safety (%)']] = df_ranked.apply(calc_bl_metrics, axis=1)
 
     # ==========================================
     # ВЕРХНИЙ ЭКЗЕКЬЮТИВ-БАР (СТАТУС И МАКРО)
@@ -1903,6 +2009,28 @@ else:
     ])
 
     with main_tab1:
+        # Верхний баннер онлайн-диагностики izi-invest (если подключен MCP)
+        mcp_an = st.session_state.get("mcp_analysis")
+        if mcp_an and my_portfolio:
+            with st.container(border=True):
+                mc_c1, mc_c2, mc_c3, mc_c4 = st.columns([1.2, 1.2, 1.2, 1.4])
+                p_name = st.session_state.get("mcp_active_portfolio_name", "Ликвидная часть")
+                r_top5 = mcp_an.get("risk", {}).get("top5_share", 63.5)
+                c_div12 = mcp_an.get("cashflow", {}).get("received_12m_total", 329863.0)
+                c_next12 = mcp_an.get("cashflow", {}).get("next_12m_total", 198417.0)
+                b_xirr = mcp_an.get("benchmark", {}).get("portfolio_xirr", 6.25)
+                b_cbr = mcp_an.get("benchmark", {}).get("cbr_rate", 14.0)
+
+                with mc_c1:
+                    st.markdown(f"**⚡ izi-invest: `{p_name}`**")
+                    st.caption("Онлайн-синхронизация MCP")
+                with mc_c2:
+                    st.metric("Концентрация топ-5", f"{r_top5:.1f}%", "HHI 1027 (Умеренная)")
+                with mc_c3:
+                    st.metric("Дивидендный поток (12 мес)", f"{c_div12:,.0f} ₽", f"Прогноз: {c_next12:,.0f} ₽")
+                with mc_c4:
+                    st.metric("XIRR vs Ставка ЦБ", f"{b_xirr:+.2f}%", f"ЦБ: {b_cbr:.0f}% (Отставание {b_xirr - b_cbr:+.1f}%)", delta_color="inverse")
+
         # ------------------------------------------
         # 1. ТРЕХКОЛОНОЧНЫЙ КОМАНДНЫЙ ПУЛЬТ
         # ------------------------------------------
@@ -1923,8 +2051,18 @@ else:
                         st.error(f"Долг/EBITDA **{r['Debt_EBITDA']:.1f}x** при ставке 21% сжигает прибыль компании.")
                         st.caption(f"ROE: **{r['ROE_%']:.1f}%** | PnL: **{r['PnL (%)']:+.1f}%**")
                         st.markdown("👉 **Действие: Полный выход (Ликвидация)**")
-                        
-            # 1.2 Сокращение перевеса
+
+            # 1.2 Переоценка по Чёрной Линии (Black Line / Fair Value)
+            if not overvalued_bl_df.empty:
+                has_sell_signals = True
+                for _, r in overvalued_bl_df.iterrows():
+                    with st.container(border=True):
+                        st.markdown(f"**🔴 {r['ticker']}** | Доля: **{r['Доля в портфеле (%)']:.1f}%** ({r['Текущая Стоимость']:,.0f} ₽)")
+                        st.error(f"Биржевая цена **{r['Price']:.1f} ₽** оторвана от Чёрной Линии **{r['Чёрная Линия (₽)']:.1f} ₽** (переоценка {r['Margin of Safety (%)']:+.1f}%).")
+                        st.caption(f"Health Score: **{r['Health_Score']:.2f}x** | ROE: **{r['ROE_%']:.1f}%** | P/E: **{r['P_E']:.1f}**")
+                        st.markdown("👉 **Действие: Продать / Переложить в лидера с запасом прочности**")
+
+            # 1.3 Сокращение перевеса
             if not overweight_df.empty:
                 has_sell_signals = True
                 for _, r in overweight_df.iterrows():
@@ -1934,7 +2072,7 @@ else:
                         st.caption(f"Стоимость: **{r['Текущая Стоимость']:,.0f} ₽** | PnL: **{r['PnL (%)']:+.1f}%**")
                         st.markdown(f"👉 **Действие: Зафиксировать прибыль / Сократить до {target_max_pct:.0f}%**")
 
-            # 1.3 Слабый бизнес
+            # 1.4 Слабый бизнес
             if not weak_stocks_df.empty:
                 has_sell_signals = True
                 for _, r in weak_stocks_df.iterrows():
@@ -1944,7 +2082,7 @@ else:
                         st.caption(f"ROE: **{r['ROE_%']:.1f}%** | P/E: **{r['P_E']:.1f}**")
                         st.markdown("👉 **Действие: Сократить / Переложить в лидера**")
 
-            # 1.4 Дно цикла (удержание без продажи!)
+            # 1.5 Дно цикла (удержание без продажи!)
             if not hold_cycle_df.empty:
                 for _, r in hold_cycle_df.iterrows():
                     with st.container(border=True):
@@ -1981,9 +2119,11 @@ else:
                     elif t in ['HEAD', 'YNDX']:
                         driver = "Высокие темпы роста выручки, низкая долговая нагрузка, монопольное положение."
                     
+                    mos_val = r.get('Margin of Safety (%)', 0.0)
+                    bl_val = r.get('Чёрная Линия (₽)', 0.0)
                     with st.container(border=True):
-                        st.markdown(f"**🟢 {t}** | Health Score: **{r['Health_Score']:.2f}x**")
-                        st.caption(f"ROE: **{r['ROE_%']:.1f}%** | P/E: **{r['P_E']:.1f}** | Долг/EBITDA: **{r['Debt_EBITDA']:.1f}x**")
+                        st.markdown(f"**🟢 {t}** | Чёрная Линия: **{bl_val:.1f} ₽** (Запас: **{mos_val:+.1f}%**)")
+                        st.caption(f"{share_str} | Health Score: **{r['Health_Score']:.2f}x** | ROE: **{r['ROE_%']:.1f}%**")
                         st.success(f"**Почему брать:** {driver}")
                         if pd.notna(r.get('Поток (OrderFlow)')):
                             st.caption(f"Order Flow: `{r['Поток (OrderFlow)']}`")

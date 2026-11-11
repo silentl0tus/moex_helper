@@ -358,6 +358,124 @@ def fetch_izi_invest_data(identifier: str) -> Dict[str, Any]:
     return res
 
 
+def fetch_izi_mcp_portfolio(portfolio_id: Optional[int] = None) -> Dict[str, Any]:
+    """
+    Загружает актуальные данные портфеля из izi-invest через MCP-клиент (JSON-RPC 2.0).
+    Преобразует данные в стандартизированную структуру, готовую для отображения на
+    странице 'Реальный Портфель и Сделки' и на экранах Решений / Ребалансировки.
+    """
+    try:
+        from src.izi_mcp_client import get_portfolio_model, get_user_portfolios
+    except ImportError:
+        raise ImportError("Модуль src.izi_mcp_client не найден.")
+
+    if portfolio_id is None:
+        user_ports = get_user_portfolios()
+        if user_ports:
+            # Ищем сначала объединенный (merged) портфель, например 'Ликвидная часть' (ID 47933)
+            merged = next((p for p in user_ports if p.get("merged")), None)
+            portfolio_id = merged["id"] if merged else user_ports[0]["id"]
+        else:
+            portfolio_id = 47933
+
+    model = get_portfolio_model(int(portfolio_id))
+    if not model:
+        raise ConnectionError(f"Не удалось получить данные портфеля #{portfolio_id} из izi-invest MCP.")
+
+    pos_df = model.get("positions_df", pd.DataFrame())
+    summary_raw = model.get("summary", {})
+    analysis = model.get("analysis", {})
+    chart_df = model.get("chart_df", pd.DataFrame())
+    structure = model.get("structure", {})
+
+    total_val = summary_raw.get("total_val", 0.0)
+    total_inv = summary_raw.get("total_inv", 0.0)
+    pnl_rub = summary_raw.get("pnl_rub", 0.0)
+    pnl_pct = summary_raw.get("pnl_pct", 0.0)
+    xirr_val = summary_raw.get("xirr", 0.0)
+    div_total = summary_raw.get("divs_received", 0.0)
+    coup_total = summary_raw.get("coupons_received", 0.0)
+
+    # Синтезируем журнал сделок trades_df для совместимости с функциями аналитики
+    trades_rows = []
+    money_in = analysis.get("summary", {}).get("money", {}).get("in", total_inv)
+    money_out = abs(analysis.get("summary", {}).get("money", {}).get("out", 0.0))
+    start_dt = pd.to_datetime(summary_raw.get("start_date", "2021-12-27"))
+
+    if money_in > 0:
+        trades_rows.append({
+            "Дата": start_dt,
+            "Операция": "input",
+            "Тикер": "CASH",
+            "Количество": 1.0,
+            "Цена": money_in,
+            "Сумма": money_in,
+            "Валюта": "RUB"
+        })
+    if money_out > 0:
+        trades_rows.append({
+            "Дата": pd.to_datetime(datetime.now()),
+            "Операция": "output",
+            "Тикер": "CASH",
+            "Количество": 1.0,
+            "Цена": money_out,
+            "Сумма": -money_out,
+            "Валюта": "RUB"
+        })
+
+    trades_df = pd.DataFrame(trades_rows)
+
+    # Формируем timeline_df
+    timeline_df, bench_ret = calculate_mirror_benchmark_timeline(
+        trades_df=trades_df,
+        current_portfolio_value=total_val,
+        bench_symbol="MCFTRR",
+        portfolio_timeline=chart_df
+    )
+
+    port_name = model.get("portfolio_name", f"Портфель #{portfolio_id}")
+
+    return {
+        "source": "izi_mcp",
+        "portfolio_id": str(portfolio_id),
+        "identifier": port_name,
+        "summary": {
+            "total_value": round(total_val, 2),
+            "total_deposits": round(money_in, 2),
+            "total_withdrawals": round(money_out, 2),
+            "net_invested": round(total_inv, 2),
+            "total_profit_rub": round(pnl_rub, 2),
+            "total_profit_pct": round(pnl_pct, 2),
+            "xirr_pct": round(xirr_val, 2),
+            "total_dividends": round(div_total, 2),
+            "total_coupons": round(coup_total, 2),
+            "total_passive_income": round(div_total + coup_total, 2),
+            "open_positions_count": len(pos_df),
+            "total_trades_count": len(trades_df),
+            "closed_deals_count": 0,
+        },
+        "positions": pos_df,
+        "raw_positions": pos_df,
+        "adj_positions": pos_df,
+        "trades": trades_df,
+        "fifo": pd.DataFrame(),
+        "dividends": pd.DataFrame(),
+        "coupons": pd.DataFrame(),
+        "timeline": timeline_df,
+        "portfolio_timeline": chart_df,
+        "chart_df": chart_df,
+        "analysis": analysis,
+        "structure": structure,
+        "my_portfolio_dict": model.get("my_portfolio_dict", {}),
+        "my_reserves_dict": model.get("my_reserves_dict", {}),
+        "my_blocked_dict": model.get("my_blocked_dict", {}),
+        "cash_rub": model.get("cash_rub", 0.0),
+        "reserves_market_value": model.get("reserves_market_value", 0.0),
+        "blocked_total": model.get("blocked_total", 0.0),
+        "is_mcp": True,
+    }
+
+
 def _find_sheet(sheet_names: List[str], keywords: List[str]) -> Optional[str]:
     """Находит подходящий лист по ключевым словам без учета регистра."""
     for s in sheet_names:
@@ -1226,6 +1344,67 @@ def calculate_mirror_benchmark_timeline(
     2. Доходность основного выбранного зеркального индекса.
     """
     if trades_df.empty or "Операция" not in trades_df.columns:
+        if portfolio_timeline is not None and not portfolio_timeline.empty:
+            pt = portfolio_timeline.copy()
+            d_col = "Дата" if "Дата" in pt.columns else ("date" if "date" in pt.columns else None)
+            b_col = "Портфель инвестора" if "Портфель инвестора" in pt.columns else ("balance" if "balance" in pt.columns else None)
+            i_col = "Вложенный капитал" if "Вложенный капитал" in pt.columns else ("invested" if "invested" in pt.columns else None)
+            m_col = "mcftrr_curve" if "mcftrr_curve" in pt.columns else None
+            p_col = "imoex_curve" if "imoex_curve" in pt.columns else None
+
+            if d_col and b_col and i_col:
+                pt_dates = pd.to_datetime(pt[d_col]).dt.tz_localize(None).dt.normalize()
+                inv_vals = pt[b_col].astype(float).values
+                cap_vals = pt[i_col].astype(float).values
+
+                # Если кривые бенчмарков не в абсолютных рублях, рассчитываем относительно динамики MOEX ISS
+                start_dt = pt_dates.min().date()
+                end_dt = pt_dates.max().date()
+                mcftrr_iss = fetch_iss_benchmark_series("MCFTRR", start_dt, end_dt)
+                imoex_iss = fetch_iss_benchmark_series("IMOEX", start_dt, end_dt)
+
+                m_series = []
+                p_series = []
+                for dt, cap in zip(pt_dates, cap_vals):
+                    m_val = cap
+                    p_val = cap
+                    if mcftrr_iss is not None and not mcftrr_iss.empty:
+                        m_sub = mcftrr_iss[mcftrr_iss.index <= dt]
+                        if not m_sub.empty and mcftrr_iss.iloc[0] > 0:
+                            m_val = cap * (m_sub.iloc[-1] / mcftrr_iss.iloc[0])
+                    if imoex_iss is not None and not imoex_iss.empty:
+                        p_sub = imoex_iss[imoex_iss.index <= dt]
+                        if not p_sub.empty and imoex_iss.iloc[0] > 0:
+                            p_val = cap * (p_sub.iloc[-1] / imoex_iss.iloc[0])
+                    m_series.append(m_val)
+                    p_series.append(p_val)
+
+                safe_cap = np.where(cap_vals > 0, cap_vals, 1.0)
+                inv_port_pct = np.where(cap_vals > 0, (inv_vals / safe_cap - 1.0) * 100.0, 0.0)
+                m_pct = np.where(cap_vals > 0, (np.array(m_series) / safe_cap - 1.0) * 100.0, 0.0)
+                p_pct = np.where(cap_vals > 0, (np.array(p_series) / safe_cap - 1.0) * 100.0, 0.0)
+
+                t_df = pd.DataFrame({
+                    "Дата": pt_dates,
+                    "Вложенный капитал": cap_vals,
+                    "Портфель инвестора (₽)": inv_vals,
+                    "Зеркальный MCFTRR (₽)": np.round(m_series, 2),
+                    "Зеркальный IMOEX (₽)": np.round(p_series, 2),
+                    "Портфель инвестора (%)": np.round(inv_port_pct, 2),
+                    "Зеркальный MCFTRR (%)": np.round(m_pct, 2),
+                    "Зеркальный IMOEX (%)": np.round(p_pct, 2),
+                })
+                final_m_ret = round(float(m_pct[-1]), 2) if len(m_pct) > 0 else 0.0
+                final_p_ret = round(float(p_pct[-1]), 2) if len(p_pct) > 0 else 0.0
+                t_df.attrs["metrics"] = {
+                    "mcftrr_ret_pct": final_m_ret,
+                    "imoex_ret_pct": final_p_ret,
+                    "invested": float(cap_vals[-1]) if len(cap_vals) > 0 else 0.0,
+                    "portfolio_value": float(inv_vals[-1]) if len(inv_vals) > 0 else 0.0,
+                }
+                target_ret = final_m_ret if "MCFTRR" in bench_symbol else final_p_ret
+                return t_df, target_ret
+
         return pd.DataFrame(), 0.0
 
     cash_moves = trades_df[trades_df["Операция"].isin(["input", "output"])].copy()
