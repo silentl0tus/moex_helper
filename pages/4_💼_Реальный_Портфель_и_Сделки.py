@@ -498,7 +498,7 @@ with tab_positions:
         for _, r in df_display.iterrows():
             sym = str(r.get("Тикер", "")).strip().upper()
             p = float(r.get("Текущая цена", 0.0) or 0.0)
-            res = calculate_black_line_valuation(ticker=sym, price=p)
+            res = calculate_black_line_valuation(ticker=sym, price=p, use_mcp=False)
             fair_prices.append(res.get("fair_price", p))
             mos_pcts.append(res.get("upside_pct", 0.0))
         df_display["Чёрная Линия (₽)"] = fair_prices

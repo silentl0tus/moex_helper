@@ -225,21 +225,29 @@ def fetch_live_prices(ticker_list):
     start_date = end_date - timedelta(days=120)
     price_series = {}
 
-    for ticker in ticker_list:
+    def _fetch_single(t):
         try:
-            asset = Ticker(ticker)
+            asset = Ticker(t)
             candles_df = _fetch_candles(asset, start_date, end_date)
-            if candles_df.empty or "close" not in candles_df.columns:
-                continue
+            if candles_df is not None and not candles_df.empty and "close" in candles_df.columns:
+                series = candles_df["close"].astype(float)
+                if "begin" in candles_df.columns:
+                    series.index = pd.to_datetime(candles_df["begin"])
+                else:
+                    series.index = pd.to_datetime(series.index)
+                return t, series
+        except Exception:
+            pass
+        return t, None
 
-            series = candles_df["close"].astype(float)
-            if "begin" in candles_df.columns:
-                series.index = pd.to_datetime(candles_df["begin"])
-            else:
-                series.index = pd.to_datetime(series.index)
-            price_series[ticker] = series
-        except Exception as exc:
-            st.sidebar.warning(f"Не удалось получить котировки для {ticker}: {exc}")
+    from concurrent.futures import ThreadPoolExecutor
+    workers = min(10, max(1, len(ticker_list))) if ticker_list else 1
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        results = list(executor.map(_fetch_single, ticker_list))
+
+    for t, series in results:
+        if series is not None:
+            price_series[t] = series
 
     if not price_series:
         return pd.DataFrame()
@@ -304,71 +312,89 @@ def fetch_moex_tickers(min_turnover_rub=MIN_DAILY_TURNOVER_RUB, ignore_liquidity
 @st.cache_data(ttl=600)
 def fetch_market_context():
     context = {}
-    for symbol in ["IMOEX", "RTSI", "USD000UTSTOM"]:
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _get_moex_symbol(symbol):
         try:
             asset = Ticker(symbol)
             candles_df = _fetch_candles(asset, datetime.now().date() - timedelta(days=30), datetime.now().date())
             if not candles_df.empty and "close" in candles_df.columns:
-                context[symbol] = float(candles_df["close"].iloc[-1])
-        except Exception as exc:
-            context[symbol] = None
-            
-    # Парсинг котировок Urals с tankermap
-    try:
-        url = "https://tankermap.com/market-data/urals"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(url, headers=headers, timeout=5)
-        price_matches = re.findall(r'\$\s*(\d{2,3}\.\d{2})', response.text)
-        if price_matches:
-            context["URALS"] = float(price_matches[0])
-        else:
-            context["URALS"] = None
-    except Exception:
-        context["URALS"] = None
-        
-    # Парсинг Ключевой Ставки ЦБ РФ (Безрисковая ставка)
-    try:
-        url_cbr = "https://cbr.ru/hd_base/KeyRate/"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        resp_cbr = requests.get(url_cbr, headers=headers, timeout=5)
-        rate_match = re.search(r'<td>(\d{2}[,.]\d{2})</td>', resp_cbr.text)
-        if rate_match:
-            context["KEY_RATE"] = float(rate_match.group(1).replace(',', '.'))
-        else:
-            context["KEY_RATE"] = 16.0
-    except Exception:
-        context["KEY_RATE"] = 16.0
-        
-    # Парсинг официальной инфляции с главной ЦБ
-    try:
-        url_cbr_main = "https://cbr.ru/"
-        resp_cbr_main = requests.get(url_cbr_main, headers=headers, timeout=5)
-        inf_match = re.search(r'Инфляция.*?(\d{1,2}[,.]\d{1,2})\s*%', resp_cbr_main.text, re.IGNORECASE | re.DOTALL)
-        if inf_match:
-            official_inf = float(inf_match.group(1).replace(',', '.'))
-        else:
-            official_inf = 8.0
-        context["INFLATION_OFFICIAL"] = official_inf
-        context["INFLATION_REAL"] = official_inf + 4.0 # Премия недоверия Росстату
-    except Exception:
-        context["INFLATION_REAL"] = 12.0
-        
-    # Парсинг котировок сырья через yfinance (чтобы избежать блокировок Cloudflare)
-    try:
-        # Золото (COMEX Gold Futures)
-        gold_ticker = yf.Ticker("GC=F")
-        gold_df = gold_ticker.history(period="1d")
-        if not gold_df.empty:
-            context["GOLD"] = float(gold_df['Close'].iloc[-1])
-            
-        # Используем HRC (Hot-Rolled Coil US) в долларах США
-        steel_ticker = yf.Ticker("HRC=F")
-        steel_df = steel_ticker.history(period="1d")
-        if not steel_df.empty:
-            context["STEEL"] = float(steel_df['Close'].iloc[-1])
-    except Exception:
-        pass
-        
+                return symbol, float(candles_df["close"].iloc[-1])
+        except Exception:
+            pass
+        return symbol, None
+
+    def _get_urals():
+        try:
+            url = "https://tankermap.com/market-data/urals"
+            headers = {"User-Agent": "Mozilla/5.0"}
+            response = requests.get(url, headers=headers, timeout=3)
+            price_matches = re.findall(r'\$\s*(\d{2,3}\.\d{2})', response.text)
+            if price_matches:
+                return "URALS", float(price_matches[0])
+        except Exception:
+            pass
+        return "URALS", None
+
+    def _get_cbr_rate():
+        try:
+            url_cbr = "https://cbr.ru/hd_base/KeyRate/"
+            headers = {"User-Agent": "Mozilla/5.0"}
+            resp_cbr = requests.get(url_cbr, headers=headers, timeout=3)
+            rate_match = re.search(r'<td>(\d{2}[,.]\d{2})</td>', resp_cbr.text)
+            if rate_match:
+                return "KEY_RATE", float(rate_match.group(1).replace(',', '.'))
+        except Exception:
+            pass
+        return "KEY_RATE", 16.0
+
+    def _get_cbr_inf():
+        try:
+            url_cbr_main = "https://cbr.ru/"
+            headers = {"User-Agent": "Mozilla/5.0"}
+            resp_cbr_main = requests.get(url_cbr_main, headers=headers, timeout=3)
+            inf_match = re.search(r'Инфляция.*?(\d{1,2}[,.]\d{1,2})\s*%', resp_cbr_main.text, re.IGNORECASE | re.DOTALL)
+            if inf_match:
+                official_inf = float(inf_match.group(1).replace(',', '.'))
+                return "INFLATION_OFFICIAL", official_inf, official_inf + 4.0
+        except Exception:
+            pass
+        return "INFLATION_OFFICIAL", 8.0, 12.0
+
+    def _get_commodity_yf():
+        res = {"GOLD": None, "STEEL": None}
+        try:
+            gold_ticker = yf.Ticker("GC=F")
+            gold_df = gold_ticker.history(period="1d")
+            if not gold_df.empty:
+                res["GOLD"] = float(gold_df['Close'].iloc[-1])
+        except Exception:
+            pass
+        try:
+            steel_ticker = yf.Ticker("HRC=F")
+            steel_df = steel_ticker.history(period="1d")
+            if not steel_df.empty:
+                res["STEEL"] = float(steel_df['Close'].iloc[-1])
+        except Exception:
+            pass
+        return res
+
+    with ThreadPoolExecutor(max_workers=7) as executor:
+        f_moex = [executor.submit(_get_moex_symbol, s) for s in ["IMOEX", "RTSI", "USD000UTSTOM"]]
+        f_urals = executor.submit(_get_urals)
+        f_rate = executor.submit(_get_cbr_rate)
+        f_inf = executor.submit(_get_cbr_inf)
+        f_comm = executor.submit(_get_commodity_yf)
+
+    for f in f_moex:
+        sym, val = f.result()
+        context[sym] = val
+    _, context["URALS"] = f_urals.result()
+    _, context["KEY_RATE"] = f_rate.result()
+    _, context["INFLATION_OFFICIAL"], context["INFLATION_REAL"] = f_inf.result()
+    comm_res = f_comm.result()
+    context.update(comm_res)
+
     return context
 
 @st.cache_data(ttl=3600)
@@ -1825,7 +1851,8 @@ else:
             debt_ebitda=row.get('Debt_EBITDA'),
             rev_growth=row.get('Rev_Growth_%'),
             div_rub=row.get('Div_RUB'),
-            key_rate=key_rate_for_bl
+            key_rate=key_rate_for_bl,
+            use_mcp=False
         )
         return pd.Series([res['fair_price'], res['upside_pct']])
 

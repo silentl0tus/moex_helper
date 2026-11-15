@@ -26,6 +26,13 @@ try:
 except ImportError:
     Ticker = None
 
+try:
+    import streamlit as st
+    cache_data_decorator = st.cache_data
+except Exception:
+    def cache_data_decorator(*args, **kwargs):
+        return lambda f: f
+
 
 # Безопасный лимит размера файла брокерского отчета (DoS/OOM защита)
 MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024  # 25 МБ
@@ -358,6 +365,7 @@ def fetch_izi_invest_data(identifier: str) -> Dict[str, Any]:
     return res
 
 
+@cache_data_decorator(ttl=300)
 def fetch_izi_mcp_portfolio(portfolio_id: Optional[int] = None) -> Dict[str, Any]:
     """
     Загружает актуальные данные портфеля из izi-invest через MCP-клиент (JSON-RPC 2.0).
@@ -1285,6 +1293,7 @@ def parse_broker_file(file_content: Any, filename: str) -> Dict[str, Any]:
 # 4. РАСЧЁТ ЗЕРКАЛЬНОГО БЕНЧМАРКА IMOEX
 # ==========================================
 
+@cache_data_decorator(ttl=3600)
 def fetch_iss_benchmark_series(symbol: str, start_date: date, end_date: date) -> Optional[pd.Series]:
     """Загружает дневные котировки индексов (MCFTRR, IMOEX) через moexalgo или резервный MOEX ISS API."""
     if Ticker is not None:
