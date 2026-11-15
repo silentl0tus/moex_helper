@@ -457,11 +457,14 @@ def render_market_view_component(
 }
 
 /* Сетка сырьевых индикаторов */
+/* Сетка сырьевых индикаторов с отложенным рендерингом для оптимизации производительности */
 .commodities-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
     gap: 8px;
     margin-bottom: 8px;
+    content-visibility: auto;
+    contain-intrinsic-size: auto none auto 240px;
 }
 
 .comm-card {
@@ -475,10 +478,6 @@ def render_market_view_component(
     min-height: 66px;
     box-sizing: border-box;
     transition: transform 0.15s ease, border-color 0.15s ease;
-}
-.comm-card:hover {
-    transform: translateY(-2px);
-    border-color: rgba(255, 255, 255, 0.2);
 }
 .comm-header {
     display: flex;
@@ -513,6 +512,8 @@ def render_market_view_component(
     gap: 9px;
     margin-top: 12px;
     margin-bottom: 8px;
+    content-visibility: auto;
+    contain-intrinsic-size: auto none auto 600px;
 }
 
 .m-card-large {
@@ -526,12 +527,6 @@ def render_market_view_component(
     transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
     cursor: default;
     user-select: none;
-}
-.m-card-large:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 24px rgba(0,0,0,0.7);
-    filter: brightness(1.15);
-    z-index: 2;
 }
 .m-card-large .m-top {
     display: flex;
@@ -580,6 +575,8 @@ def render_market_view_component(
     gap: 6px;
     margin-top: 10px;
     margin-bottom: 8px;
+    content-visibility: auto;
+    contain-intrinsic-size: auto none auto 500px;
 }
 .m-card-compact {
     border-radius: 7px;
@@ -592,10 +589,6 @@ def render_market_view_component(
     transition: transform 0.15s ease, filter 0.15s ease;
     cursor: default;
     user-select: none;
-}
-.m-card-compact:hover {
-    transform: translateY(-2px);
-    filter: brightness(1.15);
 }
 .m-card-compact .m-top {
     display: flex;
@@ -630,6 +623,84 @@ def render_market_view_component(
 .m-card-compact .m-ticker {
     font-size: 0.72rem;
     color: #94A3B8;
+}
+
+/* Fallback для браузеров без поддержки content-visibility */
+@supports not (content-visibility: auto) {
+    .market-tiles-grid, .commodities-grid {
+        contain: layout style paint;
+    }
+}
+
+/* Эффекты при наведении ТОЛЬКО для мыши (pointer: fine). 
+   На смартфонах (touch) hover отключен, чтобы исключить GPU фризы и микролаги при скролле. */
+@media (hover: hover) and (pointer: fine) {
+    .comm-card:hover {
+        transform: translateY(-2px);
+        border-color: rgba(255, 255, 255, 0.2);
+    }
+    .m-card-large:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.7);
+        filter: brightness(1.15);
+        z-index: 2;
+    }
+    .m-card-compact:hover {
+        transform: translateY(-2px);
+        filter: brightness(1.15);
+    }
+}
+
+/* Оптимизация под мобильные экраны (смартфоны) */
+@media (max-width: 768px) {
+    .market-dark-canvas {
+        padding: 12px 10px;
+        margin-top: 6px;
+        margin-bottom: 12px;
+        border-radius: 10px;
+    }
+    .market-section-title {
+        font-size: 1.05rem;
+    }
+    .market-section-sub {
+        font-size: 0.76rem;
+        margin-bottom: 10px;
+    }
+    .commodities-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 6px;
+    }
+    .comm-card {
+        padding: 7px 9px;
+        min-height: 54px;
+    }
+    .comm-val {
+        font-size: 1.05rem;
+    }
+    .market-tiles-grid.size-large {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 6px;
+    }
+    .market-tiles-grid.size-compact {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 5px;
+    }
+    .m-card-large {
+        padding: 8px 10px;
+        min-height: 68px;
+    }
+    .m-card-large .m-name {
+        font-size: 0.95rem;
+    }
+    .m-card-large .m-badge {
+        font-size: 0.95rem;
+    }
+    .m-card-large .m-price {
+        font-size: 1.05rem;
+    }
+    .m-card-large .m-ticker {
+        font-size: 0.72rem;
+    }
 }
 
 /* Цвета градиентов доходности плиток (глубокие, мягкие тона) */

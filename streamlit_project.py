@@ -26,6 +26,101 @@ st.markdown("""
         font-size: 0.875rem;
         font-weight: 500;
     }
+
+    /* =================================================================
+       ОПТИМИЗАЦИЯ ДЛЯ СМАРТФОНОВ И УСТРАНЕНИЕ ЛАГОВ РЕНДЕРИНГА (MWG)
+       ================================================================= */
+    /* Базовая изоляция стилей и плавный нативный тач-скролл */
+    html, body {
+        -webkit-tap-highlight-color: transparent;
+        scroll-behavior: smooth;
+    }
+
+    /* Изоляция отрисовки вкладок (CSS Containment) для ускорения DOM */
+    [data-testid="stTabsContent"] {
+        contain: layout style;
+    }
+
+    @supports not (content-visibility: auto) {
+        [data-testid="stTabsContent"] {
+            contain: layout style paint;
+        }
+    }
+
+    /* Адаптивность и защита от лагов на экранах смартфонов (ширина <= 768px) */
+    @media (max-width: 768px) {
+        /* Разворачиваем сжатые 3-4-5 колоночные блоки в вертикальный стек */
+        [data-testid="stHorizontalBlock"] {
+            flex-wrap: wrap !important;
+            gap: 0.4rem !important;
+        }
+        [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {
+            min-width: 100% !important;
+            flex: 1 1 100% !important;
+        }
+
+        /* Блоки с метриками (st.metric) группируем аккуратно по 2 в ряд */
+        [data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) > [data-testid="stColumn"] {
+            min-width: calc(50% - 0.25rem) !important;
+            flex: 1 1 calc(50% - 0.25rem) !important;
+        }
+
+        /* Компактный вид метрик для экономии места на AMOLED экране */
+        [data-testid="stMetric"] {
+            padding: 5px 8px !important;
+            background: rgba(255, 255, 255, 0.02) !important;
+            border-radius: 8px !important;
+        }
+        [data-testid="stMetricLabel"] {
+            font-size: 0.76rem !important;
+        }
+        [data-testid="stMetricValue"] {
+            font-size: 1.15rem !important;
+            line-height: 1.2 !important;
+        }
+        [data-testid="stMetricDelta"] {
+            font-size: 0.72rem !important;
+        }
+
+        /* Уменьшение отступов карточек и контейнеров */
+        [data-testid="stVerticalBlockBorderWrapper"] {
+            padding: 8px !important;
+            margin-bottom: 6px !important;
+            border-radius: 8px !important;
+        }
+
+        /* Горизонтальный скролл таблиц без распирания страницы */
+        [data-testid="stDataFrame"] {
+            max-width: 100% !important;
+            overflow-x: auto !important;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        /* Перенос кнопок в горизонтальных радио-группах */
+        div[role="radiogroup"] {
+            flex-wrap: wrap !important;
+            gap: 4px !important;
+        }
+
+        /* Прокрутка списка вкладок при переполнении */
+        .stTabs [data-baseweb="tab-list"] {
+            overflow-x: auto !important;
+            white-space: nowrap !important;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        /* Предотвращение блокировки вертикального скролла графиками Vega/Altair на смартфоне */
+        .vega-embed, .vega-embed canvas, .vega-embed svg {
+            touch-action: pan-y !important;
+        }
+    }
+
+    /* На тач-устройствах отключаем лишние задержки анимаций */
+    @media (hover: none), (pointer: coarse) {
+        * {
+            -webkit-tap-highlight-color: transparent;
+        }
+    }
 </style>
 """, unsafe_allow_html=True)
 
