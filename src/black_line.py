@@ -35,8 +35,16 @@ HOLDING_TICKERS = {"AFKS", "SFIN", "ENPG"}
 IT_TICKERS = {"YDEX", "OZON", "POSI", "ASTR", "HEAD", "DIAS", "IVAT", "SOFL", "VKCO"}
 OIL_TICKERS = {"LKOH", "ROSN", "NVTK", "TATN", "TATNP", "SIBN", "RNFT", "TRNFP", "BANE", "BANEP"}
 GOLD_TICKERS = {"PLZL", "SELG", "UGLD", "UGC", "GOLD"}
+UTILITIES_TICKERS = {"IRAO", "UPRO", "HYDR", "MSNG", "FEES", "LSNG", "LSNGP"}
 CONSUMER_TICKERS = {"MGNT", "FIVE", "X5", "BELU", "NOVA", "AQUA", "MDMG", "WUSH", "FIXP"}
 TOXIC_TICKERS = {"PIKK", "SMLT", "EUTR", "QIWI", "POLY", "SGZH", "MTLR", "MTLRP", "ORUP", "OBUV", "RUGR"}
+# Компании с существенной валютной экспортной выручкой (естественный хедж девальвации рубля)
+FX_REVENUE_EXPORTERS = OIL_TICKERS | GOLD_TICKERS | CYCLICAL_TICKERS | {"PHOR", "FLOT", "GMKN", "NKNC", "KAZT", "AKRN"}
+# Подтвержденные эмитенты с валютным облигационным долгом (MOEX TQOD/TQOY)
+DEFAULT_FX_DEBT_TICKERS = {
+    "ALRS", "FLOT", "GAZP", "GMKN", "LKOH", "NVTK", "PHOR", "PIKK",
+    "PLZL", "ROSN", "SBER", "SBERP", "SGZH", "SIBN", "SVCB", "VKCO", "VTBR",
+}
 
 # Корректировки сплитов (BELU/NOVA сплит 1:8 от 20.08.2024 и др.)
 CANDLE_SPLITS: Dict[str, list[Tuple[str, float]]] = {
@@ -243,6 +251,74 @@ def _clean_metric(val: Optional[float], default: Optional[float] = None) -> Opti
         return default
 
 
+def _assess_debt_and_currency_profile(
+    ticker_clean: str,
+    debt_val: float,
+    roe_val: float,
+    fcf_val: Optional[float],
+    key_rate: float,
+    usd_rate: Optional[float],
+    bond_ytm: Optional[float],
+    fx_debt_currencies: Optional[list[str]],
+) -> Dict[str, Any]:
+    """Оценивает характер долга (льготный/фиксированный vs дорогой рыночный) и валютный риск при девальвации."""
+    ytm_val = _clean_metric(bond_ytm, None)
+    usd_val = _clean_metric(usd_rate, 85.0)
+    is_exporter = ticker_clean in FX_REVENUE_EXPORTERS
+    is_bank = ticker_clean in BANK_TICKERS
+    if fx_debt_currencies is None:
+        has_fx_debt = ticker_clean in DEFAULT_FX_DEBT_TICKERS
+        fx_list = ["FX"] if has_fx_debt else []
+    else:
+        fx_list = [str(c).upper() for c in fx_debt_currencies if c]
+        has_fx_debt = len(fx_list) > 0
+
+    is_ytm_cheap = ytm_val is not None and ytm_val <= key_rate + 1.5
+    is_ytm_stressed = ytm_val is not None and ytm_val >= max(key_rate + 4.0, 22.0)
+    is_profit_resilient = roe_val >= key_rate and (fcf_val is None or fcf_val >= 0.0)
+
+    has_subsidized_debt = debt_val > 1.2 and (is_profit_resilient or is_ytm_cheap) and not is_ytm_stressed
+    is_rate_burdened = debt_val > 1.2 and (not has_subsidized_debt) and (
+        roe_val < key_rate or (fcf_val is not None and fcf_val < 3.0) or is_ytm_stressed
+    )
+
+    fx_mult = 1.0
+    fx_note = ""
+    if usd_val >= 88.0:
+        if is_exporter and not has_fx_debt:
+            fx_mult = 1.06
+            fx_note = f" Валютный выигрыш: экспортная выручка в FX при курсе USD {usd_val:.1f} ₽ обесценивает рублёвый долг."
+        elif is_exporter and has_fx_debt:
+            fx_mult = 1.03
+            fx_note = f" Естественный валютный хедж ({'/'.join(fx_list)} долг покрыт экспортной выручкой)."
+        elif has_fx_debt and not is_bank and debt_val > 0.8:
+            fx_drag = min(0.20, ((usd_val - 80.0) / 100.0) * min(2.0, max(0.5, debt_val)))
+            fx_mult = max(0.80, 1.0 - fx_drag)
+            fx_note = (
+                f" Валютный риск долга ({'/'.join(fx_list)}): при курсе USD {usd_val:.1f} ₽ "
+                f"рублёвая нагрузка обслуживания растёт (-{fx_drag * 100:.0f}%)."
+            )
+    elif has_fx_debt and not is_bank and not is_exporter and debt_val > 1.5:
+        fx_mult = 0.94
+        fx_note = f" Умеренный FX-риск ({'/'.join(fx_list)} долг при преимущественно рублёвой выручке)."
+
+    debt_note = ""
+    if has_subsidized_debt:
+        debt_note = " Долг с признаками льготного/фиксированного или дешёвого фондирования (ROE и YTM устойчивы к ставке ЦБ)."
+    elif is_rate_burdened:
+        debt_note = f" Процентное давление: высокий долг ({debt_val:.1f}x) без защиты льготами при ставке {key_rate:.1f}%."
+
+    return {
+        "has_subsidized_debt": has_subsidized_debt,
+        "is_rate_burdened": is_rate_burdened,
+        "is_ytm_stressed": is_ytm_stressed,
+        "bond_ytm": ytm_val,
+        "has_fx_debt": has_fx_debt,
+        "fx_mult": fx_mult,
+        "debt_fx_note": (debt_note + fx_note).strip(),
+    }
+
+
 def calculate_black_line_valuation(
     ticker: str,
     price: float,
@@ -257,6 +333,9 @@ def calculate_black_line_valuation(
     use_mcp: bool = False,
     accounting_basis: str = "IFRS",
     fcf_yield: Optional[float] = None,
+    usd_rate: Optional[float] = None,
+    bond_ytm: Optional[float] = None,
+    fx_debt_currencies: Optional[list[str]] = None,
 ) -> Dict[str, Any]:
     """
     Рассчитывает справедливую цену ("Чёрную линию") на основе фундаментальных мультипликаторов.
@@ -330,11 +409,23 @@ def calculate_black_line_valuation(
         and ticker_clean not in IT_TICKERS
         and ticker_clean not in CONSUMER_TICKERS
     )
+    debt_fx = _assess_debt_and_currency_profile(
+        ticker_clean=ticker_clean,
+        debt_val=debt_val,
+        roe_val=roe_val,
+        fcf_val=fcf_val,
+        key_rate=key_rate,
+        usd_rate=usd_rate,
+        bond_ytm=bond_ytm,
+        fx_debt_currencies=fx_debt_currencies,
+    )
+    apply_fx_overlay = True
 
     # -------------------------------------------------------------
     # 1. ТОКСИЧНЫЕ И ПРЕДБАНКРОТНЫЕ АКТИВЫ (Дистресс-оценка)
     # -------------------------------------------------------------
     if ticker_clean in TOXIC_TICKERS or debt_val > 5.0 or (roe_val < -20.0 and debt_val > 3.0) or is_negative_equity_loss:
+        apply_fx_overlay = False
         model_name = "Дистресс / Ликвидационная стоимость (0.25x BV)"
         base_bvps = bvps if bvps > 0 else market_price * 0.3
         fair_price = max(0.5, base_bvps * 0.25)
@@ -410,43 +501,51 @@ def calculate_black_line_valuation(
         thesis = f"Прибыль искажена переоценками дочерних структур. Фундаментальная оценка рассчитывается от стоимости чистых активов со стандартным холдинговым дисконтом {(1 - discount) * 100:.0f}%."
 
     # -------------------------------------------------------------
-    # 5. IT И ВЫСОКОТЕХНОЛОГИЧНЫЙ СЕКТОР (PEG Growth Model)
+    # 5. IT И ВЫСОКОТЕХНОЛОГИЧНЫЙ СЕКТОР (PEG Growth Model с учётом ставки ЦБ)
     # -------------------------------------------------------------
     elif ticker_clean in IT_TICKERS:
-        target_pe = max(11.0, min(26.0, 10.0 + max(0.0, growth_val) * 0.35))
+        rate_drag = (key_rate - 12.0) * 0.45
+        pe_cap = max(12.0, 24.0 - max(0.0, key_rate - 12.0) * 0.70)
+        target_pe = max(8.5, min(pe_cap, 11.0 + max(0.0, growth_val) * 0.35 - rate_drag))
         if eps > 0:
             fair_price = eps * target_pe
         else:
             fair_price = market_price * (1.0 + min(max(growth_val, 0.0), 50.0) / 100.0)
-        model_name = f"PEG Growth Model (Оценка {target_pe:.1f}x P/E при росте +{growth_val:.1f}%)"
-        formula_latex = r"P_{fair} = EPS \times P/E_{fair}, \quad P/E_{fair} = 10.0 + 0.35 \times \text{Growth}"
-        thesis = f"Компания реинвестирует прибыль в экспансию и захват доли рынка. Справедливый P/E составляет {target_pe:.1f}x с учетом темпа роста выручки +{growth_val:.1f}%."
+        model_name = f"PEG Growth Model (P/E {target_pe:.1f}x при росте +{growth_val:.1f}% и ставке {key_rate:.1f}%)"
+        formula_latex = r"P_{fair} = EPS \times P/E_{fair}, \quad P/E_{fair} = \min\left(cap, 11 + 0.35 \cdot G - 0.45 \cdot (r_{key} - 12)\right)"
+        thesis = (
+            f"Компания реинвестирует прибыль в экспансию и захват доли рынка. "
+            f"Справедливый P/E скорректирован под ключевую ставку ЦБ ({key_rate:.1f}%) и составляет {target_pe:.1f}x."
+        )
 
     # -------------------------------------------------------------
-    # 6. ЦИКЛИЧНЫЕ МЕТАЛЛУРГИ НА ДНЕ ЦИКЛА (Normalized P/BV)
+    # 6. ЦИКЛИЧНЫЕ МЕТАЛЛУРГИ НА ДНЕ ЦИКЛА (Normalized P/BV с поправкой на ставку)
     # -------------------------------------------------------------
     elif ticker_clean in CYCLICAL_TICKERS:
         base_bvps = bvps if bvps > 0 else market_price
-        # Металлурги с чистым долгом около нуля заслуживают премию к капиталу
         debt_bonus = 0.20 if debt_val <= 0.8 else (-0.20 if debt_val > 1.8 else 0.0)
-        target_pb = 1.35 + debt_bonus
+        rate_adj = max(0.75, min(1.08, 1.0 - (key_rate - 12.0) * 0.018))
+        target_pb = (1.35 + debt_bonus) * rate_adj
         fair_price = base_bvps * target_pb
-        model_name = f"Нормализованный P/BV ({target_pb:.2f}x через экономический цикл)"
+        model_name = f"Нормализованный P/BV ({target_pb:.2f}x при ставке {key_rate:.1f}%)"
         formula_latex = rf"P_{{fair}} = BVPS \times {target_pb:.2f}"
-        thesis = f"В цикличных отраслях прибыль колеблется. Оценка ведется через нормализованный капитал через весь цикл (P/BV {target_pb:.2f}x) с учетом долговой нагрузки {debt_val:.1f}x."
+        thesis = (
+            f"В цикличных отраслях оценка ведётся через нормализованный капитал через цикл (P/BV {target_pb:.2f}x) "
+            f"с дисконтом на текущую ключевую ставку ЦБ ({key_rate:.1f}%) и долг {debt_val:.1f}x."
+        )
 
     # -------------------------------------------------------------
     # 7. ЗОЛОТОДОБЫТЧИКИ (Commodity / FCF Valuation)
     # -------------------------------------------------------------
     elif ticker_clean in GOLD_TICKERS:
-        target_pe = max(6.0, min(10.0, 7.5 + (roe_val - key_rate) * 0.05))
+        target_pe = max(5.5, min(10.5, 8.2 + (roe_val - key_rate) * 0.07 - max(0.0, key_rate - 14.0) * 0.14))
         if eps > 0:
             fair_price = eps * target_pe
         else:
             fair_price = market_price * 1.10
-        model_name = f"Мультипликатор золота ({target_pe:.1f}x P/E)"
+        model_name = f"Мультипликатор золота ({target_pe:.1f}x P/E при ставке {key_rate:.1f}%)"
         formula_latex = r"P_{fair} = EPS \times P/E_{fair}"
-        thesis = f"Сверхнизкая себестоимость добычи и защита от девальвации рубля. Справедливый целевой P/E составляет {target_pe:.1f}x."
+        thesis = f"Низкая себестоимость добычи и защитный валютный актив. Справедливый P/E при ставке {key_rate:.1f}% составляет {target_pe:.1f}x."
 
     # -------------------------------------------------------------
     # 8. ПОТРЕБИТЕЛЬСКИЙ СЕКТОР (Asset-light, Value & Income)
@@ -480,10 +579,11 @@ def calculate_black_line_valuation(
                 thesis = "Оценка опирается на прибыль и рост бизнеса с небольшим дисконтом за отсутствие текущих дивидендов."
 
     # -------------------------------------------------------------
-    # 9. БАЗОВЫЙ РЕАЛЬНЫЙ СЕКТОР И НЕФТЕГАЗ (Income Reversion + Грэм)
+    # 9. БАЗОВЫЙ РЕАЛЬНЫЙ СЕКТОР И НЕФТЕГАЗ (Income Reversion + Грэм + Долг/Валюта)
     # -------------------------------------------------------------
     else:
-        target_pe = max(4.0, min(8.5, 5.5 + (growth_val * 0.06) + (roe_val - key_rate) * 0.08 - max(0.0, debt_val) * 0.30))
+        debt_drag_coeff = 0.42 * max(1.0, key_rate / 14.0) if debt_fx["is_rate_burdened"] else 0.18
+        target_pe = max(3.5, min(8.5, 5.8 + (growth_val * 0.06) + (roe_val - key_rate) * 0.08 - max(0.0, debt_val) * debt_drag_coeff))
         pe_price = (eps * target_pe) if eps > 0 else market_price
 
         ru_graham_mult = 7.0
@@ -492,31 +592,52 @@ def calculate_black_line_valuation(
         base_val = 0.5 * pe_price + 0.5 * graham_price
         if debt_val < 0.2:
             base_val *= 1.08
-        elif debt_val > 2.0:
-            base_val *= (1.0 / (1.0 + (debt_val - 2.0) * 0.15))
+        elif debt_val > 1.5:
+            if debt_fx["has_subsidized_debt"]:
+                if debt_val > 2.0:
+                    base_val *= (1.0 / (1.0 + (debt_val - 2.0) * 0.08))
+            elif debt_fx["is_rate_burdened"]:
+                base_val *= (1.0 / (1.0 + (debt_val - 1.5) * (0.16 * max(1.0, key_rate / 14.0))))
+
+        ytm_v = debt_fx["bond_ytm"]
+        if ytm_v is not None:
+            if ytm_v >= 50.0:
+                base_val *= 0.55
+            elif ytm_v >= 28.0:
+                base_val *= 0.75
 
         if ticker_clean in OIL_TICKERS and fcf_val is not None and fcf_val >= 12.0 and debt_val <= 1.5:
-            fcf_mult = min(1.55, max(0.85, fcf_val / 13.5))
+            req_fcf = max(11.0, min(19.0, 10.5 + (key_rate - 10.0) * 0.50))
+            fcf_mult = min(1.55, max(0.85, fcf_val / req_fcf))
             fcf_fair = market_price * fcf_mult
             fair_price = 0.60 * fcf_fair + 0.40 * base_val
-            model_name = f"Income Reversion (FCF {fcf_val:.1f}% при долге {debt_val:.1f}x) + Грэм"
-            formula_latex = r"P_{fair} = 0.6 \times \left(P_{mkt} \times \frac{\text{FCF\%}}{13.5\%}\right) + 0.4 \times P_{\text{Graham}}"
+            model_name = f"Income Reversion (FCF {fcf_val:.1f}% / база {req_fcf:.1f}%) + Грэм"
+            formula_latex = rf"P_{{fair}} = 0.6 \times \left(P_{{mkt}} \times \frac{{\text{{FCF\%}}}}{{{req_fcf:.1f}\%}}\right) + 0.4 \times P_{{\text{{Graham}}}}"
             thesis = (
-                f"Рывок доходности (Income Reversion): мощный свободный денежный поток FCF ({fcf_val:.1f}%) "
-                f"при безопасном долге ({debt_val:.1f}x) компенсирует временную просадку бумажной прибыли (P/E {pe_val:.1f})."
+                f"Рывок доходности (Income Reversion): свободный денежный поток FCF ({fcf_val:.1f}%) "
+                f"при долге {debt_val:.1f}x и требуемой ставке FCF {req_fcf:.1f}% (при КС {key_rate:.1f}%)."
             )
         else:
             fair_price = base_val
-            no_div_note = ""
+            extra_notes = ""
+            if ticker_clean in UTILITIES_TICKERS:
+                util_disc = 0.65 if key_rate >= 14.0 else 0.75
+                fair_price *= util_disc
+                extra_notes += f" Регулируемые тарифы / CAPEX (×{util_disc:.2f})."
             if (div_val <= 0 and growth_val < 15.0) or (fcf_val is not None and fcf_val < 0):
                 fair_price *= 0.85
-                no_div_note = " Применён дисконт ×0.85 за отсутствие дивидендов / отрицательный FCF."
+                extra_notes += " Применён дисконт ×0.85 за отсутствие дивидендов / отрицательный FCF."
             model_name = f"Грэм (RU 7x) + Скорр. P/E ({target_pe:.1f}x)"
             formula_latex = r"P_{fair} = 0.5 \times (EPS \times P/E_{fair}) + 0.5 \times \sqrt{7.0 \times EPS \times BVPS}"
             thesis = (
-                f"Классический стоимостной анализ: синтез формулы Грэма и скорректированного мультипликатора "
-                f"P/E ({target_pe:.1f}x) с учетом долговой нагрузки ({debt_val:.1f}x).{no_div_note}"
+                f"Классический стоимостной анализ: синтез формулы Грэма и скорректированного P/E ({target_pe:.1f}x) "
+                f"с учетом долговой нагрузки ({debt_val:.1f}x).{extra_notes}"
             )
+
+    if apply_fx_overlay and debt_fx["fx_mult"] != 1.0:
+        fair_price *= debt_fx["fx_mult"]
+    if debt_fx["debt_fx_note"]:
+        thesis = f"{thesis} {debt_fx['debt_fx_note']}"
 
     # Итоговый срез и запас прочности
     fair_price = max(0.1, round(fair_price, 2))
@@ -791,6 +912,7 @@ def render_black_line_widget(
     key_rate: float = 16.0,
     default_show: bool = True,
     key_prefix: str = "bl",
+    usd_rate: Optional[float] = None,
 ) -> None:
     """
     Универсальный интерактивный виджет для Streamlit:
@@ -809,6 +931,8 @@ def render_black_line_widget(
     growth = None
     div_rub = None
     fcf_yield = None
+    bond_ytm = None
+    fx_debt_currencies = None
     
     if fund_row is not None and not fund_row.empty:
         pe = fund_row.get("P_E")
@@ -818,6 +942,10 @@ def render_black_line_widget(
         growth = fund_row.get("Rev_Growth_%")
         div_rub = fund_row.get("Div_RUB")
         fcf_yield = fund_row.get("FCF_Yield_%")
+        bond_ytm = fund_row.get("_bond_max_ytm")
+        raw_fx = fund_row.get("_fx_debt_currencies")
+        if isinstance(raw_fx, (list, tuple, set)):
+            fx_debt_currencies = list(raw_fx)
 
     # 1. Верхняя панель управления: Интерактивный тумблер ON/OFF и выбор стандарта отчётности
     ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([2.2, 1.1, 1.2])
@@ -871,6 +999,9 @@ def render_black_line_widget(
         use_mcp=True,
         accounting_basis=accounting_basis,
         fcf_yield=fcf_yield,
+        usd_rate=usd_rate,
+        bond_ytm=bond_ytm,
+        fx_debt_currencies=fx_debt_currencies,
     )
 
     fair_p = fair_info["fair_price"]

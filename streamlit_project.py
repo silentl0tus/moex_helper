@@ -153,6 +153,7 @@ def _ensure_fresh_module(mod_name: str):
 _ensure_fresh_module("src.black_line")
 _ensure_fresh_module("src.izi_mcp_client")
 _ensure_fresh_module("src.portfolio_importer")
+_ensure_fresh_module("src.magellan_gateway")
 
 from src.black_line import (
     calculate_black_line_valuation,
@@ -439,10 +440,10 @@ def fetch_market_context():
             resp_cbr = requests.get(url_cbr, headers=headers, timeout=3)
             rate_match = re.search(r'<td>(\d{2}[,.]\d{2})</td>', resp_cbr.text)
             if rate_match:
-                return "KEY_RATE", float(rate_match.group(1).replace(',', '.'))
+                return "KEY_RATE", float(rate_match.group(1).replace(',', '.')), True
         except Exception:
             pass
-        return "KEY_RATE", 16.0
+        return "KEY_RATE", 16.0, False
 
     def _get_cbr_inf():
         try:
@@ -480,10 +481,29 @@ def fetch_market_context():
         sym, val = f.result()
         context[sym] = val
     _, context["URALS"] = f_urals.result()
-    _, context["KEY_RATE"] = f_rate.result()
+    _, cbr_rate_val, cbr_live_ok = f_rate.result()
+    context["KEY_RATE"] = cbr_rate_val
     _, context["INFLATION_OFFICIAL"], context["INFLATION_REAL"] = f_inf.result()
     comm_res = f_comm.result()
     context.update(comm_res)
+
+    # Подстраховка ключевой ставки, USD/RUB и IMOEX через izi-invest MCP, если cbr.ru / MOEX ISS недоступны
+    if (not cbr_live_ok) or (context.get("USD000UTSTOM") is None) or (context.get("IMOEX") is None):
+        try:
+            from src.izi_mcp_client import _call_izi_tool
+            izi_ctx = _call_izi_tool("get_market_context", {}, timeout=(4.0, 10.0))
+            if isinstance(izi_ctx, dict):
+                if (not cbr_live_ok) and izi_ctx.get("cbr_rate") is not None:
+                    context["KEY_RATE"] = float(izi_ctx["cbr_rate"])
+                fx_map = izi_ctx.get("fx", {}) if isinstance(izi_ctx.get("fx"), dict) else {}
+                if context.get("USD000UTSTOM") is None and fx_map.get("USD") is not None:
+                    context["USD000UTSTOM"] = float(fx_map["USD"])
+                imoex_obj = izi_ctx.get("imoex", {}) if isinstance(izi_ctx.get("imoex"), dict) else {}
+                imoex_v = imoex_obj.get("value") or imoex_obj.get("value_now")
+                if context.get("IMOEX") is None and imoex_v is not None:
+                    context["IMOEX"] = float(imoex_v)
+        except Exception:
+            pass
 
     return context
 
@@ -706,6 +726,14 @@ def fetch_ipr_summary() -> dict:
     try:
         from src.magellan_gateway import MagellanGateway
         return MagellanGateway().get_ipr_summary()
+    except Exception:
+        return {}
+
+@st.cache_data(ttl=1800)
+def fetch_fx_debt_issuers() -> dict:
+    try:
+        from src.magellan_gateway import MagellanGateway
+        return MagellanGateway().get_fx_debt_issuers()
     except Exception:
         return {}
 
@@ -1340,6 +1368,7 @@ with st.spinner("Считываю сигналы систем..."):
     magellan_bonds = fetch_bonds_stress_radar()
     magellan_funds = fetch_funds_rebalancing()
     magellan_ipr = fetch_ipr_summary()
+    fx_debt_issuers = fetch_fx_debt_issuers()
 
 
 index_level = market_context.get("IMOEX")
@@ -1783,6 +1812,43 @@ if not df_fund.empty:
     df_fund['Bond_Multiplier'] = df_fund['ticker'].apply(get_bond_health_multiplier)
     df_fund["Health_Score"] = (df_fund["Health_Score"] * df_fund['Bond_Multiplier']).round(2)
 
+    df_fund['_bond_max_ytm'] = df_fund['ticker'].map(
+        lambda t: magellan_bonds.get(t, {}).get('max_ytm') if isinstance(magellan_bonds, dict) else None
+    )
+    df_fund['_fx_debt_currencies'] = df_fund['ticker'].map(
+        lambda t: fx_debt_issuers.get(t, []) if isinstance(fx_debt_issuers, dict) else []
+    )
+    key_rate_val = market_context.get("KEY_RATE", 16.0)
+    usd_rate_eff = float(usd_rate) if usd_rate else 82.0
+
+    def _classify_debt_fx_badge(row):
+        t = row['ticker']
+        d = float(row.get('Debt_EBITDA', 0.0) or 0.0)
+        roe = float(row.get('ROE_%', 0.0) or 0.0)
+        fcf = row.get('FCF_Yield_%')
+        ytm = row.get('_bond_max_ytm')
+        fx_currs = row.get('_fx_debt_currencies') or []
+        is_exp = t in (OIL_TICKERS + GOLD_TICKERS + CYCLICAL_TICKERS + ['PHOR', 'FLOT', 'GMKN'])
+        if d <= 0:
+            return "💎 Чистый кэш (FX)" if (fx_currs and is_exp) else "💎 Чистый кэш"
+        if ytm is not None and ytm >= 28.0:
+            return f"🚨 Дорогой долг (YTM {ytm:.0f}%)"
+        has_sub = d > 1.2 and (
+            (roe >= key_rate_val and (pd.isna(fcf) or float(fcf) >= 0.0))
+            or (ytm is not None and float(ytm) <= key_rate_val + 1.5)
+        )
+        if has_sub:
+            return f"🟢 Льготный/Дешёвый ({'/'.join(fx_currs)})" if fx_currs else "🟢 Льготный/Фикс. долг"
+        if fx_currs and not is_exp and t not in BANK_TICKERS:
+            return f"💱 FX-долг ({'/'.join(fx_currs)} риск)"
+        if fx_currs and is_exp:
+            return f"🛡️ FX-долг (Хедж экспортом)"
+        if d > 1.5 and (roe < key_rate_val or (pd.notna(fcf) and float(fcf) < 3.0)):
+            return "⚠️ Тяжёлый долг (RUB)"
+        return "⚪ Умеренный долг (RUB)"
+
+    df_fund['Долг и Валюта'] = df_fund.apply(_classify_debt_fx_badge, axis=1)
+
     # Учет институциональной поддержки БПИФ
     def get_fund_flow_multiplier(ticker):
         f_info = magellan_funds.get(ticker, {}) if isinstance(magellan_funds, dict) else {}
@@ -1804,14 +1870,15 @@ if not df_fund.empty:
     df_fund['Fund_Multiplier'] = df_fund['ticker'].apply(get_fund_flow_multiplier)
     df_fund["Health_Score"] = (df_fund["Health_Score"] * df_fund['Fund_Multiplier']).round(2)
     
-    # Интеграция Безрисковой Ставки (Key Rate / Cost of Money)
-    key_rate_val = market_context.get("KEY_RATE", 16.0)
-    
+    # Интеграция Безрисковой Ставки (Key Rate / Cost of Money) с учетом льготного долга
     def apply_rfr_penalty(row):
         score = row['Health_Score']
         ticker = row['ticker']
         div_y = row.get('Div_Yield_%', 0.0)
         fcf_y = row.get('FCF_Yield_%', float('nan'))
+        debt_v = float(row.get('Debt_EBITDA', 0.0) or 0.0)
+        ytm_v = row.get('_bond_max_ytm')
+        is_cheap_bond = ytm_v is not None and pd.notna(ytm_v) and float(ytm_v) <= key_rate_val + 1.5
         
         # IT-сектор: растут быстрее ставки, оцениваются по мультипликаторам
         if ticker in IT_TICKERS:
@@ -1823,7 +1890,7 @@ if not df_fund.empty:
         if ticker in STRUCTURAL_DISCOUNT_TICKERS:
             return score if div_y >= 10.0 else round(score * 0.70, 2)
         # Income Reversion (например, ROSN с FCF 19.2%): живой FCF уже выше ставки
-        if ticker in OIL_TICKERS and pd.notna(fcf_y) and fcf_y >= 12.0 and row.get('Debt_EBITDA', 99) <= 1.5 and div_y > 0:
+        if ticker in OIL_TICKERS and pd.notna(fcf_y) and fcf_y >= 12.0 and debt_v <= 1.5 and div_y > 0:
             return score
         
         # Цикличные компании (Металлурги, Майнеры): прощаем им низкий E/P на дне цикла, смотрим на ROE
@@ -1836,6 +1903,10 @@ if not df_fund.empty:
         if ticker in BANK_TICKERS:
             if row['ROE_norm'] < key_rate_val:
                 return round(score * 0.7, 2)
+            return score
+
+        # Если компания при долге > 1.2x держит ROE >= ключевой ставки и подтверждает дешёвые бонды/FCF — долг льготный/фикс
+        if debt_v > 1.2 and row['ROE_norm'] >= key_rate_val and is_cheap_bond and (pd.isna(fcf_y) or float(fcf_y) >= 0.0):
             return score
             
         # Обычные компании: проверяем и ROE, и Earnings Yield (E/P)
@@ -1940,7 +2011,17 @@ if not df_fund.empty:
                 score *= 1.20 # Спасение в золоте
             elif ticker in IT_TICKERS or ticker in BANK_TICKERS:
                 score *= 0.80 # Обвал кредитования и оценки
-                
+
+        # Валютная поправка долга и выручки при слабом рубле (USD >= 88 ₽)
+        if usd_rate_eff >= 88.0:
+            is_exp = ticker in (OIL_TICKERS + GOLD_TICKERS + CYCLICAL_TICKERS + ['PHOR', 'FLOT', 'GMKN'])
+            fx_currs = row.get('_fx_debt_currencies') or []
+            debt_v = float(row.get('Debt_EBITDA', 0.0) or 0.0)
+            if is_exp and not fx_currs:
+                score *= 1.06
+            elif fx_currs and not is_exp and ticker not in BANK_TICKERS and debt_v > 0.8:
+                score *= 0.85
+
         return round(score, 2)
         
     df_fund["Health_Score"] = df_fund.apply(apply_macro_cycle, axis=1)
@@ -2023,6 +2104,8 @@ else:
     def calc_bl_metrics(row):
         raw_p = row.get('Price', 0.0)
         p = float(raw_p) if pd.notna(raw_p) and math.isfinite(float(raw_p)) else 0.0
+        raw_fx = row.get('_fx_debt_currencies')
+        fx_currs = list(raw_fx) if isinstance(raw_fx, (list, tuple, set)) else []
         res = calculate_black_line_valuation(
             ticker=row['ticker'],
             price=p,
@@ -2035,6 +2118,9 @@ else:
             key_rate=key_rate_for_bl,
             use_mcp=False,
             fcf_yield=row.get('FCF_Yield_%'),
+            usd_rate=usd_rate,
+            bond_ytm=row.get('_bond_max_ytm'),
+            fx_debt_currencies=fx_currs,
         )
         return pd.Series([res['fair_price'], res['upside_pct']])
 
@@ -2284,6 +2370,9 @@ else:
         axis=1,
     )
 
+    # Порог запаса прочности Strong Buy адаптируется к ключевой ставке ЦБ
+    required_mos_buy = round(12.0 + max(0.0, key_rate_for_bl - 12.0) * 0.75, 1)
+
     # Назначение статуса действия для таблицы Светофор
     def assign_action_badge(row):
         t = row['ticker']
@@ -2309,7 +2398,7 @@ else:
             return "⚠️ Слабый (Кандидат на выход)"
         if t in ['SNGS', 'GAZP', 'FEES', 'UPRO']:
             return "🔒 Структурный дисконт (Наблюдение)"
-        if hs >= 1.30 and debt <= 1.5 and (roe >= 15.0 or is_rev) and mos >= 15.0:
+        if hs >= 1.30 and debt <= 1.5 and (roe >= 15.0 or is_rev) and mos >= required_mos_buy:
             return "🟢 Strong Buy (Income Reversion)" if is_rev else "🟢 Strong Buy (Margin of Safety)"
         if hs >= 1.05 and debt <= 2.0 and mos >= 0.0:
             return "🔵 Наращивать"
@@ -2445,14 +2534,14 @@ else:
 
         if my_portfolio:
             tl_cols = [
-                "ticker", "Позиция", "Статус (Действие)", "Драйвер (Value & Income)",
+                "ticker", "Позиция", "Статус (Действие)", "Драйвер (Value & Income)", "Долг и Валюта",
                 "Price", "Чёрная Линия (₽)", "Margin of Safety (%)",
                 "Идеальная доля (%)", "PnL (%)", "Health_Score",
                 "Div_Yield_%", "FCF_Yield_%", "ROE_%", "Debt_EBITDA", "P_E", "Тренд", "Поток (OrderFlow)"
             ]
         else:
             tl_cols = [
-                "ticker", "Статус (Действие)", "Драйвер (Value & Income)",
+                "ticker", "Статус (Действие)", "Драйвер (Value & Income)", "Долг и Валюта",
                 "Price", "Чёрная Линия (₽)", "Margin of Safety (%)",
                 "Идеальная доля (%)", "Health_Score",
                 "Div_Yield_%", "FCF_Yield_%", "ROE_%", "Debt_EBITDA", "P_E", "Тренд", "Поток (OrderFlow)"
@@ -2672,7 +2761,8 @@ else:
                 fund_row=fund_row,
                 key_rate=key_rate_for_bl,
                 default_show=True,
-                key_prefix="main_screen"
+                key_prefix="main_screen",
+                usd_rate=usd_rate,
             )
         
         with st.expander("📊 График распределения Health Score по всем акциям MOEX", expanded=False):

@@ -13,7 +13,10 @@
 
 import json
 import logging
+import os
 from pathlib import Path
+
+_LOADED_FILE_MTIME = os.path.getmtime(__file__)
 from typing import Any, Dict, List, Optional
 import requests
 
@@ -73,6 +76,27 @@ TICKER_BOND_KEYWORD_MAP = {
     "PIKK": ["ПИК"],
     "OZON": ["ОЗОН"],
     "VKCO": ["ВК", "VK"],
+}
+
+# Резервный справочник эмитентов MOEX с подтвержденными валютными облигациями (TQOD / TQOY)
+DEFAULT_FX_BOND_ISSUERS: Dict[str, List[str]] = {
+    "ALRS": ["USD"],
+    "FLOT": ["USD"],
+    "GAZP": ["CHF", "CNY", "EUR", "USD"],
+    "GMKN": ["CNY", "USD"],
+    "LKOH": ["USD"],
+    "NVTK": ["USD"],
+    "PHOR": ["CNY", "USD"],
+    "PIKK": ["USD"],
+    "PLZL": ["CNY", "USD"],
+    "ROSN": ["CNY", "USD"],
+    "SBER": ["CNY"],
+    "SBERP": ["CNY"],
+    "SGZH": ["CNY"],
+    "SIBN": ["CNY", "USD"],
+    "SVCB": ["USD"],
+    "VKCO": ["USD"],
+    "VTBR": ["EUR", "USD"],
 }
 
 
@@ -415,3 +439,32 @@ class MagellanGateway:
 
         cached = self._read_cache("ipr_summary")
         return cached if isinstance(cached, dict) else {}
+
+    def get_fx_debt_issuers(self) -> Dict[str, List[str]]:
+        """Определяет эмитентов с активным валютным долгом на торгах MOEX (замещающие TQOD USD/EUR и юаневые TQOY)."""
+        found: Dict[str, set] = {}
+        try:
+            for board in ("TQOD", "TQOY"):
+                url = f"https://iss.moex.com/iss/engines/stock/markets/bonds/boards/{board}/securities.json"
+                resp = requests.get(
+                    url,
+                    params={
+                        "iss.meta": "off",
+                        "iss.only": "securities",
+                        "securities.columns": "SECID,SHORTNAME,SECNAME,FACEUNIT",
+                    },
+                    timeout=self.timeout,
+                )
+                if resp.status_code != 200:
+                    continue
+                for _, shortname, secname, faceunit in resp.json().get("securities", {}).get("data", []):
+                    txt = f"{shortname or ''} {secname or ''}".upper()
+                    curr = str(faceunit or ("USD" if board == "TQOD" else "CNY")).upper()
+                    for ticker, keywords in TICKER_BOND_KEYWORD_MAP.items():
+                        if any(kw in txt for kw in keywords):
+                            found.setdefault(ticker, set()).add(curr)
+            if found:
+                return {tk: sorted(currs) for tk, currs in found.items()}
+        except Exception as exc:
+            logger.info("MOEX ISS FX-bonds (%s) недоступны, используется резервный справочник.", exc)
+        return {k: list(v) for k, v in DEFAULT_FX_BOND_ISSUERS.items()}
