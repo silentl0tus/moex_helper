@@ -501,15 +501,23 @@ with tab_positions:
 
         df_display = df_pos[[c for c in display_cols if c in df_pos.columns]].copy()
 
-        # Обогащение фундаментальной оценкой "Чёрная Линия" (Black Line / Fair Value)
+        # Обогащение фундаментальной оценкой "Чёрная Линия" (только для акций/фондов; не применяем к облигациям)
         fair_prices = []
         mos_pcts = []
+        bond_tickers = set(
+            df_pos[df_pos.get("Тип", pd.Series("", index=df_pos.index)).astype(str).str.lower().isin(["облигация", "bond"])]["Тикер"]
+            .astype(str).str.upper().tolist()
+        )
         for _, r in df_display.iterrows():
             sym = str(r.get("Тикер", "")).strip().upper()
             p = float(r.get("Текущая цена", 0.0) or 0.0)
-            res = calculate_black_line_valuation(ticker=sym, price=p, use_mcp=False)
-            fair_prices.append(res.get("fair_price", p))
-            mos_pcts.append(res.get("upside_pct", 0.0))
+            if sym in bond_tickers or sym.startswith(("RU000", "SU26", "SU29")):
+                fair_prices.append(float("nan"))
+                mos_pcts.append(float("nan"))
+            else:
+                res = calculate_black_line_valuation(ticker=sym, price=p, use_mcp=False)
+                fair_prices.append(res.get("fair_price", p))
+                mos_pcts.append(res.get("upside_pct", 0.0))
         df_display["Чёрная Линия (₽)"] = fair_prices
         df_display["Запас прочности (%)"] = mos_pcts
 
@@ -525,7 +533,7 @@ with tab_positions:
             "Вес, %": "{:.2f}%",
             "Чёрная Линия (₽)": "{:,.2f} ₽",
             "Запас прочности (%)": "{:+.1f}%"
-        })
+        }, na_rep="—")
 
         def _color_pnl(val):
             if pd.isna(val) or not isinstance(val, (int, float)):
@@ -751,6 +759,8 @@ with tab_fifo:
             "Тикер", "Название", "Покупка", "Продажа", "Цена покупки", "Цена продажи",
             "Кол.", "Прибыль, ₽", "Доходность, %", "Дней в сделке", "Доходность годовых, %"
         ]
+        if "Купоны/Див., ₽" in df_to_render.columns:
+            fifo_cols.insert(7, "Купоны/Див., ₽")
         if "Статус" in df_to_render.columns:
             fifo_cols.append("Статус")
 
@@ -760,6 +770,7 @@ with tab_fifo:
             "Цена покупки": "{:,.2f} ₽",
             "Цена продажи": "{:,.2f} ₽",
             "Кол.": "{:,.0f}",
+            "Купоны/Див., ₽": "{:+,.0f} ₽",
             "Прибыль, ₽": "{:+,.0f} ₽",
             "Доходность, %": "{:+.2f}%",
             "Дней в сделке": "{:.0f}",

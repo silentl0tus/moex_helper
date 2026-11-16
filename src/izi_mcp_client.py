@@ -306,13 +306,17 @@ def get_portfolio_model(portfolio_id: int) -> Dict[str, Any]:
         avg_price = float(it.get("average_price_pc", 0.0))
         invested = avg_price * cnt if avg_price > 0 else summa
         pnl_rub = float(it.get("yield", 0.0))
-        pnl_pct = float(it.get("dpercent", 0.0))
-        share = float(it.get("proportion", 0.0))
-        asset_type = str(it.get("type", "share")).lower()
-
+        calc_pct = (pnl_rub / invested * 100.0) if invested > 0 else 0.0
         # Классификация активов: акции vs облигации vs заблокированные фонды
         is_blocked = ticker.startswith("FX") or ticker in ["RUSE", "RSHE", "FIXR"]
+        asset_type = str(it.get("type", "share")).lower()
         is_bond = asset_type == "bond" or ticker.startswith("RU000") or ticker.startswith("SU26")
+        if is_bond:
+            # Для облигаций izi-invest в `dpercent` отдаёт дневное изменение цены, а не доходность к входу
+            pnl_pct = float(it["input_yield"]) if it.get("input_yield") is not None else round(calc_pct, 2)
+        else:
+            pnl_pct = float(it.get("dpercent", calc_pct) or 0.0)
+        share = float(it.get("proportion", 0.0))
 
         if is_blocked:
             my_blocked_dict[ticker] = {
@@ -584,6 +588,39 @@ def fetch_portfolio_ledger(portfolio_id: int) -> Optional[Dict[str, Any]]:
     return None
 
 
+def normalize_closed_deal_pnl(
+    open_p: float,
+    close_p: float,
+    cnt: float,
+    dohod: float,
+    raw_yield: Optional[float],
+    raw_yield_pct: Optional[float],
+) -> Tuple[float, float]:
+    """Исправляет баг izi-invest на погашенных облигациях (amortization), где тело `close_p * cnt` прибавлено дважды (+100%)."""
+    expected_total = (close_p - open_p) * cnt + dohod
+    cost_basis = open_p * cnt
+    principal_returned = close_p * cnt
+
+    if raw_yield is None:
+        ret = (expected_total / cost_basis * 100.0) if cost_basis > 0 else 0.0
+        return expected_total, ret
+
+    raw_y = float(raw_yield)
+    # Если raw_yield ровно на величину возвращённого тела (close_p * cnt) превышает (close_p - open_p)*cnt + dohod
+    if (
+        principal_returned > 0
+        and abs(raw_y - expected_total) > max(50.0, abs(expected_total) * 0.02)
+        and abs(raw_y - (expected_total + principal_returned)) <= max(5.0, principal_returned * 0.005)
+    ):
+        ret = (expected_total / cost_basis * 100.0) if cost_basis > 0 else 0.0
+        return expected_total, ret
+
+    if raw_yield_pct is not None:
+        return raw_y, float(raw_yield_pct)
+    ret = (raw_y / cost_basis * 100.0) if cost_basis > 0 else 0.0
+    return raw_y, ret
+
+
 def get_portfolio_ledger_model(portfolio_id: int, portfolio_name: str = "") -> Dict[str, Any]:
     """Преобразует блоки trades, closed, events и reference из izi-invest MCP в таблицы для UI и расчёта бенчмарка."""
     raw = fetch_portfolio_ledger(portfolio_id)
@@ -673,8 +710,10 @@ def get_portfolio_ledger_model(portfolio_id: int, portfolio_name: str = "") -> D
         open_p = float(it.get("open_p", 0.0) or 0.0)
         close_p = float(it.get("close_p", 0.0) or 0.0)
         cnt = abs(float(it.get("cnt", 0.0) or 0.0))
-        pnl_rub = float(it.get("yield", (close_p - open_p) * cnt) or 0.0)
-        ret_pct = float(it.get("yield_p", ((close_p / open_p - 1.0) * 100.0) if open_p > 0 else 0.0) or 0.0)
+        dohod = float(it.get("dohod", 0.0) or 0.0)
+        pnl_rub, ret_pct = normalize_closed_deal_pnl(
+            open_p, close_p, cnt, dohod, it.get("yield"), it.get("yield_p")
+        )
         days = max(1, int(it.get("days") or max(1, (sell_dt - buy_dt).days)))
         ann_pct = round(ret_pct * 365.25 / days, 2)
         direction = str(it.get("direction", "L")).upper()
@@ -688,6 +727,7 @@ def get_portfolio_ledger_model(portfolio_id: int, portfolio_name: str = "") -> D
             "Цена покупки": round(open_p, 4),
             "Цена продажи": round(close_p, 4),
             "Кол.": cnt,
+            "Купоны/Див., ₽": round(dohod, 2),
             "Прибыль, ₽": round(pnl_rub, 2),
             "Доходность, %": round(ret_pct, 2),
             "Дней в сделке": days,
