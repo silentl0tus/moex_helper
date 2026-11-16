@@ -46,6 +46,7 @@ TICKER_LIST = sorted(set(TICKER_LIST))
 # Маппинг тикеров MOEX → тикеры smart-lab (если отличаются)
 SMARTLAB_MAP = {
     "YDEX": "YNDX",
+    "SNGSP": "SNGS",
 }
 
 BANK_TICKERS = {"SBER", "SBERP", "VTBR", "TCSG", "BSPB", "CBOM", "T", "SVCB", "DOMRF", "RENI"}
@@ -120,7 +121,20 @@ def parse_ticker(ticker: str) -> dict | None:
     pbv   = find(["p/bv", "p / bv"])
     debt  = find(["долг/ebitda", "debt/ebitda"])
     fcfy  = find(["доходность fcf"])
-    div   = find(["дивиденд, руб"])  # только обычные акции
+    if ticker.upper() == "SNGSP":
+        div = find(["дивиденд ап, руб", "дивиденд ап"]) or find(["дивиденд, руб"])
+        p_ao = find(["цена акции ао"])
+        p_ap = find(["цена акции ап"])
+        if p_ao and p_ap and p_ao > 0 and p_ap > 0:
+            ratio = float(p_ap) / float(p_ao)
+            if pe is not None:
+                pe = float(pe) * ratio
+            if pbv is not None:
+                pbv = float(pbv) * ratio
+            if fcfy is not None:
+                fcfy = float(fcfy) / ratio
+    else:
+        div = find(["дивиденд, руб"])  # только обычные акции
 
     # Рост выручки: считаем из двух последних значений
     rev_growth = None

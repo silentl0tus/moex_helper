@@ -40,7 +40,7 @@ CYCLICAL_TICKERS = {"CHMF", "NLMK", "MAGN", "ALRS", "RASP", "SELG", "UGLD", "UGC
 STRUCTURAL_DISCOUNT_TICKERS = {"SNGS", "SNGSP", "GAZP", "FEES", "UPRO"}
 HOLDING_TICKERS = {"AFKS", "SFIN", "ENPG"}
 IT_TICKERS = {"YDEX", "OZON", "POSI", "ASTR", "HEAD", "DIAS", "IVAT", "SOFL", "VKCO"}
-OIL_TICKERS = {"LKOH", "ROSN", "NVTK", "TATN", "TATNP", "SIBN", "RNFT", "TRNFP", "BANE", "BANEP"}
+OIL_TICKERS = {"LKOH", "ROSN", "NVTK", "TATN", "TATNP", "SNGS", "SNGSP", "SIBN", "RNFT", "TRNFP", "BANE", "BANEP"}
 GOLD_TICKERS = {"PLZL", "SELG", "UGLD", "UGC", "GOLD"}
 UTILITIES_TICKERS = {"IRAO", "UPRO", "HYDR", "MSNG", "FEES", "LSNG", "LSNGP"}
 CONSUMER_TICKERS = {"MGNT", "FIVE", "X5", "BELU", "NOVA", "AQUA", "MDMG", "WUSH", "FIXP"}
@@ -503,28 +503,29 @@ def calculate_black_line_valuation(
     elif ticker_clean in STRUCTURAL_DISCOUNT_TICKERS:
         base_bvps = bvps if bvps > 0 else market_price
         req_yield = max(key_rate * 0.65, 11.0) / 100.0
-        ddm_price = (div_val / req_yield) if div_val > 0 else 0.0
+        usd_eff = _clean_metric(usd_rate, 85.0)
         if ticker_clean == "SNGS":
-            nav_floor = base_bvps * 0.14
-            fair_price = 0.50 * nav_floor + 0.50 * (ddm_price if ddm_price > 0 else market_price * 0.60)
-            model_name = "Структурный дисконт кубышки (0.14x BV + DDM обычки)"
-            formula_latex = r"P_{fair} = 0.5 \times (BVPS \times 0.14) + 0.5 \times \frac{\text{Div}}{r_{req}}"
+            fair_price = base_bvps * 0.25
+            model_name = "Структурный дисконт кубышки (0.25x BV без раскрытия стоимости)"
+            formula_latex = r"P_{fair} = BVPS \times 0.25"
             thesis = (
-                f"Сургутнефтегаз (ао) исторически всегда стоит дёшево из-за закрытого корпоративного контура "
-                f"и недоступности кубышки (P/BV ~0.13–0.18x) при низком дивиденде ({div_val:.2f} ₽). "
-                f"Модель учитывает постоянный структурный дисконт без ложного апсайда к 0.8x BV."
+                f"Консервативная оценка обычки Сургутнефтегаза без раскрытия кубышки "
+                f"(~0.25x BV от капитала {base_bvps:.0f} ₽/акцию — без иллюзии 1.0x BV и без занижения символическим дивом {div_val:.2f} ₽)."
             )
         elif ticker_clean == "SNGSP":
-            nav_cap = base_bvps * 0.22
-            if ddm_price > 0:
-                fair_price = 0.30 * nav_cap + 0.70 * min(ddm_price, nav_cap * 1.8)
-            else:
-                fair_price = nav_cap * 0.85
-            model_name = "Дисконтированный DDM префа (устав СНГ + 0.22x BV cap)"
-            formula_latex = r"P_{fair} = 0.3 \times (BVPS \times 0.22) + 0.7 \times \frac{\text{Div}}{r_{req}}"
+            apply_fx_overlay = False
+            usd_bonus_div = max(0.0, usd_eff - 82.0) * 0.52
+            charter_div = max(div_val, 3.0 + usd_bonus_div)
+            ddm_charter = charter_div / req_yield
+            nav_floor = base_bvps * 0.34
+            nav_cap = base_bvps * 0.60
+            fair_price = max(nav_floor, min(ddm_charter, nav_cap))
+            model_name = f"Уставной DDM префа при USD {usd_eff:.1f} ₽ (пол 0.34x BV)"
+            formula_latex = r"P_{fair} = \max\!\left(0.34 \cdot BVPS,\ \min\!\left(\frac{\max(\text{Div},\ 3.0 + 0.52\cdot\max(0,\text{USD}-82))}{r_{req}},\ 0.60 \cdot BVPS\right)\right)"
             thesis = (
-                f"Привилегированные акции защищены уставным дивидендом от прибыли РСБУ ({div_val:.2f} ₽), "
-                f"однако оценка баланса ограничена постоянным структурным дисконтом Сургутнефтегаза."
+                f"Уставной дивиденд префа зависит от валютной переоценки кубышки: "
+                f"при USD {usd_eff:.1f} ₽ расчётный дивидендный потенциал ~{charter_div:.2f} ₽ "
+                f"(фактический LTM {div_val:.2f} ₽), структурный пол 0.34x BV."
             )
         else:
             structural_pb = 0.14 if div_val <= 0 else 0.20

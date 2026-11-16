@@ -22,7 +22,8 @@ USD_RATE = 82.0
 REL_TOL = 0.005  # допуск 0.5% на округления
 
 GOLDEN = {
-    'SNGS': dict(price=17.45, inputs={'pe': 0.72, 'pb': 0.13, 'roe': 18.7, 'debt_ebitda': -9.39, 'rev_growth': 0.0, 'div_rub': 0.85, 'fcf_yield': 99.4}, bond_ytm=None, fx=None, expected=13.26),
+    'SNGS': dict(price=17.45, inputs={'pe': 0.72, 'pb': 0.13, 'roe': 18.7, 'debt_ebitda': -9.39, 'rev_growth': 0.0, 'div_rub': 0.85, 'fcf_yield': 99.4}, bond_ytm=None, fx=None, expected=33.56),
+    'SNGSP': dict(price=42.57, inputs={'pe': 1.76, 'pb': 0.32, 'roe': 18.7, 'debt_ebitda': -9.39, 'rev_growth': 0.0, 'div_rub': 0.85, 'fcf_yield': 40.85}, bond_ytm=None, fx=None, expected=45.23),
     'GAZP': dict(price=115.22, inputs={'pe': 1.9, 'pb': 0.15, 'roe': 7.7, 'debt_ebitda': 1.82, 'rev_growth': 3.19, 'div_rub': 0.0, 'fcf_yield': -10.3}, bond_ytm=18.62, fx=None, expected=85.92),
     'ROSN': dict(price=352.4, inputs={'pe': 15.1, 'pb': 0.4, 'roe': 2.7, 'debt_ebitda': 0.0, 'rev_growth': 0.32, 'div_rub': 13.83, 'fcf_yield': 19.2}, bond_ytm=15.21, fx=['CNY', 'USD'], expected=431.49),
     'LKOH': dict(price=5965.0, inputs={'pe': 9.53, 'pb': 1.17, 'roe': 12.0, 'debt_ebitda': -0.29, 'rev_growth': 4.01, 'div_rub': 813.0, 'fcf_yield': 19.5}, bond_ytm=7.36, fx=['USD'], expected=7363.38),
@@ -57,11 +58,22 @@ class BlackLineGoldenTest(unittest.TestCase):
         self.assertFalse(drift, "Чёрная линия сдвинулась:\n" + "\n".join(drift))
 
     def test_sngs_stays_discounted(self):
-        """SNGS не должен снова получить фантомный апсайд (было +515% при 0.8x BV)."""
+        """SNGS не должен снова получить фантомный апсайд +515% (0.8x BV), но и не проваливаться ниже рынка (~0.25x BV ≈ 34 ₽)."""
         c = GOLDEN["SNGS"]
         res = calculate_black_line_valuation(
             ticker="SNGS", price=c["price"], key_rate=KEY_RATE, usd_rate=USD_RATE, **c["inputs"])
-        self.assertLess(res["upside_pct"], 10.0)
+        self.assertGreater(res["fair_price"], 28.0)
+        self.assertLess(res["upside_pct"], 120.0)
+
+    def test_sngsp_charter_devaluation_sensitivity(self):
+        """Преф Сургутнефтегаза при USD=90 учитывает уставную переоценку кубышки (~65 ₽)."""
+        c = GOLDEN["SNGSP"]
+        res_82 = calculate_black_line_valuation(
+            ticker="SNGSP", price=c["price"], key_rate=KEY_RATE, usd_rate=82.0, **c["inputs"])
+        res_90 = calculate_black_line_valuation(
+            ticker="SNGSP", price=c["price"], key_rate=KEY_RATE, usd_rate=90.0, **c["inputs"])
+        self.assertGreater(res_90["fair_price"], res_82["fair_price"])
+        self.assertAlmostEqual(res_90["fair_price"], 65.09, delta=2.0)
 
 
 class ModelConsistencyTest(unittest.TestCase):
