@@ -194,8 +194,10 @@ CONSUMER_TICKERS = ['MGNT', 'FIVE', 'FIXP', 'OBUV', 'ORUP', 'BELU', 'AQUA']
 TELECOM_TICKERS  = ['MTSS', 'RTKM', 'RTKMP']
 UTILITIES_TICKERS = ['IRAO', 'UPRO', 'HYDR', 'MSNG', 'FEES', 'LSNG', 'LSNGP']
 CYCLICAL_TICKERS = ['CHMF', 'NLMK', 'MAGN', 'ALRS', 'PLZL', 'UGC', 'MTLR', 'RASP', 'SELG']
-# Холдинги: P/E искажён переоценками дочек/кубышки — оцениваем по P/BV
-HOLDING_TICKERS  = ['SNGS', 'SNGSP', 'AFKS', 'SFIN', 'ENPG', 'GAZP']
+# Структурный дисконт: вечно дешёвый P/BV и закрытая кубышка / госкапекс (без иллюзии 3/PBV)
+STRUCTURAL_DISCOUNT_TICKERS = ['SNGS', 'SNGSP', 'GAZP', 'FEES', 'UPRO']
+# Классические холдинги: P/E искажён переоценками дочек (без Сургута и Газпрома)
+HOLDING_TICKERS  = ['AFKS', 'SFIN', 'ENPG']
 ZERO_DEBT_TICKERS = ['SNGS', 'SNGSP']  # отрицательный чистый долг
 # Чёрный список: предбанкроты, уход с биржи, плохое корп. управление, дистресс-активы
 TOXIC_TICKERS    = ['PIKK', 'SMLT', 'EUTR', 'QIWI', 'POLY', 'ORUP', 'OBUV', 'RUGR', 'FIXP', 'CBOM', 'SGZH', 'MTLR', 'MTLRP']
@@ -512,7 +514,7 @@ def fetch_technical_indicators(tickers):
             pass
         return {"ticker": ticker, "SMA_50": float('nan'), "SMA_200": float('nan'), "RSI": float('nan'), "Price": float('nan')}
 
-    with ThreadPoolExecutor(max_workers=12) as ex:
+    with ThreadPoolExecutor(max_workers=20) as ex:
         results = list(ex.map(get_ticker_tech, tickers))
     return pd.DataFrame(results, columns=cols)
 
@@ -719,104 +721,64 @@ def fetch_tankermap_news() -> list:
 # 3. БИЗНЕС-ЛОГИКА И РАСЧЕТЫ
 # ==========================================
 HEALTH_SCORE_EXPLANATION = """
-**Health Score** — это многофакторный математический рейтинг инвестиционной привлекательности компании, объединяющий фундаментал, макроэкономику, микроструктуру стакана и спутниковый трекинг физических товарных потоков.
+**Health Score** — это многофакторный математический рейтинг инвестиционной привлекательности компании на базе принципов **Value & Income / Income Reversion** (консервативное дивидендное ядро, свободный кэш FCF и защита от «турецкого риска» инфляции), дополненный микроструктурой стакана и морской логистикой.
 
-Рейтинг стартует с базового значения (**1.0**) и динамически масштабируется коэффициентами:
-
----
-### 1. Фундаментальная рентабельность и оценка (Growth & Value)
-- `ROE > 15%` ➡️ бонус **+0.2** (Высокая отдача на капитал)
-- `ROE < 0%` ➡️ штраф **-0.5** (Убыточный бизнес)
-- `P/E < 8` ➡️ бонус **+0.2** (Недооценка рынком)
-- `P/E > 15` ➡️ штраф **-0.3** (Переоценка)
-- `Рост выручки > 10%` ➡️ бонус **+0.1** (Бизнес расширяется)
-- `Рост выручки < 0%` ➡️ штраф **-0.2** (Стагнация)
+Рейтинг стартует с оценки фундаментальной доходности и динамически масштабируется коэффициентами:
 
 ---
-### 2. Дивидендная безопасность и Свободный Кэш (FCF & Payout)
-- Дивидендная доходность `> 8%` ➡️ бонус **+0.3**
-- `FCF Yield > 10%` ➡️ бонус **+0.2** (Cash is King: дивиденды обеспечены живыми деньгами)
-- `FCF Yield < 0%` ➡️ штраф **-0.3** (Бумажная прибыль, компания проедает оборотный капитал)
-- `Payout Ratio > 100%` ➡️ штраф **-0.2** (Выплата дивов в долг)
+### 1. Value & Income и Income Reversion («Рывок доходности»)
+- **Устойчивое ядро (`ROE` + `P/E` + `FCF`):** Высокая отдача на капитал при низком долге.
+- **Income Reversion (Рывок доходности):** Если компания с низким долгом (`Debt/EBITDA ≤ 1.5x`) уже платит дивиденд и генерирует высокий свободный кэш (`FCF Yield ≥ 12%`) или растёт >12%/год при высоком ROE, временная просадка бумажного `P/E` компенсируется силой FCF.
+- **Дисциплина дивидендов («Без дивов — нафиг»):**
+  - Нулевые дивиденды вне IT-сектора ➡️ штраф **×0.55** (кроме чистых цикличных компаний на дне цикла: ×0.80).
+  - Низкие дивиденды (`< 6%`) без роста/FCF-рывка ➡️ штраф **×0.72**.
+  - Выплата дивов в долг (`Payout > 100%` или `FCF < 0`) ➡️ штраф **×0.72**.
+  - Устойчивые дивиденды из прибыли/FCF (`≥ 6–18%`) ➡️ премия до **×1.18** (режется вдвое для стагнирующих квазиоблигаций).
 
 ---
-### 3. Долговая нагрузка и Защита от банкротства (Solvency)
-- `Debt/EBITDA > 3.0` ➡️ штраф **-0.4** (Критический риск при высокой ключевой ставке ЦБ)
-- Отрицательный чистый долг (Кубышка) ➡️ бонус до **+0.5**
-- Токсичные эмитенты (Черный список) ➡️ штраф **-0.3** и изоляция
-- `P/BV < 0.5` ➡️ бонус **+0.1** (Дисконт к балансовой стоимости активов)
+### 2. Структурный дисконт и Дистресс (Защита от ловушек)
+- **Структурный дисконт (`SNGS`, `SNGSP`, `GAZP`, `FEES`, `UPRO`):** Не используется наивный мультипликатор `3.0 / P_BV` и бонус за недоступную миноритариям кубышку. Сургутнефтегаз (ао) учитывается с постоянным корпоративным дисконтом (`×0.45`) и низкой текущей отдачей.
+- **Убыточность и отрицательный капитал (`P/E ≤ 0`, `P/BV ≤ 0` вне IT):** Принудительное обнуление скора (`0.0`).
+- **Регулируемые сетевые/энергетические компании (`UTILITIES`):** Консервативный коэффициент **×0.85**.
+
+---
+### 3. Долговая нагрузка и Критерии банкротства (Solvency)
+- `Debt/EBITDA > 3.0` ➡️ отсев / критический риск при жесткой ДКП.
+- Истинный отрицательный чистый долг (кроме закрытых кубышек) ➡️ бонус до **×2.0**.
+- Токсичные эмитенты (Черный список) ➡️ изоляция в карантин (`0.0`).
 
 ---
 ### 4. 🌊 Микроструктура торгов и Order Flow (Russian Magellan PRO)
-- **Алгоритмический статус сделок:**
-  - `🟢 Накопление (Accumulation)` ➡️ мультипликатор **×1.15** (Скрытый выкуп предложения институционалами)
-  - `🔄 Разворот спроса (Reversal)` ➡️ мультипликатор **×1.10** (Перелом рыночного давления)
-  - `🔴 Скрытый сброс (Distribution)` ➡️ штраф **×0.85** (Крупные продажи в стакан)
-- **Баланс покупок:** Доля покупок `≥ 65%` ➡️ **×1.08**; `≤ 35%` ➡️ **×0.92**
-- **Крупные пакетные сделки ("Киты" / Big Volume):** При объеме крупных пакетов `> 30 млн ₽`, преобладание покупок китами дает дополнительный бонус **×1.05**, преобладание сброса — штраф **×0.95**.
+- `🟢 Накопление` (**×1.15**), `🔄 Разворот спроса` (**×1.10**), `🔴 Скрытый сброс` (**×0.85**), баланс покупок и крупные пакеты ("Киты" > 30 млн ₽).
 
 ---
 ### 5. 🏦 Банковский сектор по РСБУ (Формы 101/102 ЦБ РФ через Magellan)
-- **Реальный ROE LTM:** Замена расчетных оценок на факт чистой прибыли за последние 12 мес. из первоисточника Банка России.
-- **Достаточность совокупного капитала (Н1.0):**
-  - `H1.0 ≥ 12.0%` ➡️ премия **×1.15** (Существенный запас надежности и дивидендной базы)
-  - `H1.0 < 9.5%` ➡️ штраф **×0.70** (Близость к регуляторному минимуму 8.0%, риск допэмиссии)
-- **Качество кредитного портфеля (Просрочка):**
-  - Просрочка `overdue_pct < 3.5%` ➡️ бонус **×1.05** (Низкие расходы на создание резервов)
-  - Просрочка `overdue_pct > 6.0%` ➡️ штраф **×0.88** (Рост проблемных кредитов)
-- **Динамика чистой прибыли:** Рост прибыли YTD г/г `≥ 15%` ➡️ **×1.05**; падение `≤ -15%` ➡️ **×0.92**.
+- **Реальный ROE LTM**, достаточность капитала **Н1.0** (`≥ 12%` ➡️ ×1.15, `< 9.5%` ➡️ ×0.70), просрочка (`< 3.5%` ➡️ ×1.05, `> 6.0%` ➡️ ×0.88) и динамика прибыли г/г.
 
 ---
 ### 6. 🚢 Морская логистика и Физический экспорт (TankerMap live AIS)
-- **Нефтяные мейджоры (ROSN, LKOH, SIBN, TATN, SNGS, BANE):**
-  - При объеме сырой нефти в море `≥ 2.0 млн тонн DWT` и активных экспортных терминалах `≥ 20` ➡️ премия **×1.08** (Бесперебойная валютная выручка без заторов в портах)
-  - При падении флота `< 800 тыс. тонн DWT` ➡️ штраф **×0.90** (Логистический тромб)
-- **Порты и трубопроводы (TRNFP, NMTP):**
-  - Высокая загрузка терминалов Балтики, Черного моря и ВСТО `≥ 25` судов ➡️ премия **×1.12**
-  - Слабая загрузка `< 10` судов ➡️ штраф **×0.90**
-- **Танкерный флот (FLOT):**
-  - Активный флот на маршрутах РФ `≥ 120` танкеров ➡️ премия **×1.10**
-  - Заторы и обход критических проливов (Суэц / Баб-эль-Мандеб, тренд трафика `<-10%`) ➡️ дополнительная премия **×1.05** (Рост тонно-миль и спотовых фрахтовых ставок)
-- **СПГ-экспорт (NVTK):** Активные отгрузки СПГ с терминалов Сабетта/Арктика ➡️ премия **×1.05**.
+- Загрузка нефтяных терминалов и DWT в море (нефтегаз, `TRNFP`, `NMTP`, `FLOT`, `NVTK`).
 
 ---
-### 7. Инфляционный радар и Альтернативная доходность
-- Если доходность компании (ROE и Earnings Yield) ниже ключевой ставки ЦБ ➡️ штраф **×0.70**.
-- Если реальная див. доходность и ROE ниже реальной инфляции ➡️ статус **"Сжигатель капитала ⚠️"** (штраф **×0.60**).
+### 7. Инфляционный радар, Бондовый стресс (TQCB), БПИФ и Макро-часы
+- Альтернативная стоимость денег (ключевая ставка ЦБ), защита от сжигания капитала ниже инфляции, доходность корпоративных бондов (`YTM ≥ 50%` ➡️ ×0.45; `YTM ≥ 28%` ➡️ ×0.70), притоки/оттоки БПИФ и секторная ротация.
 
----
-### 8. Технический тренд, Сентимент и Макро-часы
-- Положение цены относительно `SMA-50` и `SMA-200`, перепроданность `RSI < 30`.
-- Настроения инвесторов SmartLab (бонус/штраф до **±5%**).
-- Отраслевая ротация по Фазам Инвестиционных Часов (Рефляция, Восстановление, Перегрев, Стагфляция).
-
----
-### 9. 💳 Долговой рынок и Бондовый стресс-радар (MOEX TQCB + Magellan)
-- **Опережающий сигнал долгового рынка:**
-  - Облигации с пиковой доходностью `YTM ≥ 50%` ➡️ суровый штраф **×0.45** (Преддефолтный спред, критический риск реструктуризации)
-  - Облигации с `YTM ≥ 28%` ➡️ штраф **×0.70** (Высокий долговой стресс, обслуживание долга сжигает кэш)
-  - Облигации с `YTM < 18%` ➡️ премия **×1.05** (Высочайшая надежность заимствований и доступ к рефинансированию)
-
----
-### 10. 🏛️ Институциональные БПИФ (Т-Капитал, Ренессанс)
-- Чистый приток и наращивание веса в БПИФ `≥ +0.5%` ➡️ бонус **×1.03** (Институциональная поддержка ликвидности)
-- Сокращение веса фондами `≤ -0.5%` ➡️ штраф **×0.97**
-
-*Активы с итоговым счетом **ниже 1.0** признаются слабыми (кандидаты на фиксацию). Сильные фавориты рынка получают оценку **> 1.5**.*
+*Активы с итоговым счетом **ниже 0.85** признаются слабыми (кандидаты на выход). Лидеры **Value & Income / Income Reversion** получают оценку **> 1.3**.*
 """
 
 def build_portfolio_rules(index_level, usd_rate):
     if index_level is None: index_level = 2600
     if usd_rate is None: usd_rate = 80
 
+    # Штанга (Barbell): 80-90% ядро Value & Income + 10-20% валютный/золотой резерв без длинных RUB ОФЗ
     if index_level <= 2200:
-        cash_target, bond_target, regime = 0.10, 0.10, "Низкий индекс — покупаем акции"
+        cash_target, bond_target, regime = 0.05, 0.10, "Глубокий дисконт — разворачиваем резерв в акции"
     elif index_level <= 2900:
-        cash_target, bond_target, regime = 0.20, 0.15, "Средний индекс — умеренное развертывание"
+        cash_target, bond_target, regime = 0.05, 0.15, "Базовый режим Штанги — 80% Value & Income / 20% Щит"
     else:
-        cash_target, bond_target, regime = 0.50, 0.20, "Высокий индекс — защита капитала"
+        cash_target, bond_target, regime = 0.10, 0.20, "Перегрев рынка — копим валютный/золотой резерв"
 
-    bond_currency = "USD-облигации" if usd_rate <= 72 else "RUB-облигации" if usd_rate >= 88 else "смешанный вариант"
+    bond_currency = "Валютный / Золотой щит + фонд ликвидности (0% длинных RUB ОФЗ — турецкий риск)"
     equity_target = 1 - cash_target - bond_target
     
     return {"cash_target": cash_target, "bond_target": bond_target, "equity_target": equity_target, "regime": regime, "bond_currency": bond_currency}
@@ -1326,10 +1288,13 @@ with st.sidebar:
         st.caption(f"🔴 **MCP Офлайн**: `{err_msg[:30]}`")
 
 with st.spinner("Считываю сигналы систем..."):
-    live_data = fetch_live_prices(selected_tickers)
-    market_context = fetch_market_context()
-    tech_data = fetch_technical_indicators(selected_tickers)
     raw_fundamental_data = fetch_smartlab_fundamentals(selected_tickers)
+    eval_tickers = (
+        sorted(raw_fundamental_data["ticker"].dropna().astype(str).str.upper().unique().tolist())
+        if not raw_fundamental_data.empty else []
+    )
+    market_context = fetch_market_context()
+    tech_data = fetch_technical_indicators(eval_tickers)
     sentiment_data = load_sentiment_data(_cache_buster=_sentiment_mtime())
     magellan_of = fetch_magellan_order_flow("today")
     magellan_banks = fetch_magellan_banks_summary()
@@ -1375,42 +1340,151 @@ if not raw_fundamental_data.empty:
     df_fund = df_fund[management_filter].copy()
 
 if not df_fund.empty:
-    # Нормализуем ROE для расчета Health Score, чтобы аномалии (500% или -1000%) не ломали вес в портфеле
-    # Ограничиваем любой ROE сверху значением 40% (отличный бизнес)
-    df_fund['ROE_norm'] = df_fund['ROE_%'].clip(upper=40.0)
-    
-    # Обновляем маску is_it для отфильтрованного датафрейма
-    current_is_it = df_fund['ticker'].isin(IT_TICKERS)
-    
-    # Для IT-компаний, если ROE ушел в минус из-за бухгалтерского списания капитала,
-    # присваиваем им "нормативный" успешный ROE = 30.0% для адекватного участия в рейтинге
-    df_fund.loc[current_is_it & (df_fund['ROE_norm'] <= 0), 'ROE_norm'] = 30.0
-    # Учет роста бизнеса (Growth Premium/Penalty)
-    if 'Rev_Growth_%' not in df_fund.columns:
-        df_fund['Rev_Growth_%'] = 0.0
-    df_fund['Rev_Growth_%'] = df_fund['Rev_Growth_%'].fillna(0.0)
-    
-    if 'P_BV' not in df_fund.columns:
-        df_fund['P_BV'] = 1.0
-    df_fund['P_BV'] = df_fund['P_BV'].fillna(1.0)
-    
-    # Превращаем процент роста в мультипликатор: +20% роста = 1.2x к оценке здоровья, -15% = 0.85x.
-    # Ограничиваем влияние выбросов (не больше удвоения скора и не меньше половинки).
-    growth_multiplier = 1 + (df_fund['Rev_Growth_%'].clip(lower=-50, upper=100) / 100.0)
-    
-    # Ограничиваем бонус за отрицательный долг (максимум х2 к баллу), чтобы не ломать рейтинг
+    # 1. Единое слияние с техническими данными и каскадное разрешение актуальной цены (без дублирующего 101-тикерного live_data)
+    df_fund = pd.merge(df_fund, tech_data, on="ticker", how="left")
+    for num_col, default_val in [
+        ("ROE_%", 0.0),
+        ("Debt_EBITDA", 1.0),
+        ("Rev_Growth_%", 0.0),
+        ("P_BV", 1.0),
+        ("Div_RUB", 0.0),
+    ]:
+        if num_col not in df_fund.columns:
+            df_fund[num_col] = default_val
+        df_fund[num_col] = pd.to_numeric(df_fund[num_col], errors="coerce").fillna(default_val)
+
+    df_fund["P_E"] = pd.to_numeric(df_fund.get("P_E"), errors="coerce").fillna(10.0)
+    df_fund["FCF_Yield_%"] = pd.to_numeric(
+        df_fund["FCF_Yield_%"] if "FCF_Yield_%" in df_fund.columns else float("nan"),
+        errors="coerce",
+    )
+
+    df_fund["Price"] = pd.to_numeric(df_fund.get("Price"), errors="coerce")
+    if my_portfolio:
+        def _port_fallback_price(t):
+            item = my_portfolio.get(t, {})
+            p = item.get("price")
+            if p is not None and pd.notna(p) and float(p) > 0:
+                return float(p)
+            cnt = item.get("count", 0) or 0
+            val = item.get("val", 0) or 0
+            if cnt > 0 and val > 0:
+                return float(val) / float(cnt)
+            return float("nan")
+        df_fund["Price"] = df_fund["Price"].fillna(df_fund["ticker"].map(_port_fallback_price))
+    if isinstance(magellan_of, dict) and magellan_of:
+        df_fund["Price"] = df_fund["Price"].fillna(
+            df_fund["ticker"].map(
+                lambda t: float(magellan_of[t]["last_price"])
+                if isinstance(magellan_of.get(t), dict) and magellan_of[t].get("last_price")
+                else float("nan")
+            )
+        )
+    df_fund["Current_Price"] = df_fund["Price"]
+    valid_p = df_fund["Current_Price"].where(df_fund["Current_Price"] > 0)
+    df_fund["Div_Yield_%"] = ((df_fund["Div_RUB"] / valid_p) * 100.0).fillna(0.0).round(2)
+
+    # Нормализуем ROE (ограничиваем сверху 40%, чтобы аномалии не ломали веса)
+    df_fund["ROE_norm"] = df_fund["ROE_%"].clip(upper=40.0)
+
+    is_it = df_fund["ticker"].isin(IT_TICKERS)
+    is_structural = df_fund["ticker"].isin(STRUCTURAL_DISCOUNT_TICKERS)
+    is_holding = df_fund["ticker"].isin(HOLDING_TICKERS)
+    is_bank = df_fund["ticker"].isin(BANK_TICKERS)
+    is_cyclical = df_fund["ticker"].isin(CYCLICAL_TICKERS)
+    is_toxic_now = df_fund["ticker"].isin(TOXIC_TICKERS)
+    is_utility = df_fund["ticker"].isin(UTILITIES_TICKERS)
+
+    # Для IT-компаний, если ROE ушел в минус из-за бухгалтерского списания капитала, берем норматив 30%
+    df_fund.loc[is_it & (df_fund["ROE_norm"] <= 0), "ROE_norm"] = 30.0
+
+    # Income Reversion («рывок доходности» по CrimsonAlter):
+    # А) Сильный свободный кэш FCF >= 12% при низком долге и наличии дивиденда (например, ROSN / LKOH / TATN / TRNFP)
+    is_rev_fcf = (
+        (~is_structural)
+        & (~is_toxic_now)
+        & (~is_bank)
+        & (df_fund["Debt_EBITDA"] <= 1.5)
+        & (df_fund["Div_RUB"] > 0)
+        & (df_fund["FCF_Yield_%"].fillna(-999.0) >= 12.0)
+    )
+    # Б) Растущие дивидендные компаундеры (ROE >= 15%, рост >= 12%, див.доходность >= 4%, долг <= 1.5x)
+    is_rev_growth = (
+        (~is_structural)
+        & (~is_toxic_now)
+        & (df_fund["Debt_EBITDA"] <= 1.5)
+        & (df_fund["Div_Yield_%"] >= 4.0)
+        & (df_fund["Rev_Growth_%"] >= 12.0)
+        & (df_fund["ROE_%"] >= 15.0)
+    )
+    is_income_reversion = is_rev_fcf | is_rev_growth
+
+    def _classify_crimson_driver(row):
+        t = row["ticker"]
+        div_y = row["Div_Yield_%"]
+        fcf_y = row["FCF_Yield_%"]
+        debt_v = row["Debt_EBITDA"]
+        pe_v = row["P_E"]
+        pb_v = row["P_BV"]
+        roe_v = row["ROE_%"]
+        if t in TOXIC_TICKERS or (pe_v <= 0 and pb_v <= 0 and t not in IT_TICKERS):
+            return "🔴 Риск / Дистресс"
+        if t in STRUCTURAL_DISCOUNT_TICKERS:
+            if t == "SNGSP" and div_y >= 9.0:
+                return "⚖️ Уставной преф / Дисконт КУ"
+            return "🔒 Дисконт КУ / Малые дивы"
+        if row["_is_income_reversion"]:
+            return "🚀 Income Reversion (Рывок доходности)"
+        if t in CYCLICAL_TICKERS and debt_v <= 1.8 and pe_v > 0 and roe_v < 15.0:
+            return "⏸️ Дно цикла (Без долга)"
+        if t in IT_TICKERS:
+            return "📈 Рост бизнеса (IT)"
+        if div_y >= 8.0 and (pd.isna(fcf_y) or fcf_y >= 0):
+            return "💎 Див-База (Value & Income)"
+        if div_y <= 0.0:
+            return "🚫 Без дивидендов"
+        return "⚖️ Умеренная отдача"
+
+    df_fund["_is_income_reversion"] = is_income_reversion
+    df_fund["Драйвер (Value & Income)"] = df_fund.apply(_classify_crimson_driver, axis=1)
+
+    growth_multiplier = 1 + (df_fund["Rev_Growth_%"].clip(lower=-50, upper=100) / 100.0)
     safe_debt = df_fund["Debt_EBITDA"].clip(lower=-0.5)
-    
-    # Используем ROE_norm вместо сырого ROE_% и умножаем на мультипликатор роста
+
+    # Базовый Health Score
     df_fund["Health_Score"] = (((df_fund["ROE_norm"] / df_fund["P_E"].clip(lower=0.5)) / (1 + safe_debt)) * growth_multiplier).round(2)
-    # Убыточные компании (P/E <= 0) и токсичные предбанкроты получают скор 0.0
-    df_fund.loc[df_fund['P_E'] <= 0, "Health_Score"] = 0.0
-    df_fund.loc[df_fund['ticker'].isin(TOXIC_TICKERS), "Health_Score"] = 0.0
-    
-    # Специфика Сургутнефтегаза и Холдингов: их P/E искажен переоценками кубышки/дочек. Оцениваем по P/BV.
-    # GAZP добавлен сюда как холдинг (владеет Газпром нефтью, Газпромбанком), торгующийся глубоко ниже капитала.
-    is_holding = df_fund['ticker'].isin(HOLDING_TICKERS)
-    df_fund.loc[is_holding, "Health_Score"] = (((3.0 / df_fund.loc[is_holding, "P_BV"].clip(lower=0.1)) / (1 + safe_debt[is_holding])) * growth_multiplier[is_holding]).round(2)
+
+    # Компенсация временной просадки P/E / ROE для подтвержденного Income Reversion по живому FCF
+    rev_fcf_depressed = is_rev_fcf & ((df_fund["P_E"] > 8.0) | (df_fund["ROE_%"] < 14.0))
+    if rev_fcf_depressed.any():
+        fcf_power = ((df_fund["FCF_Yield_%"].clip(lower=10.0, upper=22.0) / 10.0) / (1 + df_fund["Debt_EBITDA"].clip(lower=-0.2))) * growth_multiplier
+        df_fund.loc[rev_fcf_depressed, "Health_Score"] = (
+            df_fund.loc[rev_fcf_depressed, "Health_Score"]
+            .combine(fcf_power.loc[rev_fcf_depressed], max)
+            .round(2)
+        )
+
+    # Классические холдинги (только при положительном капитале и прибыли, без 3/PBV на отрицательный капитал)
+    valid_holding = is_holding & (df_fund["P_BV"] > 0) & (df_fund["P_E"] > 0)
+    df_fund.loc[valid_holding, "Health_Score"] = (
+        ((3.0 / df_fund.loc[valid_holding, "P_BV"].clip(lower=0.25)) / (1 + safe_debt[valid_holding])) * growth_multiplier[valid_holding]
+    ).round(2)
+
+    # Структурный дисконт (Сургутнефтегаз, Газпром, сети):
+    # НЕ применяем 3/PBV и НЕ даем бонус за недоступную миноритариям кубышку (долг клипится от 0.0)
+    if is_structural.any():
+        pref_sng = is_structural & (df_fund["ticker"] == "SNGSP")
+        other_struct = is_structural & (~pref_sng)
+        df_fund.loc[pref_sng, "Health_Score"] = (
+            ((df_fund.loc[pref_sng, "ROE_norm"].clip(upper=20.0) / df_fund.loc[pref_sng, "P_E"].clip(lower=5.0))
+             / (1 + safe_debt[pref_sng].clip(lower=0.0)))
+            * 0.65 * growth_multiplier[pref_sng]
+        ).round(2)
+        df_fund.loc[other_struct, "Health_Score"] = (
+            ((df_fund.loc[other_struct, "ROE_norm"].clip(upper=18.0) / df_fund.loc[other_struct, "P_E"].clip(lower=6.0))
+             / (1 + safe_debt[other_struct].clip(lower=0.0)))
+            * 0.45 * growth_multiplier[other_struct]
+        ).round(2)
     
     # Специфика Банков (Финансовый сектор): их оценивают по связке Капитала (P/BV) и Эффективности (ROE).
     # Обогащение банков реальными данными ЦБ РФ (Форма 101/102 из Magellan)
@@ -1558,43 +1632,6 @@ if not df_fund.empty:
             
     fcf_multiplier = df_fund['FCF_Yield_%'].apply(get_fcf_multiplier)
     df_fund["Health_Score"] = (df_fund["Health_Score"] * fcf_multiplier).round(2)
-    
-    # Расчет и учет Дивидендной доходности (Stock-picking подход)
-    if 'Div_RUB' not in df_fund.columns:
-        df_fund['Div_RUB'] = 0.0
-        
-    def get_current_price(ticker):
-        try:
-            # Если тикер не найден в live_data, вернем NaN
-            if ticker in live_data.columns:
-                return live_data[ticker].dropna().iloc[-1]
-        except Exception:
-            pass
-        return float('nan')
-            
-    df_fund['Div_RUB'] = df_fund['Div_RUB'].fillna(0.0)
-    # Приводим к float, игнорируя текст (на смарт-лабе могут быть кривые данные)
-    df_fund['Div_RUB'] = pd.to_numeric(df_fund['Div_RUB'], errors='coerce').fillna(0.0)
-    df_fund['Current_Price'] = df_fund['ticker'].apply(get_current_price)
-    df_fund['Div_Yield_%'] = (df_fund['Div_RUB'] / df_fund['Current_Price'] * 100).fillna(0.0).round(2)
-    
-    def get_div_multiplier(yield_val):
-        if yield_val >= 9.0:
-            return 1.20  # Огромный бонус за высокие дивиденды
-        elif yield_val >= 5.0:
-            return 1.10  # Средний бонус
-        elif yield_val == 0.0:
-            return 0.85  # Штраф -15% за "жлобство" (компания не делится деньгами)
-        else:
-            return 1.0
-            
-    div_multiplier = df_fund['Div_Yield_%'].apply(get_div_multiplier)
-    
-    # Убираем штраф за 0% дивов для IT компаний (они реинвестируют в мощный рост)
-    is_it = df_fund['ticker'].isin(IT_TICKERS)
-    div_multiplier[is_it & (df_fund['Div_Yield_%'] == 0.0)] = 1.0
-    
-    df_fund["Health_Score"] = (df_fund["Health_Score"] * div_multiplier).round(2)
         
     # Интеграция Sentiment Analysis (Настроения толпы за последний месяц / 30 дней)
     def get_sentiment_info(ticker):
@@ -1735,15 +1772,23 @@ if not df_fund.empty:
     def apply_rfr_penalty(row):
         score = row['Health_Score']
         ticker = row['ticker']
+        div_y = row.get('Div_Yield_%', 0.0)
+        fcf_y = row.get('FCF_Yield_%', float('nan'))
         
         # IT-сектор: растут быстрее ставки, оцениваются по мультипликаторам
-        if ticker in IT_TICKERS: return score
-        # Холдинги: E/P и ROE искажены кубышкой или дочками
-        if ticker in HOLDING_TICKERS: return score
+        if ticker in IT_TICKERS:
+            return score
+        # Классические холдинги: E/P искажён переоценкой дочек
+        if ticker in HOLDING_TICKERS:
+            return score
+        # Структурный дисконт (SNGS, GAZP и др.): не освобождаются от проверки, если дивы < 10%
+        if ticker in STRUCTURAL_DISCOUNT_TICKERS:
+            return score if div_y >= 10.0 else round(score * 0.70, 2)
+        # Income Reversion (например, ROSN с FCF 19.2%): живой FCF уже выше ставки
+        if ticker in OIL_TICKERS and pd.notna(fcf_y) and fcf_y >= 12.0 and row.get('Debt_EBITDA', 99) <= 1.5 and div_y > 0:
+            return score
         
-        # Цикличные компании (Металлурги, Майнеры): их прибыль волатильна. Покупать их на низком P/E (на пике цикла) опасно,
-        # а высокий P/E (дно цикла) часто бывает лучшей точкой входа. Прощаем им низкий E/P, смотрим только на ROE.
-        CYCLICAL_TICKERS = ['CHMF', 'NLMK', 'MAGN', 'ALRS', 'PLZL', 'UGC', 'MTLR', 'RASP', 'SELG']
+        # Цикличные компании (Металлурги, Майнеры): прощаем им низкий E/P на дне цикла, смотрим на ROE
         if ticker in CYCLICAL_TICKERS:
             if row['ROE_norm'] < key_rate_val:
                 return round(score * 0.7, 2)
@@ -1758,8 +1803,6 @@ if not df_fund.empty:
         # Обычные компании: проверяем и ROE, и Earnings Yield (E/P)
         earnings_yield = (100 / row['P_E']) if pd.notna(row['P_E']) and row['P_E'] > 0 else 0
         
-        # Жесткий Сток-пикинг (-30% штраф): 
-        # Если бизнес зарабатывает меньше банковского вклада, он сжигает акционерную стоимость
         if row['ROE_norm'] < key_rate_val or earnings_yield < key_rate_val:
             score = score * 0.7
             
@@ -1767,81 +1810,66 @@ if not df_fund.empty:
         
     df_fund["Health_Score"] = df_fund.apply(apply_rfr_penalty, axis=1)
     
-    # Слияние с техническим анализом и каскадный резерв котировок при таймауте MOEX ISS
-    df_fund = pd.merge(df_fund, tech_data, on="ticker", how="left")
-    df_fund["Price"] = pd.to_numeric(df_fund.get("Price"), errors="coerce")
-    if "Current_Price" in df_fund.columns:
-        df_fund["Price"] = df_fund["Price"].fillna(pd.to_numeric(df_fund["Current_Price"], errors="coerce"))
-    if my_portfolio:
-        def _port_fallback_price(t):
-            item = my_portfolio.get(t, {})
-            p = item.get("price")
-            if p is not None and pd.notna(p) and float(p) > 0:
-                return float(p)
-            cnt = item.get("count", 0) or 0
-            val = item.get("val", 0) or 0
-            if cnt > 0 and val > 0:
-                return float(val) / float(cnt)
-            return float("nan")
-        df_fund["Price"] = df_fund["Price"].fillna(df_fund["ticker"].map(_port_fallback_price))
-    if isinstance(magellan_of, dict) and magellan_of:
-        df_fund["Price"] = df_fund["Price"].fillna(
-            df_fund["ticker"].map(
-                lambda t: float(magellan_of[t]["last_price"])
-                if isinstance(magellan_of.get(t), dict) and magellan_of[t].get("last_price")
-                else float("nan")
-            )
-        )
-    
+    # Единая дисциплина дивидендов Value & Income ("Если дивов нет или они маленькие — нафиг")
     def apply_div_multiplier(row):
         score = row['Health_Score']
+        ticker = row['ticker']
         div = row['Div_Yield_%']
         pe = row['P_E']
+        fcf = row.get('FCF_Yield_%', float('nan'))
         growth = row.get('Rev_Growth_%', float('nan'))
+        is_rev = bool(row.get('_is_income_reversion', False))
         
-        # Расчет Payout Ratio (Доля прибыли, идущая на дивиденды)
-        # Earnings Yield = 100 / P/E. Значит Payout Ratio = Div_Yield / (100 / P_E) = Div_Yield * P_E / 100
-        payout_ratio = 0
+        # Регулируемые сетевые/энерго компании имеют понижающий коэффициент из-за инвестпрограмм и тарифов
+        if ticker in UTILITIES_TICKERS:
+            score *= 0.85
+
+        payout_ratio = 0.0
         if pd.notna(div) and div > 0 and pd.notna(pe) and pe > 0:
-            payout_ratio = (div * pe) / 100
+            payout_ratio = (div * pe) / 100.0
         
         if pd.isna(div) or div <= 0:
-            if row['ticker'] not in IT_TICKERS:
-                return score * 0.85 # Штраф за жлобство (кроме IT)
-            return score
+            if ticker in IT_TICKERS:
+                return round(score, 2)
+            if ticker in CYCLICAL_TICKERS and row.get('Debt_EBITDA', 99) <= 1.5:
+                return round(score * 0.80, 2)
+            return round(score * 0.55, 2)  # Жесткий штраф Value & Income за 0% дивидендов
+
+        if div < 6.0:
+            # Прощаем низкий текущий див ТОЛЬКО при доказанном Income Reversion (рост или мощный FCF)
+            return round(score * (1.05 if is_rev else 0.72), 2)
             
-        # ЗАЩИТА ОТ КВАЗИОБЛИГАЦИЙ:
-        # 1. Компания платит дивидендов больше, чем зарабатывает (Payout > 100%). Проедает капитал в долг (как МТС).
-        if payout_ratio > 1.0:
-            return score * 0.8 # Штраф за проедание капитала
+        # Проедание капитала / выплата дивов в долг
+        if payout_ratio > 1.0 or (div >= 10.0 and pd.notna(fcf) and fcf < 0):
+            return round(score * 0.72, 2)
             
-        # 2. Компания платит высокие дивы (>10%), но не растет (выручка < 5%). Это стагнирующая квазиоблигация.
-        if div > 10 and (pd.isna(growth) or growth < 5):
-            # Режем дивидендный бонус в два раза, так как нет развития бизнеса
-            return score * (1 + (min(div, 20) / 200))
+        # Стагнирующая квазиоблигация vs растущая дивидендная база
+        if div > 10.0 and (pd.isna(growth) or growth < 5.0):
+            return round(score * (1.0 + (min(div, 18.0) / 200.0)), 2)
             
-        # Здоровый баланс: компания платит дивиденды ИЗ ПРИБЫЛИ и при этом продолжает расти
-        return score * (1 + (min(div, 20) / 100))
+        return round(score * (1.0 + (min(div, 18.0) / 100.0)), 2)
         
     df_fund["Health_Score"] = df_fund.apply(apply_div_multiplier, axis=1)
     
-    # Защита от сжигания капитала (Инфляционный радар)
+    # Защита от сжигания капитала (Инфляционный радар / «турецкий риск» инфляции)
     inflation_real_val = market_context.get("INFLATION_REAL", 12.0)
     def apply_inflation_penalty(row):
         score = row['Health_Score']
         roe = row['ROE_norm']
         div = row['Div_Yield_%']
+        fcf = row.get('FCF_Yield_%', float('nan'))
         growth = row.get('Rev_Growth_%', 0)
-        if pd.isna(growth): growth = 0
+        if pd.isna(growth):
+            growth = 0.0
         
+        # Для Income Reversion на базе живого FCF учитываем фактическую отдачу кэша
+        eff_return = max(roe, float(fcf)) if (row.get('_is_income_reversion') and pd.notna(fcf)) else roe
         is_destroyer = False
-        # Штраф за уничтожение капитала (ROE ниже реальной инфляции)
-        if roe < inflation_real_val:
+        if eff_return < inflation_real_val:
             score *= 0.7
             
-        # Сжигатель покупательной способности
         if pd.notna(div) and div > 0:
-            if div < inflation_real_val and growth < inflation_real_val:
+            if div < inflation_real_val and growth < inflation_real_val and not (row.get('_is_income_reversion') and pd.notna(fcf) and fcf >= inflation_real_val):
                 score *= 0.6
                 is_destroyer = True
                 
@@ -1923,7 +1951,17 @@ if not df_fund.empty:
         return round(score * tech_mult, 2), trend_label
         
     df_fund[['Health_Score', 'Тренд']] = df_fund.apply(lambda row: pd.Series(apply_tech_multiplier(row)), axis=1)
-        
+
+    # Финальное обнуление убыточных компаний (P/E <= 0), отрицательного капитала вне IT/Потребсектора (AFKS) и карантина
+    neg_equity_loss = (
+        (df_fund["P_E"] <= 0)
+        & (df_fund["P_BV"] <= 0)
+        & (~df_fund["ticker"].isin(IT_TICKERS + CONSUMER_TICKERS))
+    )
+    loss_or_toxic = (df_fund["P_E"] <= 0) | neg_equity_loss | df_fund["ticker"].isin(TOXIC_TICKERS)
+    df_fund.loc[loss_or_toxic, "Health_Score"] = 0.0
+    df_fund["Health_Score"] = df_fund["Health_Score"].clip(lower=0.0).round(2)
+
     df_ranked = df_fund.sort_values(by=["Health_Score"], ascending=False)
     
     # Делаем RSI человекочитаемым
@@ -1957,7 +1995,8 @@ else:
             rev_growth=row.get('Rev_Growth_%'),
             div_rub=row.get('Div_RUB'),
             key_rate=key_rate_for_bl,
-            use_mcp=False
+            use_mcp=False,
+            fcf_yield=row.get('FCF_Yield_%'),
         )
         return pd.Series([res['fair_price'], res['upside_pct']])
 
@@ -2018,14 +2057,19 @@ else:
 
     if not df_port.empty:
         toxic_mask = df_port['ticker'].isin(TOXIC_TICKERS)
-        debt_crisis_mask = (df_port['Debt_EBITDA'] > 3.0) & (df_port['ROE_%'] < 8.0)
+        debt_crisis_mask = (df_port['Debt_EBITDA'] > 3.0) & (
+            (df_port['ROE_%'] < 8.0) | ((df_port['P_E'] <= 0) & (df_port['P_BV'] <= 0))
+        )
         urgent_sells_df = df_port[toxic_mask | debt_crisis_mask].copy()
 
         # Переоценка по Чёрной Линии (рыночная цена существенно выше внутренней стоимости)
         overvalued_mask = (df_port['Margin of Safety (%)'] <= -25.0) & (~df_port['ticker'].isin(urgent_sells_df['ticker']))
         overvalued_bl_df = df_port[overvalued_mask].copy()
 
-        cyclical_mask = df_port['ticker'].isin(CYCLICAL_TICKERS + CONSUMER_TICKERS + OIL_TICKERS)
+        # Структурно дисконтные бумаги (SNGS, GAZP) не оправдываем как "дно цикла"
+        cyclical_mask = df_port['ticker'].isin(CYCLICAL_TICKERS + CONSUMER_TICKERS + OIL_TICKERS) & (
+            ~df_port['ticker'].isin(STRUCTURAL_DISCOUNT_TICKERS)
+        )
         safe_debt_mask = (df_port['Debt_EBITDA'] <= 1.8) | (df_port['Debt_EBITDA'] < 0)
         hold_cycle_df = df_port[
             (~df_port['ticker'].isin(urgent_sells_df['ticker'])) & 
@@ -2056,12 +2100,18 @@ else:
         overweight_df = pd.DataFrame()
         weak_stocks_df = pd.DataFrame()
 
-    # Топ покупок рынка (активы с высоким Health Score и положительным запасом прочности по Чёрной Линии)
+    # Топ покупок рынка (Value & Income + Income Reversion + Margin of Safety по Чёрной Линии)
+    is_rev_mask = (
+        df_ranked['_is_income_reversion']
+        if '_is_income_reversion' in df_ranked.columns
+        else pd.Series(False, index=df_ranked.index)
+    )
     market_buys = df_ranked[
         (~df_ranked['ticker'].isin(TOXIC_TICKERS)) &
+        (~df_ranked['ticker'].isin(['SNGS', 'GAZP', 'FEES', 'UPRO'])) &
         (df_ranked['Health_Score'] >= 1.15) &
         (df_ranked['Debt_EBITDA'] <= 1.8) &
-        (df_ranked['ROE_%'] >= 14.0) &
+        ((df_ranked['ROE_%'] >= 14.0) | is_rev_mask) &
         (df_ranked['Margin of Safety (%)'] >= 0.0)
     ].copy()
 
@@ -2129,7 +2179,7 @@ else:
             _append_smart_swap(
                 smart_swaps, top_buys_df, s_t, sell_row.get('Текущая Стоимость'),
                 badge="🔴 Срочный выход из токсичного долга",
-                sell_reason=f"Долг/EBITDA {_safe_float(sell_row.get('Debt_EBITDA')):.1f}x при ставке 21% сжигает прибыль",
+                sell_reason=f"Долг/EBITDA {_safe_float(sell_row.get('Debt_EBITDA')):.1f}x при ставке {key_rate_for_bl:.1f}% сжигает прибыль",
                 buy_driver=f"ROE {_safe_float(buy_cand.get('ROE_%')):.1f}%, P/E {_safe_float(buy_cand.get('P_E')):.1f}, Health Score {_safe_float(buy_cand.get('Health_Score')):.2f}x",
                 effect=f"Рост отдачи на капитал: ROE {roe_diff:+.1f}%, снижение долговой нагрузки на {debt_diff:.1f}x",
             )
@@ -2181,11 +2231,14 @@ else:
         hs = row.get('Health_Score', 1.0)
         debt = row.get('Debt_EBITDA', 999.0)
         roe = row.get('ROE_%', 0.0)
+        pe = row.get('P_E', 0.0)
+        pb = row.get('P_BV', 0.0)
+        is_rev = bool(row.get('_is_income_reversion', False))
         in_p = row.get('Лоты', 0) > 0
         share = row.get('Доля в портфеле (%)', 0.0)
         mos = row.get('Margin of Safety (%)', 0.0)
         
-        if t in TOXIC_TICKERS or (debt > 3.0 and roe < 8.0):
+        if t in TOXIC_TICKERS or (debt > 3.0 and (roe < 8.0 or (pe <= 0 and pb <= 0 and t not in IT_TICKERS))):
             return "🔴 Срочно продать" if in_p else "🔴 Карантин (Риск)"
         if in_p and mos <= -25.0:
             return "🔴 Переоценено (Продать)"
@@ -2195,8 +2248,10 @@ else:
             return "🟠 Сократить перевес"
         if in_p and hs < 0.85:
             return "⚠️ Слабый (Кандидат на выход)"
-        if hs >= 1.30 and debt <= 1.5 and roe >= 15.0 and mos >= 15.0:
-            return "🟢 Strong Buy (Margin of Safety)"
+        if t in ['SNGS', 'GAZP', 'FEES', 'UPRO']:
+            return "🔒 Структурный дисконт (Наблюдение)"
+        if hs >= 1.30 and debt <= 1.5 and (roe >= 15.0 or is_rev) and mos >= 15.0:
+            return "🟢 Strong Buy (Income Reversion)" if is_rev else "🟢 Strong Buy (Margin of Safety)"
         if hs >= 1.05 and debt <= 2.0 and mos >= 0.0:
             return "🔵 Наращивать"
         return "🟡 Держать"
@@ -2292,7 +2347,7 @@ else:
                 for _, r in urgent_sells_df.iterrows():
                     with st.container(border=True):
                         st.markdown(f"**🔴 {r['ticker']}** | Доля: **{r['Доля в портфеле (%)']:.1f}%** ({r['Текущая Стоимость']:,.0f} ₽)")
-                        st.error(f"Долг/EBITDA **{r['Debt_EBITDA']:.1f}x** при ставке 21% сжигает прибыль компании.")
+                        st.error(f"Долг/EBITDA **{r['Debt_EBITDA']:.1f}x** при ставке {key_rate_for_bl:.1f}% сжигает прибыль компании.")
                         st.caption(f"ROE: **{r['ROE_%']:.1f}%** | PnL: **{r['PnL (%)']:+.1f}%**")
                         st.markdown("👉 **Действие: Полный выход (Ликвидация)**")
 
@@ -2339,35 +2394,41 @@ else:
             elif not my_portfolio:
                 with st.container(border=True):
                     st.markdown("**🛑 Черный список рынка MOEX:**")
-                    st.error("Избегайте покупки предбанкротных и закредитованных компаний (MTLR, SGZH, SMLT, EUTR, PIKK)")
-                    st.caption("При ставке 21% их процентные платежи съедают всю операционную прибыль.")
+                    st.error("Избегайте покупки закредитованных компаний и ловушек с нулевыми дивами (MTLR, SGZH, SMLT, EUTR, PIKK, AFKS)")
+                    st.caption(f"При ставке {key_rate_for_bl:.1f}% процентные платежи съедают всю операционную прибыль.")
                     st.info("💡 Загрузите ваш портфель слева, чтобы увидеть персональный аудит бумаг.")
 
         with c_buy:
             st.markdown("#### 🟢 2. Что КУПИТЬ / НАРАСТИТЬ")
-            st.caption("Лидеры рынка под текущую ставку ЦБ и макро-цикл")
+            st.caption("Ядро Value & Income и идеи Income Reversion (без ловушек с низким дивом)")
             
             if not top_buys_df.empty:
                 for _, r in top_buys_df.iterrows():
                     t = r['ticker']
                     in_p = r.get('Лоты', 0) > 0
                     share_str = f"В портфеле: {r['Доля в портфеле (%)']:.1f}%" if in_p else "Новая идея (нет в портфеле)"
+                    drv_badge = r.get('Драйвер (Value & Income)', '')
                     
-                    driver = "Высокая отдача на капитал и минимальный долг."
+                    driver = "Устойчивая отдача на капитал, низкий долг и реальный денежный поток."
                     if t in ['SBER', 'SBERP', 'T', 'SVCB', 'BSPB']:
-                        driver = "Бенефициар жесткой ДКП: высокая маржа, ROE > 20%, двузначные дивиденды."
-                    elif t in ['SNGS', 'SNGSP', 'TRNFP']:
-                        driver = "Кубышка/кэш под 21% годовых, отрицательный чистый долг, защита от девальвации."
+                        driver = "Высокая рентабельность капитала (ROE > 20%), сильный запас капитала Н1.0 и стабильные дивиденды."
+                    elif t in ['TRNFP', 'NMTP']:
+                        driver = "Тарифная монополия / портовая перевалка, высокий FCF и устойчивые дивиденды без долгового риска."
                     elif t in ['LKOH', 'ROSN', 'TATN']:
-                        driver = "Устойчивый дивидендный поток, отрицательный долг, дивиденды 14-16%."
-                    elif t in ['HEAD', 'YNDX']:
-                        driver = "Высокие темпы роста выручки, низкая долговая нагрузка, монопольное положение."
+                        driver = "Value & Income / Income Reversion: мощный FCF при минимальном долге и дивидендная доходность."
+                    elif t in ['MDMG', 'X5', 'FIVE']:
+                        driver = "Защита от инфляции: рост выручки в потребсекторе/медицине, высокий ROE и регулярный кэш."
+                    elif t in ['HEAD', 'YNDX', 'YDEX', 'DIAS']:
+                        driver = "Высокие темпы роста выручки, низкая долговая нагрузка и высокая маржа."
                     
                     mos_val = r.get('Margin of Safety (%)', 0.0)
                     bl_val = r.get('Чёрная Линия (₽)', 0.0)
+                    div_y = r.get('Div_Yield_%', 0.0)
+                    fcf_y = r.get('FCF_Yield_%')
+                    fcf_str = f" | FCF: **{fcf_y:.1f}%**" if pd.notna(fcf_y) else ""
                     with st.container(border=True):
                         st.markdown(f"**🟢 {t}** | Чёрная Линия: **{bl_val:.1f} ₽** (Запас: **{mos_val:+.1f}%**)")
-                        st.caption(f"{share_str} | Health Score: **{r['Health_Score']:.2f}x** | ROE: **{r['ROE_%']:.1f}%**")
+                        st.caption(f"{share_str} | `{drv_badge}` | Health: **{r['Health_Score']:.2f}x** | Дивы: **{div_y:.1f}%**{fcf_str}")
                         st.success(f"**Почему брать:** {driver}")
                         if pd.notna(r.get('Поток (OrderFlow)')):
                             st.caption(f"Order Flow: `{r['Поток (OrderFlow)']}`")
@@ -2469,14 +2530,14 @@ else:
             df_tl = df_tl[df_tl['Лоты'] > 0]
             
         tl_cols = [
-            "ticker", "Статус (Действие)", "Price", "Чёрная Линия (₽)", "Margin of Safety (%)",
+            "ticker", "Статус (Действие)", "Драйвер (Value & Income)", "Price", "Чёрная Линия (₽)", "Margin of Safety (%)",
             "Доля в портфеле (%)", "Идеальная доля (%)",
-            "PnL (%)", "Health_Score", "ROE_%", "Debt_EBITDA", "P_E", "Тренд", "Поток (OrderFlow)"
+            "PnL (%)", "Health_Score", "Div_Yield_%", "FCF_Yield_%", "ROE_%", "Debt_EBITDA", "P_E", "Тренд", "Поток (OrderFlow)"
         ]
         if not my_portfolio:
             tl_cols = [
-                "ticker", "Статус (Действие)", "Price", "Чёрная Линия (₽)", "Margin of Safety (%)",
-                "Идеальная доля (%)", "Health_Score", "ROE_%", "Debt_EBITDA", "P_E", "Тренд", "Поток (OrderFlow)"
+                "ticker", "Статус (Действие)", "Драйвер (Value & Income)", "Price", "Чёрная Линия (₽)", "Margin of Safety (%)",
+                "Идеальная доля (%)", "Health_Score", "Div_Yield_%", "FCF_Yield_%", "ROE_%", "Debt_EBITDA", "P_E", "Тренд", "Поток (OrderFlow)"
             ]
             
         st.dataframe(
@@ -2542,8 +2603,10 @@ else:
             )
 
     with main_tab2:
-        st.subheader("💼 Аудит структуры капитала и позиций портфеля")
-        st.caption("Анализ распределения долей, безопасных резервов и расчет балансировки капитала.")
+        st.subheader("💼 Аудит структуры капитала и «Штанги» портфеля")
+        st.caption(
+            f"Подход Value & Income + Валютный/Золотой щит (0% длинных RUB ОФЗ против турецкого риска): {rules['bond_currency']}"
+        )
         
         if my_portfolio:
             port_r1, port_r2, port_r3, port_r4, port_r5 = st.columns(5)
@@ -3024,9 +3087,12 @@ else:
                         chg = moex_snap.get("change_pct")
                         chg_str = f"{chg:+.2f}%" if chg is not None else None
                         c_m1.metric("Цена MOEX (TQBR)", f"{last_price:,.2f} ₽", delta=chg_str)
-                    elif chosen_ticker in live_data.columns and not live_data[chosen_ticker].dropna().empty:
-                        c_price = live_data[chosen_ticker].dropna().iloc[-1]
-                        c_m1.metric("Цена MOEX", f"{c_price:,.2f} ₽")
+                    elif not tech_data.empty and chosen_ticker in tech_data["ticker"].values:
+                        c_prices = tech_data.loc[tech_data["ticker"] == chosen_ticker, "Price"].dropna()
+                        if not c_prices.empty:
+                            c_m1.metric("Цена MOEX", f"{float(c_prices.iloc[-1]):,.2f} ₽")
+                        else:
+                            c_m1.metric("Цена MOEX", "Н/Д")
                     else:
                         c_m1.metric("Цена MOEX", "Н/Д")
 

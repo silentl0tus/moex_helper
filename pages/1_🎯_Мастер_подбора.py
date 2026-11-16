@@ -95,7 +95,8 @@ CONSUMER_TICKERS = ['MGNT', 'FIVE', 'FIXP', 'OBUV', 'ORUP', 'BELU', 'AQUA']
 TELECOM_TICKERS  = ['MTSS', 'RTKM', 'RTKMP']
 UTILITIES_TICKERS = ['IRAO', 'UPRO', 'HYDR', 'MSNG', 'FEES', 'LSNG', 'LSNGP']
 CYCLICAL_TICKERS = ['CHMF', 'NLMK', 'MAGN', 'ALRS', 'PLZL', 'UGC', 'MTLR', 'RASP', 'SELG']
-HOLDING_TICKERS  = ['SNGS', 'SNGSP', 'AFKS', 'SFIN', 'ENPG', 'GAZP']
+STRUCTURAL_DISCOUNT_TICKERS = ['SNGS', 'SNGSP', 'GAZP', 'FEES', 'UPRO']
+HOLDING_TICKERS  = ['AFKS', 'SFIN', 'ENPG']
 ZERO_DEBT_TICKERS = ['SNGS', 'SNGSP', 'LKOH', 'IRAO', 'UPRO', 'NLMK', 'TRNFP', 'CNRU', 'DIAS', 'NMTP', 'TATN']
 # Карантинный список: предбанкроты, дистресс-активы, высокий риск дефолта/допэмиссии
 TOXIC_TICKERS    = ['PIKK', 'SMLT', 'EUTR', 'QIWI', 'POLY', 'ORUP', 'OBUV', 'RUGR', 'FIXP', 'CBOM', 'SGZH', 'MTLR', 'MTLRP']
@@ -203,7 +204,7 @@ if "wizard_max_debt" not in st.session_state:
 # ЗАГРУЗКА И РАСЧЕТ HEALTH SCORE
 # =====================================================================
 @st.cache_data(ttl=3600)
-def load_screener_data(cache_version: str = "v2_multipliers"):
+def load_screener_data(cache_version: str = "v3_value_income"):
     cache_path = Path(os.path.abspath(__file__)).parent.parent / "fundamentals_cache.csv"
     if not cache_path.exists():
         return pd.DataFrame()
@@ -248,13 +249,14 @@ def load_screener_data(cache_version: str = "v2_multipliers"):
 
     # Классификация секторов и токсичности
     is_it = df['ticker'].isin(IT_TICKERS)
+    is_structural = df['ticker'].isin(STRUCTURAL_DISCOUNT_TICKERS)
     is_holding = df['ticker'].isin(HOLDING_TICKERS)
     is_bank = df['ticker'].isin(BANK_TICKERS)
     is_toxic = df['ticker'].isin(TOXIC_TICKERS)
 
-    # 1. Защита от отрицательного P/E: P/E <= 0 означает чистый убыток (Net Loss)!
-    # Убыточные компании не могут считаться "дешевыми" (наивное отсечение превращало убыток в ложный супер-скор)
-    is_loss = (df['P_E'] <= 0) | ((df['ROE_%'] <= 0) & (~is_it)) | is_toxic
+    # 1. Защита от отрицательного P/E и отрицательного капитала вне IT/Потребсектора
+    neg_eq = (df['P_BV'] <= 0) & (~is_it) & (~df['ticker'].isin(CONSUMER_TICKERS))
+    is_loss = (df['P_E'] <= 0) | ((df['ROE_%'] <= 0) & (~is_it)) | neg_eq | is_toxic
 
     # Нормализация ROE (ограничиваем сверху 40%, чтобы не ломать веса)
     df['ROE_norm'] = df['ROE_%'].clip(lower=0.0, upper=40.0)
@@ -262,30 +264,57 @@ def load_screener_data(cache_version: str = "v2_multipliers"):
 
     growth_mult = 1 + (df['Rev_Growth_%'].clip(lower=-50, upper=100) / 100.0)
 
-    # 2. Разделение отрицательного Debt/EBITDA:
-    # Вариант А: Истинная "кубышка" (Net Debt < 0 при положительной EBITDA > 0) -> SNGS, LKOH, TATN, UPRO, IRAO.
-    # Вариант Б: Банкротная яма (Net Debt > 0 при отрицательной EBITDA < 0) -> SGZH, MTLR, MAGN.
-    # В варианте Б деление долга на отрицательную EBITDA дает математический минус, но долги катастрофические!
+    # 2. Разделение отрицательного Debt/EBITDA
     distressed_negative_ebitda = (df['Debt_EBITDA'] < 0) & (is_loss | df['ticker'].isin(['SGZH', 'MTLR', 'MTLRP', 'MAGN']))
     df['Debt_EBITDA_eff'] = df['Debt_EBITDA'].copy()
-    df.loc[distressed_negative_ebitda, 'Debt_EBITDA_eff'] = 99.0  # Для жесткой фильтрации по лимиту долга
+    df.loc[distressed_negative_ebitda, 'Debt_EBITDA_eff'] = 99.0
 
     safe_debt = df['Debt_EBITDA'].clip(lower=-0.5)
-    safe_debt.loc[distressed_negative_ebitda] = 4.0  # Штраф за долговой кризис
+    safe_debt.loc[distressed_negative_ebitda] = 4.0
 
-    # 3. Базовый расчет Health Score
+    # 3. Базовый расчет Health Score + Income Reversion
     base_pe = df['P_E'].clip(lower=0.5)
     raw_health = (((df['ROE_norm'] / base_pe) / (1 + safe_debt)) * growth_mult)
 
-    # Холдинги (оценка через P/BV)
-    holding_health = (((3.0 / df['P_BV'].clip(lower=0.1)) / (1 + safe_debt)) * growth_mult)
-    raw_health = raw_health.mask(is_holding, holding_health)
+    is_rev_fcf = (
+        (~is_structural)
+        & (~is_toxic)
+        & (~is_bank)
+        & (df['Debt_EBITDA_eff'] <= 1.5)
+        & (df['Div_RUB'] > 0)
+        & (df['FCF_Yield_%'] >= 12.0)
+        & ((df['P_E'] > 8.0) | (df['ROE_%'] < 14.0))
+    )
+    if is_rev_fcf.any():
+        fcf_power = ((df['FCF_Yield_%'].clip(lower=10.0, upper=22.0) / 10.0) / (1 + df['Debt_EBITDA_eff'].clip(lower=-0.2))) * growth_mult
+        raw_health = raw_health.where(~is_rev_fcf, raw_health.combine(fcf_power, max))
+
+    # Классические холдинги (только при положительном капитале и P/E)
+    valid_holding = is_holding & (df['P_BV'] > 0) & (df['P_E'] > 0)
+    holding_health = (((3.0 / df['P_BV'].clip(lower=0.25)) / (1 + safe_debt)) * growth_mult)
+    raw_health = raw_health.mask(valid_holding, holding_health)
+
+    # Структурный дисконт (SNGS, SNGSP, GAZP, FEES, UPRO — без 3/PBV и бонуса за закрытую кубышку)
+    pref_sng = is_structural & (df['ticker'] == 'SNGSP')
+    other_struct = is_structural & (~pref_sng)
+    raw_health = raw_health.mask(
+        pref_sng,
+        (((df['ROE_norm'].clip(upper=20.0) / df['P_E'].clip(lower=5.0)) / (1 + safe_debt.clip(lower=0.0))) * 0.65 * growth_mult),
+    )
+    raw_health = raw_health.mask(
+        other_struct,
+        (((df['ROE_norm'].clip(upper=18.0) / df['P_E'].clip(lower=6.0)) / (1 + safe_debt.clip(lower=0.0))) * 0.45 * growth_mult),
+    )
 
     # Банки (оценка через ROE и P/BV)
     bank_health = (((df['ROE_norm'] / (df['P_BV'].clip(lower=0.1) * 5.0)) / (1 + safe_debt)) * growth_mult)
     raw_health = raw_health.mask(is_bank, bank_health)
 
-    # 4. Обнуление скора для убыточных и токсичных компаний
+    # Дисциплина Value & Income: штраф за отсутствие дивидендов вне IT
+    no_div_non_it = (df['Div_RUB'] <= 0) & (~is_it)
+    raw_health = raw_health.where(~no_div_non_it, raw_health * 0.65)
+
+    # 4. Обнуление скора для убыточных, отрицательного капитала и токсичных компаний
     raw_health = raw_health.mask(is_loss, 0.0)
     df['Health_Score'] = raw_health.round(2)
 

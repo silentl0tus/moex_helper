@@ -26,7 +26,9 @@ import streamlit as st
 # =====================================================================
 BANK_TICKERS = {"SBER", "SBERP", "T", "VTBR", "BSPB", "SVCB", "CBOM", "RENI"}
 CYCLICAL_TICKERS = {"CHMF", "NLMK", "MAGN", "ALRS", "RASP", "SELG", "UGLD", "UGC"}
-HOLDING_TICKERS = {"SNGS", "SNGSP", "AFKS", "SFIN", "ENPG", "GAZP"}
+# Структурный дисконт: хронически дешевый P/BV и/или низкая отдача акционерам (кубышка Сургута, госкапексы)
+STRUCTURAL_DISCOUNT_TICKERS = {"SNGS", "SNGSP", "GAZP", "FEES", "UPRO"}
+HOLDING_TICKERS = {"AFKS", "SFIN", "ENPG"}
 IT_TICKERS = {"YDEX", "OZON", "POSI", "ASTR", "HEAD", "DIAS", "IVAT", "SOFL", "VKCO"}
 OIL_TICKERS = {"LKOH", "ROSN", "NVTK", "TATN", "TATNP", "SIBN", "RNFT", "TRNFP", "BANE", "BANEP"}
 GOLD_TICKERS = {"PLZL", "SELG", "UGLD", "UGC", "GOLD"}
@@ -227,6 +229,17 @@ def fetch_fundamental_metrics_from_mcp(
 # =====================================================================
 # РАСЧЕТ ЧЕРНОЙ ЛИНИИ (FUNDAMENTAL FAIR PRICE)
 # =====================================================================
+def _clean_metric(val: Optional[float], default: Optional[float] = None) -> Optional[float]:
+    """Безопасно преобразует числовую метрику, отсекая NaN и бесконечности."""
+    if val is None:
+        return default
+    try:
+        f = float(val)
+        return f if np.isfinite(f) else default
+    except (TypeError, ValueError):
+        return default
+
+
 def calculate_black_line_valuation(
     ticker: str,
     price: float,
@@ -240,19 +253,22 @@ def calculate_black_line_valuation(
     mcp_data: Optional[Dict[str, Any]] = None,
     use_mcp: bool = False,
     accounting_basis: str = "IFRS",
+    fcf_yield: Optional[float] = None,
 ) -> Dict[str, Any]:
     """
     Рассчитывает справедливую цену ("Чёрную линию") на основе фундаментальных мультипликаторов.
     Поддерживает прямое извлечение и расчет мультипликаторов из Data Foundry MCP (МСФО/РСБУ).
     
-    Модели:
+    Модели (адаптация под рынок РФ, Value & Income + Income Reversion):
     1. Банки: Модель Гордона Justified P/BV = ROE / (Key_Rate * 0.6 + 6.0%) -> Fair = BVPS * P/BV_justified.
-    2. Холдинги / Кубышка: Дисконтированный NAV (Net Asset Value) с учетом холдингового дисконта.
-    3. IT / Рост: PEG-модель на основе темпов роста выручки и скорректированного P/E.
-    4. Цикличные металлурги: Нормализованный P/BV через экономический цикл.
-    5. Потребительский сектор / Дивидендные фишки: DDM (Dividend Discount Model) / FCF Yield.
-    6. Реальный сектор: Адаптированная формула Грэма (RU 8x) + Скорректированный P/E с поправкой на долг.
-    7. Токсичные / Дистресс: Ликвидационная стоимость с глубоким дисконтом (0.25x BV).
+    2. Структурный дисконт (Сургутнефтегаз, Газпром, сетевые/гос-холдинги): исторический P/BV-дисконт + DDM.
+    3. Классические холдинги: Дисконтированный NAV (0.65x BV).
+    4. IT / Рост: PEG-модель на основе темпов роста выручки и скорректированного P/E.
+    5. Цикличные металлурги: Нормализованный P/BV через экономический цикл.
+    6. Золотодобытчики: Мультипликатор сырьевого хеджа / FCF.
+    7. Потребительский сектор (asset-light): Earnings/Growth P/E + DDM (или риск-дисконт при убытке/отриц. FCF).
+    8. Реальный сектор / Нефтегаз (Income Reversion): FCF-потенциал при низком долге + Грэм/P/E.
+    9. Токсичные / Дистресс / Отрицательный капитал: Ликвидационная стоимость (0.25x BV).
     """
     ticker_clean = str(ticker).upper().strip()
 
@@ -278,19 +294,23 @@ def calculate_black_line_valuation(
             debt_ebitda = mcp_data["debt_ebitda"]
         if mcp_data.get("rev_growth") is not None:
             rev_growth = mcp_data["rev_growth"]
+        if mcp_data.get("fcf_yield") is not None:
+            fcf_yield = mcp_data["fcf_yield"]
         if (price is None or price <= 0) and mcp_data.get("price"):
             price = mcp_data["price"]
     
     # Защита от нулевой/отрицательной цены
-    market_price = float(price) if price and not np.isnan(price) and price > 0 else 1.0
+    clean_p = _clean_metric(price, 0.0)
+    market_price = clean_p if (clean_p is not None and clean_p > 0) else 1.0
     
     # Безопасная очистка мультипликаторов
-    pe_val = float(pe) if pe is not None and not np.isnan(pe) else 6.0
-    pb_val = float(pb) if pb is not None and not np.isnan(pb) else 1.0
-    roe_val = float(roe) if roe is not None and not np.isnan(roe) else 15.0
-    debt_val = float(debt_ebitda) if debt_ebitda is not None and not np.isnan(debt_ebitda) else 1.0
-    growth_val = float(rev_growth) if rev_growth is not None and not np.isnan(rev_growth) else 5.0
-    div_val = float(div_rub) if div_rub is not None and not np.isnan(div_rub) else 0.0
+    pe_val = _clean_metric(pe, 6.0)
+    pb_val = _clean_metric(pb, 1.0)
+    roe_val = _clean_metric(roe, 15.0)
+    debt_val = _clean_metric(debt_ebitda, 1.0)
+    growth_val = _clean_metric(rev_growth, 5.0)
+    div_val = _clean_metric(div_rub, 0.0)
+    fcf_val = _clean_metric(fcf_yield, None)
 
     # Расчет базовых удельных величин
     eps = (market_price / pe_val) if (pe_val > 0 and pe_val < 100) else 0.0
@@ -301,15 +321,22 @@ def calculate_black_line_valuation(
     formula_latex = ""
     thesis = ""
 
+    is_negative_equity_loss = (
+        pe_val <= 0
+        and pb_val <= 0
+        and ticker_clean not in IT_TICKERS
+        and ticker_clean not in CONSUMER_TICKERS
+    )
+
     # -------------------------------------------------------------
     # 1. ТОКСИЧНЫЕ И ПРЕДБАНКРОТНЫЕ АКТИВЫ (Дистресс-оценка)
     # -------------------------------------------------------------
-    if ticker_clean in TOXIC_TICKERS or debt_val > 5.0 or (roe_val < -20.0 and debt_val > 3.0):
+    if ticker_clean in TOXIC_TICKERS or debt_val > 5.0 or (roe_val < -20.0 and debt_val > 3.0) or is_negative_equity_loss:
         model_name = "Дистресс / Ликвидационная стоимость (0.25x BV)"
         base_bvps = bvps if bvps > 0 else market_price * 0.3
         fair_price = max(0.5, base_bvps * 0.25)
         formula_latex = r"P_{fair} = BVPS \times 0.25"
-        thesis = "Компания перегружена долгами или находится в зоне риска санации/допэмиссии. Справедливая оценка ограничена ликвидационным дисконтом."
+        thesis = "Компания перегружена долгами, имеет отрицательный капитал или находится в зоне риска санации/допэмиссии. Справедливая оценка ограничена ликвидационным дисконтом."
 
     # -------------------------------------------------------------
     # 2. ФИНАНСОВЫЙ СЕКТОР / БАНКИ (Justified P/BV Гордона)
@@ -328,19 +355,59 @@ def calculate_black_line_valuation(
         thesis = f"Банк оценивается по эффективности капитала: при ROE {norm_roe:.1f}% и стоимости фондирования {cost_of_equity:.1f}% справедливый мультипликатор P/BV составляет {justified_pb:.2f}x."
 
     # -------------------------------------------------------------
-    # 3. ХОЛДИНГИ И КОМПАНИИ С КУБЫШКОЙ (Дисконтированный NAV)
+    # 3. СТРУКТУРНЫЙ ДИСКОНТ (Сургутнефтегаз, Газпром и госкапексы)
+    # -------------------------------------------------------------
+    elif ticker_clean in STRUCTURAL_DISCOUNT_TICKERS:
+        base_bvps = bvps if bvps > 0 else market_price
+        req_yield = max(key_rate * 0.65, 11.0) / 100.0
+        ddm_price = (div_val / req_yield) if div_val > 0 else 0.0
+        if ticker_clean == "SNGS":
+            nav_floor = base_bvps * 0.14
+            fair_price = 0.50 * nav_floor + 0.50 * (ddm_price if ddm_price > 0 else market_price * 0.60)
+            model_name = "Структурный дисконт кубышки (0.14x BV + DDM обычки)"
+            formula_latex = r"P_{fair} = 0.5 \times (BVPS \times 0.14) + 0.5 \times \frac{\text{Div}}{r_{req}}"
+            thesis = (
+                f"Сургутнефтегаз (ао) исторически всегда стоит дёшево из-за закрытого корпоративного контура "
+                f"и недоступности кубышки (P/BV ~0.13–0.18x) при низком дивиденде ({div_val:.2f} ₽). "
+                f"Модель учитывает постоянный структурный дисконт без ложного апсайда к 0.8x BV."
+            )
+        elif ticker_clean == "SNGSP":
+            nav_cap = base_bvps * 0.22
+            if ddm_price > 0:
+                fair_price = 0.30 * nav_cap + 0.70 * min(ddm_price, nav_cap * 1.8)
+            else:
+                fair_price = nav_cap * 0.85
+            model_name = "Дисконтированный DDM префа (устав СНГ + 0.22x BV cap)"
+            formula_latex = r"P_{fair} = 0.3 \times (BVPS \times 0.22) + 0.7 \times \frac{\text{Div}}{r_{req}}"
+            thesis = (
+                f"Привилегированные акции защищены уставным дивидендом от прибыли РСБУ ({div_val:.2f} ₽), "
+                f"однако оценка баланса ограничена постоянным структурным дисконтом Сургутнефтегаза."
+            )
+        else:
+            structural_pb = 0.14 if div_val <= 0 else 0.20
+            fair_price = base_bvps * structural_pb
+            if div_val <= 0 or (fcf_val is not None and fcf_val < 0):
+                fair_price *= 0.85
+            model_name = f"Структурный госкорпоративный дисконт ({structural_pb:.2f}x BV)"
+            formula_latex = rf"P_{{fair}} = BVPS \times {structural_pb:.2f}"
+            thesis = (
+                "Крупная балансовая стоимость активов слабо конвертируется в доход акционера из-за "
+                "масштабного CAPEX / регулируемых тарифов и отсутствия стабильных дивидендов."
+            )
+
+    # -------------------------------------------------------------
+    # 4. ХОЛДИНГИ И ИНВЕСТКОМПАНИИ (Дисконтированный NAV)
     # -------------------------------------------------------------
     elif ticker_clean in HOLDING_TICKERS:
         base_bvps = bvps if bvps > 0 else market_price
-        # Для Газпрома балансовая стоимость газопроводов гигантская (P/BV ~ 0.15-0.2), дисконт 0.40x BV
-        discount = 0.40 if ticker_clean == "GAZP" else 0.80
+        discount = 0.65
         fair_price = base_bvps * discount
         model_name = f"Дисконтированный NAV / Чистые активы ({discount:.2f}x BV)"
         formula_latex = rf"P_{{fair}} = BVPS \times {discount:.2f}"
-        thesis = f"Прибыль искажена переоценками дочерних структур или валютной кубышки. Фундаментальная оценка рассчитывается от стоимости чистых активов с холдинговым дисконтом {(1 - discount) * 100:.0f}%."
+        thesis = f"Прибыль искажена переоценками дочерних структур. Фундаментальная оценка рассчитывается от стоимости чистых активов со стандартным холдинговым дисконтом {(1 - discount) * 100:.0f}%."
 
     # -------------------------------------------------------------
-    # 4. IT И ВЫСОКОТЕХНОЛОГИЧНЫЙ СЕКТОР (PEG Growth Model)
+    # 5. IT И ВЫСОКОТЕХНОЛОГИЧНЫЙ СЕКТОР (PEG Growth Model)
     # -------------------------------------------------------------
     elif ticker_clean in IT_TICKERS:
         target_pe = max(11.0, min(26.0, 10.0 + max(0.0, growth_val) * 0.35))
@@ -353,7 +420,7 @@ def calculate_black_line_valuation(
         thesis = f"Компания реинвестирует прибыль в экспансию и захват доли рынка. Справедливый P/E составляет {target_pe:.1f}x с учетом темпа роста выручки +{growth_val:.1f}%."
 
     # -------------------------------------------------------------
-    # 5. ЦИКЛИЧНЫЕ МЕТАЛЛУРГИ НА ДНЕ ЦИКЛА (Normalized P/BV)
+    # 6. ЦИКЛИЧНЫЕ МЕТАЛЛУРГИ НА ДНЕ ЦИКЛА (Normalized P/BV)
     # -------------------------------------------------------------
     elif ticker_clean in CYCLICAL_TICKERS:
         base_bvps = bvps if bvps > 0 else market_price
@@ -366,7 +433,7 @@ def calculate_black_line_valuation(
         thesis = f"В цикличных отраслях прибыль колеблется. Оценка ведется через нормализованный капитал через весь цикл (P/BV {target_pb:.2f}x) с учетом долговой нагрузки {debt_val:.1f}x."
 
     # -------------------------------------------------------------
-    # 6. ЗОЛОТОДОБЫТЧИКИ (Commodity / FCF Valuation)
+    # 7. ЗОЛОТОДОБЫТЧИКИ (Commodity / FCF Valuation)
     # -------------------------------------------------------------
     elif ticker_clean in GOLD_TICKERS:
         target_pe = max(6.0, min(10.0, 7.5 + (roe_val - key_rate) * 0.05))
@@ -379,47 +446,74 @@ def calculate_black_line_valuation(
         thesis = f"Сверхнизкая себестоимость добычи и защита от девальвации рубля. Справедливый целевой P/E составляет {target_pe:.1f}x."
 
     # -------------------------------------------------------------
-    # 7. ПОТРЕБИТЕЛЬСКИЙ СЕКТОР С ИСКАЖЕННЫМ БАЛАНСОМ (MGNT, etc.)
+    # 8. ПОТРЕБИТЕЛЬСКИЙ СЕКТОР (Asset-light, Value & Income)
     # -------------------------------------------------------------
-    elif ticker_clean in CONSUMER_TICKERS and (pe_val <= 0 or pb_val <= 0):
-        if div_val > 0:
-            required_yield = max(key_rate * 0.65, 10.0) / 100.0
-            fair_price = div_val / required_yield
-            model_name = f"Дивидендная модель DDM (дивы {div_val:.1f} ₽ / требуемая доходность {required_yield * 100:.1f}%)"
-            formula_latex = r"P_{fair} = \frac{\text{Div}}{r_{req}}"
-            thesis = f"Баланс искажен арендными обязательствами МСФО 16. Оценка строится на стабильном денежном потоке и дивидендах {div_val:.1f} ₽."
+    elif ticker_clean in CONSUMER_TICKERS:
+        if pe_val <= 0 or roe_val <= 0 or (fcf_val is not None and fcf_val < -5.0):
+            fair_price = market_price * 0.72
+            model_name = "Потребсектор: риск-дисконт убыточности / отрицательного FCF (-28%)"
+            formula_latex = r"P_{fair} = P_{market} \times 0.72"
+            thesis = (
+                "Отрицательная текущая прибыль (P/E < 0) или слабый FCF не позволяют оценивать "
+                "бизнес по историческим дивидендам — заложен консервативный дисконт до восстановления маржи."
+            )
         else:
-            fair_price = market_price * 1.15
-            model_name = "Оценка по операционному денежному потоку (+15% буфер)"
-            formula_latex = r"P_{fair} = P_{market} \times 1.15"
-            thesis = "Оценка опирается на стабильный потребительский денежный поток с консервативной премией."
+            target_pe = max(6.0, min(12.0, 7.2 + (growth_val * 0.12) + (roe_val - key_rate) * 0.08 - max(0.0, debt_val) * 0.35))
+            pe_price = (eps * target_pe) if eps > 0 else market_price
+            if div_val > 0:
+                req_yield = max(key_rate * 0.65, 10.0) / 100.0
+                ddm_price = div_val / req_yield
+                fair_price = 0.70 * pe_price + 0.30 * min(ddm_price, pe_price * 1.25)
+                model_name = f"Asset-Light P/E ({target_pe:.1f}x) + DDM"
+                formula_latex = r"P_{fair} = 0.7 \times (EPS \times P/E_{fair}) + 0.3 \times \frac{\text{Div}}{r_{req}}"
+                thesis = (
+                    f"Потребительский / брендовый бизнес с высокой отдачей на капитал (ROE {roe_val:.1f}%): "
+                    f"оценка строится на прибыли и дивидендном потоке без занижения через P/BV."
+                )
+            else:
+                fair_price = pe_price * 0.90
+                model_name = f"Asset-Light P/E ({target_pe:.1f}x, без дивов ×0.9)"
+                formula_latex = r"P_{fair} = EPS \times P/E_{fair} \times 0.9"
+                thesis = "Оценка опирается на прибыль и рост бизнеса с небольшим дисконтом за отсутствие текущих дивидендов."
 
     # -------------------------------------------------------------
-    # 8. БАЗОВЫЙ РЕАЛЬНЫЙ СЕКТОР (Нефть, газ, электроэнергетика, телекомы)
+    # 9. БАЗОВЫЙ РЕАЛЬНЫЙ СЕКТОР И НЕФТЕГАЗ (Income Reversion + Грэм)
     # -------------------------------------------------------------
     else:
-        # Скорректированный целевой P/E для РФ
         target_pe = max(4.0, min(8.5, 5.5 + (growth_val * 0.06) + (roe_val - key_rate) * 0.08 - max(0.0, debt_val) * 0.30))
         pe_price = (eps * target_pe) if eps > 0 else market_price
-        
-        # Адаптированная формула Грэма под российский рынок: 
-        # Benjamin Graham использовал 22.5 для США (PE 15 * PB 1.5). 
-        # В РФ средний PE 5.5 и PB 1.1 -> множитель 6.0-8.0x.
+
         ru_graham_mult = 7.0
         graham_price = np.sqrt(max(0.0, ru_graham_mult * eps * bvps)) if (eps > 0 and bvps > 0) else pe_price
-        
-        # Взвешенная фундаментальная стоимость
-        fair_price = 0.5 * pe_price + 0.5 * graham_price
-        
-        # Корректировка на долговую нагрузку
+
+        base_val = 0.5 * pe_price + 0.5 * graham_price
         if debt_val < 0.2:
-            fair_price *= 1.08  # Бонус за чистый отрицательный долг
+            base_val *= 1.08
         elif debt_val > 2.0:
-            fair_price *= (1.0 / (1.0 + (debt_val - 2.0) * 0.15))
-            
-        model_name = f"Грэм (RU 7x) + Скорр. P/E ({target_pe:.1f}x)"
-        formula_latex = r"P_{fair} = 0.5 \times (EPS \times P/E_{fair}) + 0.5 \times \sqrt{7.0 \times EPS \times BVPS}"
-        thesis = f"Классический стоимостной анализ: синтез формулы Грэма и скорректированного мультипликатора P/E ({target_pe:.1f}x) с учетом долговой нагрузки ({debt_val:.1f}x)."
+            base_val *= (1.0 / (1.0 + (debt_val - 2.0) * 0.15))
+
+        if ticker_clean in OIL_TICKERS and fcf_val is not None and fcf_val >= 12.0 and debt_val <= 1.5:
+            fcf_mult = min(1.55, max(0.85, fcf_val / 13.5))
+            fcf_fair = market_price * fcf_mult
+            fair_price = 0.60 * fcf_fair + 0.40 * base_val
+            model_name = f"Income Reversion (FCF {fcf_val:.1f}% при долге {debt_val:.1f}x) + Грэм"
+            formula_latex = r"P_{fair} = 0.6 \times \left(P_{mkt} \times \frac{\text{FCF\%}}{13.5\%}\right) + 0.4 \times P_{\text{Graham}}"
+            thesis = (
+                f"Рывок доходности (Income Reversion): мощный свободный денежный поток FCF ({fcf_val:.1f}%) "
+                f"при безопасном долге ({debt_val:.1f}x) компенсирует временную просадку бумажной прибыли (P/E {pe_val:.1f})."
+            )
+        else:
+            fair_price = base_val
+            no_div_note = ""
+            if (div_val <= 0 and growth_val < 15.0) or (fcf_val is not None and fcf_val < 0):
+                fair_price *= 0.85
+                no_div_note = " Применён дисконт ×0.85 за отсутствие дивидендов / отрицательный FCF."
+            model_name = f"Грэм (RU 7x) + Скорр. P/E ({target_pe:.1f}x)"
+            formula_latex = r"P_{fair} = 0.5 \times (EPS \times P/E_{fair}) + 0.5 \times \sqrt{7.0 \times EPS \times BVPS}"
+            thesis = (
+                f"Классический стоимостной анализ: синтез формулы Грэма и скорректированного мультипликатора "
+                f"P/E ({target_pe:.1f}x) с учетом долговой нагрузки ({debt_val:.1f}x).{no_div_note}"
+            )
 
     # Итоговый срез и запас прочности
     fair_price = max(0.1, round(fair_price, 2))
@@ -711,6 +805,7 @@ def render_black_line_widget(
     debt = None
     growth = None
     div_rub = None
+    fcf_yield = None
     
     if fund_row is not None and not fund_row.empty:
         pe = fund_row.get("P_E")
@@ -719,6 +814,7 @@ def render_black_line_widget(
         debt = fund_row.get("Debt_EBITDA")
         growth = fund_row.get("Rev_Growth_%")
         div_rub = fund_row.get("Div_RUB")
+        fcf_yield = fund_row.get("FCF_Yield_%")
 
     # 1. Верхняя панель управления: Интерактивный тумблер ON/OFF и выбор стандарта отчётности
     ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([2.2, 1.1, 1.2])
@@ -771,6 +867,7 @@ def render_black_line_widget(
         mcp_data=mcp_data,
         use_mcp=True,
         accounting_basis=accounting_basis,
+        fcf_yield=fcf_yield,
     )
 
     fair_p = fair_info["fair_price"]
