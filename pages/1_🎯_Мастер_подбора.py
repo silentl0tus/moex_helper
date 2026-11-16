@@ -18,7 +18,7 @@ st.set_page_config(
 
 from src.hot_reload import ensure_fresh_module
 
-for _mod in ("src.black_line", "src.market_snapshot", "src.magellan_gateway"):
+for _mod in ("src.mcp_enrichment", "src.black_line", "src.market_snapshot", "src.magellan_gateway"):
     ensure_fresh_module(_mod)
 
 from src.black_line import enrich_with_black_line, render_black_line_widget
@@ -99,7 +99,7 @@ st.markdown("""
 # =====================================================================
 # СПРАВОЧНИКИ И СЕКТОРЫ
 # =====================================================================
-BANK_TICKERS     = ['SBER', 'SBERP', 'VTBR', 'TCSG', 'BSPB', 'CBOM', 'T', 'SVCB']
+BANK_TICKERS     = ['SBER', 'SBERP', 'VTBR', 'TCSG', 'BSPB', 'CBOM', 'T', 'SVCB', 'DOMRF']
 IT_TICKERS       = ['ASTR', 'POSI', 'DIAS', 'DATA', 'SOFL', 'VKCO', 'YNDX', 'HEAD', 'OZON']
 OIL_TICKERS      = ['ROSN', 'LKOH', 'SIBN', 'TATN', 'TATNP', 'SNGS', 'SNGSP', 'TRNFP', 'BANE', 'BANEP', 'RNFT']
 STEEL_TICKERS    = ['CHMF', 'NLMK', 'MAGN']
@@ -226,7 +226,6 @@ def load_screener_data(cache_version: str = "v3_value_income"):
     df['ROE_%'] = df['ROE_%'].fillna(0.0)
     df['Debt_EBITDA'] = df['Debt_EBITDA'].fillna(1.0)
     df['Rev_Growth_%'] = df['Rev_Growth_%'].fillna(0.0)
-    df['P_BV'] = df['P_BV'].fillna(1.0)
     df['P_E'] = df['P_E'].fillna(10.0)
     df['FCF_Yield_%'] = pd.to_numeric(df['FCF_Yield_%'] if 'FCF_Yield_%' in df.columns else 0.0, errors='coerce').fillna(0.0)
     df['Div_RUB'] = pd.to_numeric(df['Div_RUB'] if 'Div_RUB' in df.columns else 0.0, errors='coerce').fillna(0.0)
@@ -248,13 +247,14 @@ def load_screener_data(cache_version: str = "v3_value_income"):
     except Exception:
         pass
 
-    # Расчет P/BV для банков (P/BV = P/E * ROE / 100), если значение отсутствует в смартлабе
+    # Расчет P/BV для банков (P/BV = P/E * ROE / 100), только если значение отсутствует или <= 0
     for idx, row in df.iterrows():
-        if pd.isna(row['P_BV']) or row['P_BV'] == 0 or (row['P_BV'] == 1.0 and row['ticker'] in BANK_TICKERS):
+        if row['ticker'] in BANK_TICKERS and (pd.isna(row['P_BV']) or float(row['P_BV']) <= 0):
             pe_val = float(row['P_E']) if pd.notna(row['P_E']) else 0.0
             roe_val = float(row['ROE_%']) if pd.notna(row['ROE_%']) else 0.0
             if pe_val > 0 and roe_val > 0:
                 df.at[idx, 'P_BV'] = round(pe_val * (roe_val / 100.0), 2)
+    df['P_BV'] = pd.to_numeric(df['P_BV'], errors='coerce').fillna(1.0)
 
     # Классификация секторов и токсичности
     is_it = df['ticker'].isin(IT_TICKERS)

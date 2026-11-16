@@ -7,6 +7,8 @@ Standalone-скрипт для парсинга фундаментальных �
 Streamlit Cloud читает CSV напрямую из репозитория — без прокси и без вашего ПК.
 """
 
+import argparse
+import datetime
 import time
 import random
 import logging
@@ -15,6 +17,8 @@ from pathlib import Path
 
 import requests
 import pandas as pd
+
+from src.mcp_enrichment import enrich_fundamentals_with_mcp
 
 # ── Логгирование ─────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -42,8 +46,10 @@ TICKER_LIST = sorted(set(TICKER_LIST))
 # Маппинг тикеров MOEX → тикеры smart-lab (если отличаются)
 SMARTLAB_MAP = {
     "YDEX": "YNDX",
-    "T": "TCSG",
 }
+
+BANK_TICKERS = {"SBER", "SBERP", "VTBR", "TCSG", "BSPB", "CBOM", "T", "SVCB", "DOMRF", "RENI"}
+PURE_BANK_TICKERS = BANK_TICKERS - {"RENI"}
 
 HEADERS = {
     "User-Agent": (
@@ -129,8 +135,7 @@ def parse_ticker(ticker: str) -> dict | None:
             if prev != 0:
                 rev_growth = round((cur - prev) / abs(prev) * 100, 2)
 
-    # Для банков нет смысла считать Debt/EBITDA — ставим безопасную константу
-    BANK_TICKERS = {"SBER", "SBERP", "VTBR", "TCSG", "BSPB", "CBOM", "T", "SVCB"}
+    # Для банков/страховщиков нет смысла считать Debt/EBITDA — ставим безопасную константу
     ZERO_DEBT_TICKERS = {"SNGS", "SNGSP"}  # отрицательный чистый долг
     if debt is None:
         if ticker.upper() in BANK_TICKERS:
@@ -153,48 +158,75 @@ def parse_ticker(ticker: str) -> dict | None:
 # ── Основной цикл ─────────────────────────────────────────────────────────────
 
 def main():
-    log.info(f"Начинаем парсинг {len(TICKER_LIST)} тикеров…")
-    results = []
+    parser = argparse.ArgumentParser(description="Обновление кэша фундаментальных мультипликаторов (smart-lab + Data Foundry MCP)")
+    parser.add_argument("--mcp-only", action="store_true", help="Обновить только банки и пропуски из Data Foundry MCP + MOEX без парсинга smart-lab")
+    args = parser.parse_args()
 
-    for i, ticker in enumerate(TICKER_LIST, start=1):
-        log.info(f"[{i:>3}/{len(TICKER_LIST)}] {ticker}…")
-        data = parse_ticker(ticker)
-        if data:
-            results.append(data)
-            log.info(f"  ✓ {ticker}: ROE={data.get('ROE_%')}, P/E={data.get('P_E')}, Debt={data.get('Debt_EBITDA')}")
-        else:
-            log.warning(f"  ✗ {ticker}: данных нет")
-
-        # Вежливая пауза: 1.5–3 сек между запросами, чтобы не получить бан
-        time.sleep(random.uniform(1.5, 3.0))
-
-    if not results:
-        log.error("Не удалось получить ни одного тикера! Файл не перезаписан.")
-        raise SystemExit(1)
-
-    new_df = pd.DataFrame(results)
-
-    # Мёржим с существующим кэшем: новые данные приоритетнее
     COLUMNS = ["ticker", "ROE_%", "P_E", "P_BV", "FCF_Yield_%", "Div_RUB", "Rev_Growth_%", "Debt_EBITDA"]
-    if OUTPUT_PATH.exists():
-        try:
-            old_df = pd.read_csv(OUTPUT_PATH)
-            merged = (
-                pd.concat([new_df, old_df])
-                .drop_duplicates(subset=["ticker"], keep="first")
-                .reset_index(drop=True)
-            )
-            # Оставляем только нужные колонки (могут быть лишние)
-            out_cols = [c for c in COLUMNS if c in merged.columns]
-            merged = merged[out_cols]
-        except Exception as e:
-            log.warning(f"Не удалось прочитать старый кэш: {e}. Пишем только новые данные.")
-            merged = new_df[[c for c in COLUMNS if c in new_df.columns]]
+    old_df = pd.read_csv(OUTPUT_PATH) if OUTPUT_PATH.exists() else pd.DataFrame(columns=COLUMNS)
+
+    if args.mcp_only:
+        if old_df.empty:
+            log.error("Режим --mcp-only требует существующий fundamentals_cache.csv")
+            raise SystemExit(1)
+        merged = old_df.copy()
+        updated_cnt = 0
     else:
-        merged = new_df[[c for c in COLUMNS if c in new_df.columns]]
+        log.info(f"Начинаем парсинг {len(TICKER_LIST)} тикеров…")
+        results = []
+
+        for i, ticker in enumerate(TICKER_LIST, start=1):
+            log.info(f"[{i:>3}/{len(TICKER_LIST)}] {ticker}…")
+            data = parse_ticker(ticker)
+            if data:
+                results.append(data)
+                log.info(f"  ✓ {ticker}: ROE={data.get('ROE_%')}, P/E={data.get('P_E')}, Debt={data.get('Debt_EBITDA')}")
+            else:
+                log.warning(f"  ✗ {ticker}: данных нет")
+
+            # Вежливая пауза: 1.5–3 сек между запросами, чтобы не получить бан
+            time.sleep(random.uniform(1.5, 3.0))
+
+        if not results:
+            log.error("Не удалось получить ни одного тикера! Файл не перезаписан.")
+            raise SystemExit(1)
+
+        new_df = pd.DataFrame(results)
+        updated_cnt = len(new_df)
+
+        # Мёржим с существующим кэшем: новые данные приоритетнее
+        if not old_df.empty:
+            try:
+                merged = (
+                    pd.concat([new_df, old_df])
+                    .drop_duplicates(subset=["ticker"], keep="first")
+                    .reset_index(drop=True)
+                )
+            except Exception as e:
+                log.warning(f"Не удалось прочитать старый кэш: {e}. Пишем только новые данные.")
+                merged = new_df
+        else:
+            merged = new_df
+
+    for col in COLUMNS:
+        if col not in merged.columns:
+            merged[col] = float("nan")
+    merged = merged[COLUMNS]
+
+    # Ставим Debt_EBITDA = 1.0 для финансовых компаний, если smart-lab оставил пропуск
+    fin_mask = merged["ticker"].astype(str).str.upper().isin(BANK_TICKERS) & merged["Debt_EBITDA"].isna()
+    merged.loc[fin_mask, "Debt_EBITDA"] = 1.0
+
+    # Обогащаем банки (P_BV, согласованные P_E/ROE) и пропуски из Data Foundry MCP + MOEX ISS
+    log.info("Обогащение банков и пропусков через Data Foundry MCP + MOEX ISS…")
+    merged = enrich_fundamentals_with_mcp(
+        merged,
+        bank_tickers=PURE_BANK_TICKERS,
+        reference_year=datetime.date.today().year,
+    )
 
     merged.to_csv(OUTPUT_PATH, index=False)
-    log.info(f"✅ Готово! Обновлено {len(new_df)} тикеров, всего в кэше: {len(merged)}. → {OUTPUT_PATH}")
+    log.info(f"✅ Готово! Обновлено smart-lab: {updated_cnt}, всего в кэше: {len(merged)}. → {OUTPUT_PATH}")
 
 
 if __name__ == "__main__":

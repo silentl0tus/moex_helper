@@ -24,10 +24,17 @@ import pandas as pd
 import requests
 import streamlit as st
 
+from src.mcp_enrichment import (
+    MCP_TICKER_ALIASES,
+    derive_multiples_from_mcp,
+    fetch_moex_capitalization_map,
+    period_sort_key,
+)
+
 # =====================================================================
 # СЕКТОРНЫЕ СПРАВОЧНИКИ
 # =====================================================================
-BANK_TICKERS = {"SBER", "SBERP", "T", "VTBR", "BSPB", "SVCB", "CBOM", "RENI"}
+BANK_TICKERS = {"SBER", "SBERP", "T", "VTBR", "BSPB", "SVCB", "CBOM", "RENI", "DOMRF"}
 CYCLICAL_TICKERS = {"CHMF", "NLMK", "MAGN", "ALRS", "RASP", "SELG", "UGLD", "UGC"}
 # Структурный дисконт: хронически дешевый P/BV и/или низкая отдача акционерам (кубышка Сургута, госкапексы)
 STRUCTURAL_DISCOUNT_TICKERS = {"SNGS", "SNGSP", "GAZP", "FEES", "UPRO"}
@@ -56,46 +63,20 @@ CANDLE_SPLITS: Dict[str, list[Tuple[str, float]]] = {
 # =====================================================================
 # ИНТЕГРАЦИЯ С DATA FOUNDRY MCP (ФУНДАМЕНТАЛЬНЫЕ ДАННЫЕ)
 # =====================================================================
-def period_sort_key(k: str) -> Tuple[int, int, str]:
-    """Сортирует финансовые периоды (2024-FY, ASOF:2024-12-31, 2025-H1) хронологически."""
-    clean_k = k.replace("ASOF:", "")
-    parts = clean_k.split("-")
-    year = int(parts[0]) if parts and parts[0].isdigit() else 0
-    sub = parts[1] if len(parts) > 1 else ""
-    order = {"Q1": 1, "03": 1, "H1": 2, "06": 2, "9M": 3, "09": 3, "FY": 4, "12": 4}
-    sub_rank = 0
-    for prefix, rank in order.items():
-        if sub.startswith(prefix):
-            sub_rank = rank
-            break
-    return (year, sub_rank, k)
-
-
 @st.cache_data(ttl=900)
 def fetch_fundamental_metrics_from_mcp(
     ticker: str,
     accounting_basis: str = "IFRS",
 ) -> Optional[Dict[str, Any]]:
     """
-    Запрашивает финансовую отчётность компании напрямую из Data Foundry MCP (https://mcp.vrednyj-investor.ru/mcp)
-    и рассчитывает фундаментальные мультипликаторы для Чёрной линии:
-    - Чистая прибыль (fin.net_income)
-    - Собственный капитал (fin.total_equity / fin.equity_attributable_to_owners)
-    - Выручка (fin.revenue)
-    - Операционная прибыль / EBITDA (fin.operating_profit / fin.ebitda)
-    - Денежные средства (fin.cash_and_equivalents)
-    - Процентный долг (fin.interest_bearing_debt)
-    - P/E = Market Cap / Net Income
-    - P/BV = Market Cap / Equity
-    - ROE = (Net Income / Equity) * 100%
-    - Debt/EBITDA = (Debt - Cash) / EBITDA
-    - Темп прироста выручки г/г
+    Запрашивает отчётность компании из Data Foundry MCP (`mcp.vrednyj-investor.ru/mcp`)
+    и рассчитывает LTM-мультипликаторы через общие функции `src.mcp_enrichment`.
     """
     try:
         from src.foundry_client import (
+            fetch_moex_market_snapshot,
             get_foundry_status,
             get_series,
-            fetch_moex_market_snapshot,
         )
     except Exception:
         return None
@@ -109,9 +90,7 @@ def fetch_fundamental_metrics_from_mcp(
         return None
 
     ticker_clean = str(ticker).upper().strip()
-    snap = fetch_moex_market_snapshot(ticker_clean)
-    price = snap.get("price")
-    mcap = snap.get("market_cap")
+    mcp_ticker = MCP_TICKER_ALIASES.get(ticker_clean, ticker_clean)
 
     # Запрашиваем метрики пачками для предотвращения конфликтов параллелизма HTTP
     groups = [
@@ -125,7 +104,7 @@ def fetch_fundamental_metrics_from_mcp(
     all_items = []
     for g in groups:
         try:
-            items = get_series((ticker_clean,), g, None, ver)
+            items = get_series((mcp_ticker,), g, None, ver)
             if items:
                 all_items.extend(items)
         except Exception:
@@ -135,102 +114,59 @@ def fetch_fundamental_metrics_from_mcp(
         return None
 
     allowed_bases = (accounting_basis, "APM", "IFRS") if accounting_basis == "IFRS" else (accounting_basis,)
-    by_code: Dict[str, list[Tuple[str, float, Any]]] = {}
-
+    raw_series: Dict[str, Dict[str, float]] = {}
     for it in all_items:
         std = it.get("accounting_basis")
         if std and std not in allowed_bases:
             continue
-        c = it.get("metric_code")
-        pk = it.get("period", {}).get("key")
-        v = it.get("value")
-        if v is not None and pk:
+        code = it.get("metric_code")
+        pk = (it.get("period") or {}).get("key")
+        val = it.get("value")
+        if code and pk and val is not None:
             try:
-                fv = float(v)
-                if c not in by_code:
-                    by_code[c] = []
-                by_code[c].append((pk, fv, it))
+                fval = float(val)
+                bucket = raw_series.setdefault(code, {})
+                if pk not in bucket or std == accounting_basis:
+                    bucket[pk] = fval
             except Exception:
                 pass
 
-    if not by_code:
+    if not raw_series:
         return None
 
-    # Поиск наиболее свежего значения для каждого показателя
-    latest: Dict[str, Tuple[str, float, Any]] = {}
-    for c, tuples in by_code.items():
-        fy_tuples = [t for t in tuples if "-FY" in t[0] or "12-31" in t[0]]
-        sorted_tuples = sorted(fy_tuples if fy_tuples else tuples, key=lambda x: period_sort_key(x[0]))
-        latest[c] = sorted_tuples[-1]
+    cap_entry = fetch_moex_capitalization_map().get(ticker_clean) or {}
+    total_cap = cap_entry.get("total_cap") or cap_entry.get("common_cap")
+    price = cap_entry.get("price")
+    if not total_cap or not price:
+        snap = fetch_moex_market_snapshot(ticker_clean)
+        price = price or snap.get("price")
+        total_cap = total_cap or snap.get("market_cap")
 
-    # Для Net Income выбираем подтвержденный положительный период
-    ni_tuple = latest.get("fin.net_income")
-    if "fin.net_income" in by_code:
-        pos_fy = [t for t in by_code["fin.net_income"] if ("-FY" in t[0] or "12-31" in t[0]) and t[1] > 0]
-        if pos_fy:
-            pos_sorted = sorted(pos_fy, key=lambda x: period_sort_key(x[0]))
-            latest_year = period_sort_key(latest["fin.net_income"][0])[0]
-            pos_year = period_sort_key(pos_sorted[-1][0])[0]
-            if latest_year - pos_year <= 2:
-                ni_tuple = pos_sorted[-1]
-
-    eq_tuple = latest.get("fin.total_equity") or latest.get("fin.equity_attributable_to_owners")
-    rev_tuple = latest.get("fin.revenue")
-    ebitda_tuple = latest.get("fin.ebitda") or latest.get("fin.operating_profit")
-    cash_tuple = latest.get("fin.cash_and_equivalents")
-    debt_tuple = latest.get("fin.interest_bearing_debt")
-
-    ni = ni_tuple[1] if ni_tuple else None
-    eq = eq_tuple[1] if eq_tuple else None
-    rev = rev_tuple[1] if rev_tuple else None
-    ebitda = ebitda_tuple[1] if ebitda_tuple else None
-    cash = cash_tuple[1] if cash_tuple else None
-    debt = debt_tuple[1] if debt_tuple else None
-
-    # Расчет темпа прироста выручки г/г
-    rev_growth = None
-    if rev_tuple and "fin.revenue" in by_code:
-        fy_revs = [t for t in by_code["fin.revenue"] if "-FY" in t[0]]
-        fy_revs_sorted = sorted(fy_revs, key=lambda x: period_sort_key(x[0]))
-        if len(fy_revs_sorted) >= 2:
-            last_r = fy_revs_sorted[-1][1]
-            prev_r = fy_revs_sorted[-2][1]
-            if prev_r > 0:
-                rev_growth = round(((last_r - prev_r) / prev_r) * 100.0, 1)
-
-    # Мультипликаторы, рассчитанные напрямую из отчетности MCP
-    pe = round(mcap / ni, 2) if (mcap and ni and ni > 0) else None
-    pb = round(mcap / eq, 2) if (mcap and eq and eq > 0) else None
-    roe = round((ni / eq) * 100.0, 1) if (ni and eq and eq > 0) else None
-
-    net_debt = None
-    debt_ebitda = None
-    if debt is not None and cash is not None:
-        net_debt = debt - cash
-        if ebitda and ebitda > 0:
-            debt_ebitda = round(net_debt / ebitda, 2)
-        elif debt <= cash:
-            debt_ebitda = -0.5  # Отрицательный чистый долг (кубышка)
-
-    period_str = ni_tuple[0] if ni_tuple else (rev_tuple[0] if rev_tuple else (eq_tuple[0] if eq_tuple else "LTM"))
+    derived = derive_multiples_from_mcp(
+        raw_series,
+        total_cap,
+        prefer_attributable_equity=True,
+        reference_year=datetime.date.today().year,
+    )
 
     return {
         "ticker": ticker_clean,
         "price": price,
-        "market_cap": mcap,
-        "pe": pe,
-        "pb": pb,
-        "roe": roe,
-        "debt_ebitda": debt_ebitda,
-        "rev_growth": rev_growth,
-        "net_income": ni,
-        "equity": eq,
-        "revenue": rev,
-        "ebitda": ebitda,
-        "cash": cash,
-        "debt": debt,
-        "net_debt": net_debt,
-        "period": period_str,
+        "market_cap": total_cap,
+        "pe": derived["P_E"],
+        "pb": derived["P_BV"],
+        "roe": derived["ROE_%"],
+        "debt_ebitda": derived["Debt_EBITDA"],
+        "rev_growth": derived["Rev_Growth_%"],
+        "fcf_yield": derived["FCF_Yield_%"],
+        "net_income": derived["net_income"],
+        "equity": derived["equity"],
+        "revenue": derived["revenue"],
+        "ebitda": derived["ebitda"],
+        "cash": derived["cash"],
+        "debt": derived["debt"],
+        "net_debt": derived["net_debt"],
+        "period": derived["ni_period"],
         "dataset_version": ver,
         "data_source": f"Data Foundry MCP ({accounting_basis})",
         "mcp_active": True,

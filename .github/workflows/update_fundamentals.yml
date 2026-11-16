@@ -25,7 +25,7 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: pip install requests pandas lxml html5lib beautifulsoup4
+        run: pip install requests pandas lxml html5lib beautifulsoup4 mcp
 
       - name: Run fundamentals parser
         run: python fetch_fundamentals.py

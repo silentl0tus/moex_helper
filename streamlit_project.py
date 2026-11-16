@@ -141,6 +141,7 @@ from src.foundry_client import (
 from src.hot_reload import ensure_fresh_module as _ensure_fresh_module
 
 
+_ensure_fresh_module("src.mcp_enrichment")
 _ensure_fresh_module("src.black_line")
 _ensure_fresh_module("src.izi_mcp_client")
 _ensure_fresh_module("src.portfolio_importer")
@@ -197,7 +198,7 @@ MOEX_TQBR_URL = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQ
 REQUIRED_FUNDAMENTALS = ["ROE_%", "P_E", "Debt_EBITDA"]
 
 # -- Классификация тикеров по секторам (единственное определение) --
-BANK_TICKERS     = ['SBER', 'SBERP', 'VTBR', 'TCSG', 'BSPB', 'CBOM', 'T', 'SVCB']
+BANK_TICKERS     = ['SBER', 'SBERP', 'VTBR', 'TCSG', 'BSPB', 'CBOM', 'T', 'SVCB', 'DOMRF']
 IT_TICKERS       = ['ASTR', 'POSI', 'DIAS', 'DATA', 'SOFL', 'VKCO', 'YNDX', 'HEAD', 'OZON']
 OIL_TICKERS      = ['ROSN', 'LKOH', 'SIBN', 'TATN', 'TATNP', 'SNGS', 'SNGSP', 'TRNFP', 'BANE', 'BANEP', 'RNFT']
 STEEL_TICKERS    = ['CHMF', 'NLMK', 'MAGN']
@@ -1552,7 +1553,10 @@ if not df_fund.empty:
     is_bank = df_fund['ticker'].isin(BANK_TICKERS)
     for ticker in df_fund[is_bank]['ticker']:
         b_details = fetch_magellan_bank_details(ticker)
-        if b_details and b_details.get("roe_ltm") is not None:
+        # Берем roe_ltm (РСБУ банка) ТОЛЬКО как резерв при отсутствии консолидированного МСФО ROE в кэше,
+        # иначе смешение консолидированного P/BV с сольным ROE банка ломает оценку Чёрной линии (пример: Т-Технологии).
+        cur_roe = pd.to_numeric(df_fund.loc[df_fund['ticker'] == ticker, "ROE_%"], errors="coerce").fillna(0.0)
+        if b_details and b_details.get("roe_ltm") is not None and (cur_roe <= 0).all():
             cb_roe = float(b_details["roe_ltm"])
             df_fund.loc[df_fund['ticker'] == ticker, "ROE_%"] = cb_roe
             df_fund.loc[df_fund['ticker'] == ticker, "ROE_norm"] = min(max(cb_roe, 5.0), 35.0)
