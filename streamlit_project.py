@@ -156,6 +156,8 @@ _ensure_fresh_module("src.portfolio_importer")
 _ensure_fresh_module("src.magellan_gateway")
 
 from src.black_line import (
+    UPSIDE_SANITY_CAP_PCT,
+    assess_model_consistency,
     calculate_black_line_valuation,
     render_black_line_widget,
     fetch_stock_candles,
@@ -2405,6 +2407,10 @@ else:
         return "🟡 Держать"
 
     df_ranked['Статус (Действие)'] = df_ranked.apply(assign_action_badge, axis=1)
+    df_ranked['Доверие модели'] = df_ranked.apply(
+        lambda r: assess_model_consistency(r.get('Health_Score'), r.get('Margin of Safety (%)'))['label'],
+        axis=1,
+    )
 
     # ==========================================
     # ВЕРХНИЙ ЭКЗЕКЬЮТИВ-БАР (СТАТУС И МАКРО)
@@ -2485,6 +2491,12 @@ else:
         buys_cnt = int(df_ranked['Статус (Действие)'].str.contains("Buy|Наращивать", case=False, na=False).sum())
         hold_cnt = int(df_ranked['Статус (Действие)'].str.contains("Дно|Держать|Наблюдение", case=False, na=False).sum())
         risk_cnt = int(df_ranked['Статус (Действие)'].str.contains("продать|Карантин|Слабый|Сократить", case=False, na=False).sum())
+        mismatch_cnt = int(df_ranked['Доверие модели'].str.startswith("⚠️").sum())
+        if mismatch_cnt:
+            st.caption(
+                f"⚠️ У **{mismatch_cnt}** бумаг Health Score и Чёрная линия расходятся или апсайд > "
+                f"+{UPSIDE_SANITY_CAP_PCT:.0f}% — см. колонку «Доверие модели», сигнал по ним проверяйте вручную."
+            )
         if my_portfolio and not df_port.empty:
             better_market_cnt = int(market_buys[~market_buys['ticker'].isin(set(df_port['ticker']))].shape[0])
             st.caption(
@@ -2534,14 +2546,14 @@ else:
 
         if my_portfolio:
             tl_cols = [
-                "ticker", "Позиция", "Статус (Действие)", "Драйвер (Value & Income)", "Долг и Валюта",
+                "ticker", "Позиция", "Статус (Действие)", "Доверие модели", "Драйвер (Value & Income)", "Долг и Валюта",
                 "Price", "Чёрная Линия (₽)", "Margin of Safety (%)",
                 "Идеальная доля (%)", "PnL (%)", "Health_Score",
                 "Div_Yield_%", "FCF_Yield_%", "ROE_%", "Debt_EBITDA", "P_E", "Тренд", "Поток (OrderFlow)"
             ]
         else:
             tl_cols = [
-                "ticker", "Статус (Действие)", "Драйвер (Value & Income)", "Долг и Валюта",
+                "ticker", "Статус (Действие)", "Доверие модели", "Драйвер (Value & Income)", "Долг и Валюта",
                 "Price", "Чёрная Линия (₽)", "Margin of Safety (%)",
                 "Идеальная доля (%)", "Health_Score",
                 "Div_Yield_%", "FCF_Yield_%", "ROE_%", "Debt_EBITDA", "P_E", "Тренд", "Поток (OrderFlow)"

@@ -71,6 +71,12 @@
 > **Python и Git:** Запускать тесты только через `.venv/bin/python` (в системном `python3` нет `yfinance`/`streamlit`). В `.gitignore` заблокированы `*.json`, `*.csv`, `*.xlsx` (кроме whitelist-файлов), чтобы персональный дисковый кэш MCP и отчёты портфеля случайно не утекли в GitHub.
 
 ### Быстрая команда верификации перед коммитом
+Сначала золотой тест Чёрной линии (замороженные входные данные, стандартный `unittest`, без зависимостей). Если он упал — формулы сдвинулись; при намеренной правке пересчитайте `GOLDEN` в [tests/test_black_line_golden.py](file:///mnt/new_volume/VS_code_base/moex_helper/tests/test_black_line_golden.py) и опишите в коммите, какие тикеры сдвинулись.
+```bash
+.venv/bin/python -m unittest discover -s tests -v
+```
+Колонка «Доверие модели» (`assess_model_consistency` в `src/black_line.py`) только помечает расхождения Health Score и Чёрной линии (апсайд > `UPSIDE_SANITY_CAP_PCT`=100%, сильный Health при MoS ≤ −25%, слабый Health при MoS ≥ 60%); расчёт и статусы не меняет.
+
 ```bash
 .venv/bin/python -m py_compile streamlit_project.py fetch_fundamentals.py src/*.py pages/*.py && \
 .venv/bin/python -c '

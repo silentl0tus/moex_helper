@@ -251,6 +251,29 @@ def _clean_metric(val: Optional[float], default: Optional[float] = None) -> Opti
         return default
 
 
+# Порог правдоподобия апсайда: выше — модель Чёрной линии считаем подозрительной (не обрезаем число, только помечаем)
+UPSIDE_SANITY_CAP_PCT = 100.0
+
+
+def assess_model_consistency(health_score: Optional[float], mos_pct: Optional[float]) -> Dict[str, str]:
+    """Помечает бумаги, где Health Score и Чёрная линия противоречат друг другу или апсайд неправдоподобен.
+
+    Только индикатор доверия: расчёт Чёрной линии, Health Score и статусы не меняются.
+    Коды: OK, SUSPECT_UPSIDE, HEALTH_VS_MOS, WEAK_HEALTH_BIG_UPSIDE, NO_DATA.
+    """
+    health = _clean_metric(health_score, None)
+    mos = _clean_metric(mos_pct, None)
+    if health is None or mos is None:
+        return {"code": "NO_DATA", "label": "— нет данных"}
+    if mos > UPSIDE_SANITY_CAP_PCT:
+        return {"code": "SUSPECT_UPSIDE", "label": f"⚠️ Апсайд {mos:+.0f}% > +{UPSIDE_SANITY_CAP_PCT:.0f}% — проверить модель"}
+    if health >= 1.3 and mos <= -25.0:
+        return {"code": "HEALTH_VS_MOS", "label": "⚠️ Сильный Health, но цена выше Чёрной линии"}
+    if health < 0.5 and mos >= 60.0:
+        return {"code": "WEAK_HEALTH_BIG_UPSIDE", "label": "⚠️ Слабый Health, но большой апсайд"}
+    return {"code": "OK", "label": "✅ Согласовано"}
+
+
 def _assess_debt_and_currency_profile(
     ticker_clean: str,
     debt_val: float,
