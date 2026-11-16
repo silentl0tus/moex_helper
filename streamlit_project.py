@@ -847,6 +847,7 @@ with st.sidebar:
     source_options = []
     if has_izi:
         source_options.append("⚡ izi-invest (MCP онлайн)")
+    source_options.append("🌐 Общий мониторинг (Без портфеля)")
     source_options.append("📁 Загрузить файл (Excel / CSV / JSON)")
     sample_file_path = Path("data/sample_portfolio.xlsx")
     has_sample = sample_file_path.exists()
@@ -856,7 +857,7 @@ with st.sidebar:
     port_source = st.radio(
         "Источник портфеля:",
         options=source_options,
-        index=0 if has_izi else (0 if len(source_options) == 1 else 1),
+        index=0,
         label_visibility="collapsed"
     )
 
@@ -1232,7 +1233,7 @@ with st.sidebar:
         if my_blocked_invested > 0:
             st.warning(f"🔒 Заблокировано FinEx (из Альфы): {my_blocked_invested:,.0f} ₽")
     else:
-        portfolio_tickers_list = PORTFOLIO_TICKERS
+        portfolio_tickers_list = []
         
     st.markdown("---")
     
@@ -1248,23 +1249,43 @@ with st.sidebar:
     
     st.markdown("---")
     st.header("Выбор активов")
-    valid_defaults = [t for t in portfolio_tickers_list if t in moex_tickers]
-    
-    if "ms_tickers" not in st.session_state:
-        st.session_state["ms_tickers"] = valid_defaults
-        st.session_state["prev_valid_defaults"] = valid_defaults
-    elif st.session_state.get("prev_valid_defaults") != valid_defaults:
-        st.session_state["ms_tickers"] = valid_defaults
-        st.session_state["prev_valid_defaults"] = valid_defaults
+    all_market_options = list(dict.fromkeys(list(moex_tickers) + [t for t in portfolio_tickers_list if t]))
+    valid_port_defaults = [t for t in portfolio_tickers_list if t in all_market_options]
+
+    # По умолчанию всегда включён общий мониторинг всего ликвидного рынка MOEX;
+    # при загрузке/смене портфеля его бумаги гарантированно добавляются без сужения обзора рынка.
+    if "ms_tickers" not in st.session_state or not st.session_state["ms_tickers"]:
+        st.session_state["ms_tickers"] = list(all_market_options)
+        st.session_state["prev_port_set"] = set(valid_port_defaults)
+    elif st.session_state.get("prev_port_set") != set(valid_port_defaults):
+        cur_sel = list(st.session_state.get("ms_tickers", []))
+        for t in valid_port_defaults:
+            if t not in cur_sel:
+                cur_sel.append(t)
+        st.session_state["ms_tickers"] = [t for t in cur_sel if t in all_market_options] or list(all_market_options)
+        st.session_state["prev_port_set"] = set(valid_port_defaults)
 
     def set_all_tickers():
-        st.session_state["ms_tickers"] = list(moex_tickers)
+        st.session_state["ms_tickers"] = list(all_market_options)
 
-    st.button("Все доступные (MOEX)", on_click=set_all_tickers)
+    def set_portfolio_only_tickers():
+        if valid_port_defaults:
+            st.session_state["ms_tickers"] = list(valid_port_defaults)
+
+    b_col1, b_col2 = st.columns(2)
+    with b_col1:
+        st.button("🌐 Весь рынок MOEX", on_click=set_all_tickers, width="stretch")
+    with b_col2:
+        st.button(
+            "💼 Только портфель",
+            on_click=set_portfolio_only_tickers,
+            disabled=not bool(valid_port_defaults),
+            width="stretch",
+        )
     
     selected_tickers = st.multiselect(
         "Тикеры для анализа:",
-        options=moex_tickers,
+        options=all_market_options,
         key="ms_tickers"
     )
     
@@ -1342,18 +1363,18 @@ if not raw_fundamental_data.empty:
     is_portfolio = df_fund['ticker'].isin(portfolio_tickers_list)
     is_it = df_fund['ticker'].isin(IT_TICKERS)
     is_toxic = df_fund['ticker'].isin(TOXIC_TICKERS)
+    fcf_series = pd.to_numeric(df_fund.get('FCF_Yield_%'), errors='coerce').fillna(-999.0)
+    div_rub_series = pd.to_numeric(df_fund.get('Div_RUB'), errors='coerce').fillna(0.0)
+    is_fcf_income_rev = (fcf_series >= 10.0) & (df_fund['Debt_EBITDA'] <= MAX_DEBT_EBITDA) & (div_rub_series > 0)
 
-    # Для IT-компаний игнорируем фильтр по ROE, так как он может быть искажен
-    management_filter = (((df_fund['ROE_%'] >= MIN_ROE) & (df_fund['Debt_EBITDA'] <= MAX_DEBT_EBITDA)) | is_portfolio | is_it) & (~is_toxic)
+    # Пропускаем IT-сектор и компании с подтвержденным FCF >= 10% (Income Reversion), а также бумаги из портфеля для аудита
+    management_filter = (((df_fund['ROE_%'] >= MIN_ROE) & (df_fund['Debt_EBITDA'] <= MAX_DEBT_EBITDA)) | is_portfolio | is_it | is_fcf_income_rev) & (~is_toxic)
 
-    dropped_tickers = set(df_fund['ticker']) - set(df_fund[management_filter]['ticker'])
-    if dropped_tickers:
-        toxic_dropped = set(df_fund[is_toxic]['ticker'])
-        if toxic_dropped:
-            st.error(f"🛑 Карантин: токсичные или предбанкротные компании заблокированы: {', '.join(toxic_dropped)}")
-            dropped_tickers = dropped_tickers - toxic_dropped
-        if dropped_tickers:
-            st.warning(f"⚠️ Сработала защита: компании с плохим управлением удалены: {', '.join(dropped_tickers)}")
+    dropped_toxic_tickers = sorted(set(df_fund[is_toxic]['ticker']))
+    owned_toxic_tickers = sorted(set(df_fund[is_toxic & is_portfolio]['ticker']))
+    dropped_weak_tickers = sorted((set(df_fund['ticker']) - set(df_fund[management_filter]['ticker'])) - set(dropped_toxic_tickers))
+    if owned_toxic_tickers:
+        st.error(f"🛑 Карантин в вашем портфеле: токсичные/предбанкротные бумаги: {', '.join(owned_toxic_tickers)}")
     df_fund = df_fund[management_filter].copy()
 
 if not df_fund.empty:
@@ -2136,16 +2157,27 @@ else:
         port_tickers_set = set(df_port['ticker'])
         top_new_buys = market_buys[~market_buys['ticker'].isin(port_tickers_set)].head(4)
         top_add_buys = market_buys[market_buys['ticker'].isin(port_tickers_set) & (market_buys['Доля в портфеле (%)'] < market_buys['Идеальная доля (%)'])].head(3)
-        top_buys_df = pd.concat([top_new_buys, top_add_buys]).drop_duplicates(subset=['ticker']).head(4)
+        top_buys_df = (
+            pd.concat([top_new_buys, top_add_buys])
+            .drop_duplicates(subset=['ticker'])
+            .sort_values(by='Health_Score', ascending=False)
+            .head(5)
+        )
     else:
-        top_buys_df = market_buys.head(4)
+        top_buys_df = market_buys.head(5)
 
-    # Генерация сценариев рокировки (Smart Swaps) без дублирования и с защитой от NaN
-    def _pick_buy_candidate(buys_df, exclude_ticker):
+    # Генерация сценариев рокировки (Smart Swaps) с диверсификацией идей с рынка и защитой от NaN
+    def _pick_buy_candidate(buys_df, exclude_ticker, used_tickers=None):
         if buys_df is None or buys_df.empty:
             return None
         diff = buys_df[buys_df['ticker'] != exclude_ticker]
-        return diff.iloc[0] if not diff.empty else None
+        if diff.empty:
+            return None
+        if used_tickers:
+            fresh = diff[~diff['ticker'].isin(used_tickers)]
+            if not fresh.empty:
+                return fresh.iloc[0]
+        return diff.iloc[0]
 
     def _safe_float(val, default=0.0):
         try:
@@ -2154,12 +2186,9 @@ else:
         except (TypeError, ValueError):
             return default
 
-    def _append_smart_swap(swaps_list, buys_df, sell_ticker, sell_val, badge, sell_reason, buy_driver, effect):
+    def _append_smart_swap(swaps_list, buy_cand, sell_ticker, sell_val, badge, sell_reason, buy_driver, effect, used_tickers=None):
         s_val = _safe_float(sell_val, 0.0)
-        if s_val <= 0:
-            return
-        buy_cand = _pick_buy_candidate(buys_df, sell_ticker)
-        if buy_cand is None:
+        if s_val <= 0 or buy_cand is None:
             return
         b_t = buy_cand['ticker']
         b_p = _safe_float(buy_cand.get('Price'), 0.0)
@@ -2170,6 +2199,9 @@ else:
         lots_cnt = shares_cnt // lot_size if lot_size > 0 else shares_cnt
         b_val = lots_cnt * lot_size * b_p
         rem_cash = max(0.0, s_val - b_val)
+
+        if used_tickers is not None:
+            used_tickers.add(b_t)
 
         swaps_list.append({
             "badge": badge,
@@ -2185,20 +2217,22 @@ else:
         })
 
     smart_swaps = []
+    used_swap_buys = set()
     if not urgent_sells_df.empty and not top_buys_df.empty:
         for _, sell_row in urgent_sells_df.head(2).iterrows():
             s_t = sell_row['ticker']
-            buy_cand = _pick_buy_candidate(top_buys_df, s_t)
+            buy_cand = _pick_buy_candidate(top_buys_df, s_t, used_swap_buys)
             if buy_cand is None:
                 continue
             roe_diff = _safe_float(buy_cand.get('ROE_%')) - _safe_float(sell_row.get('ROE_%'))
             debt_diff = _safe_float(sell_row.get('Debt_EBITDA')) - _safe_float(buy_cand.get('Debt_EBITDA'))
             _append_smart_swap(
-                smart_swaps, top_buys_df, s_t, sell_row.get('Текущая Стоимость'),
+                smart_swaps, buy_cand, s_t, sell_row.get('Текущая Стоимость'),
                 badge="🔴 Срочный выход из токсичного долга",
                 sell_reason=f"Долг/EBITDA {_safe_float(sell_row.get('Debt_EBITDA')):.1f}x при ставке {key_rate_for_bl:.1f}% сжигает прибыль",
                 buy_driver=f"ROE {_safe_float(buy_cand.get('ROE_%')):.1f}%, P/E {_safe_float(buy_cand.get('P_E')):.1f}, Health Score {_safe_float(buy_cand.get('Health_Score')):.2f}x",
                 effect=f"Рост отдачи на капитал: ROE {roe_diff:+.1f}%, снижение долговой нагрузки на {debt_diff:.1f}x",
+                used_tickers=used_swap_buys,
             )
 
     if not overweight_df.empty and not top_buys_df.empty:
@@ -2206,41 +2240,49 @@ else:
             o_t = ow_row['ticker']
             excess_pct = max(0.0, _safe_float(ow_row.get('Доля в портфеле (%)')) - target_max_pct)
             excess_rub = total_val * (excess_pct / 100.0)
-            buy_cand = _pick_buy_candidate(top_buys_df, o_t)
+            buy_cand = _pick_buy_candidate(top_buys_df, o_t, used_swap_buys)
             if excess_rub >= 10_000 and buy_cand is not None:
                 _append_smart_swap(
-                    smart_swaps, top_buys_df, o_t, excess_rub,
+                    smart_swaps, buy_cand, o_t, excess_rub,
                     badge="🟠 Ребалансировка (Снятие перевеса)",
                     sell_reason=f"Доля {_safe_float(ow_row.get('Доля в портфеле (%)')):.1f}% превышает лимит {target_max_pct:.0f}%",
                     buy_driver=f"ROE {_safe_float(buy_cand.get('ROE_%')):.1f}%, Health Score {_safe_float(buy_cand.get('Health_Score')):.2f}x",
-                    effect="Снижение концентрации риска в одной бумаге, покупка фундаментального лидера",
+                    effect="Снижение концентрации риска в одной бумаге, покупка лидера с рынка MOEX",
+                    used_tickers=used_swap_buys,
                 )
 
     if not weak_stocks_df.empty and not top_buys_df.empty and len(smart_swaps) < 3:
-        for _, w_row in weak_stocks_df.head(1).iterrows():
+        for _, w_row in weak_stocks_df.head(2).iterrows():
             w_t = w_row['ticker']
-            buy_cand = _pick_buy_candidate(top_buys_df, w_t)
+            buy_cand = _pick_buy_candidate(top_buys_df, w_t, used_swap_buys)
             if buy_cand is not None:
                 _append_smart_swap(
-                    smart_swaps, top_buys_df, w_t, w_row.get('Текущая Стоимость'),
+                    smart_swaps, buy_cand, w_t, w_row.get('Текущая Стоимость'),
                     badge="⚠️ Замена отстающей позиции",
-                    sell_reason=f"Health Score {_safe_float(w_row.get('Health_Score')):.2f}x уступает среднерыночному",
+                    sell_reason=f"Health Score {_safe_float(w_row.get('Health_Score')):.2f}x уступает лидерам рынка ({_safe_float(buy_cand.get('Health_Score')):.2f}x)",
                     buy_driver=f"ROE {_safe_float(buy_cand.get('ROE_%')):.1f}%, Health Score {_safe_float(buy_cand.get('Health_Score')):.2f}x",
-                    effect="Перекладка в актив с восходящей динамикой прибыли",
+                    effect="Перекладка из слабой бумаги в сильного кандидата MOEX",
+                    used_tickers=used_swap_buys,
                 )
 
     if not overvalued_bl_df.empty and not top_buys_df.empty and len(smart_swaps) < 4:
         for _, ov_row in overvalued_bl_df.head(1).iterrows():
             ov_t = ov_row['ticker']
-            buy_cand = _pick_buy_candidate(top_buys_df, ov_t)
+            buy_cand = _pick_buy_candidate(top_buys_df, ov_t, used_swap_buys)
             if buy_cand is not None:
                 _append_smart_swap(
-                    smart_swaps, top_buys_df, ov_t, ov_row.get('Текущая Стоимость'),
+                    smart_swaps, buy_cand, ov_t, ov_row.get('Текущая Стоимость'),
                     badge="🔄 Рокировка: выход из переоценки по Чёрной Линии",
                     sell_reason=f"Биржевая цена {_safe_float(ov_row.get('Price')):.1f} ₽ существенно выше Чёрной Линии {_safe_float(ov_row.get('Чёрная Линия (₽)')):.1f} ₽ ({_safe_float(ov_row.get('Margin of Safety (%)')):+.1f}%)",
                     buy_driver=f"Чёрная Линия {_safe_float(buy_cand.get('Чёрная Линия (₽)')):.1f} ₽ (Запас {_safe_float(buy_cand.get('Margin of Safety (%)')):+.1f}%), Health Score {_safe_float(buy_cand.get('Health_Score')):.2f}x",
                     effect="Фиксация переоцененного актива и перекладка в фундаментальный дисконт с запасом прочности",
+                    used_tickers=used_swap_buys,
                 )
+
+    df_ranked['Позиция'] = df_ranked.apply(
+        lambda r: f"💼 {r['Доля в портфеле (%)']:.1f}%" if r.get('Лоты', 0) > 0 else "🆕 Рынок",
+        axis=1,
+    )
 
     # Назначение статуса действия для таблицы Светофор
     def assign_action_badge(row):
@@ -2319,7 +2361,7 @@ else:
     # 3 ГЛАВНЫХ ЭКРАНА
     # ==========================================
     main_tab1, main_tab2, main_tab3 = st.tabs([
-        "🎯 Пульт решений (Что брать / Что продать / Рокировки)",
+        "🚥 Светофор рынка и Пульт решений",
         "💼 Мой Портфель & Ребалансировка",
         "🔬 Глубокая разведка рынков"
     ])
@@ -2339,7 +2381,7 @@ else:
 
                 with mc_c1:
                     st.markdown(f"**⚡ izi-invest: `{p_name}`**")
-                    st.caption("Онлайн-синхронизация MCP")
+                    st.caption("Режим: Общий рынок MOEX + аудит портфеля")
                 with mc_c2:
                     st.metric("Концентрация топ-5", f"{r_top5:.1f}%", "HHI 1027 (Умеренная)")
                 with mc_c3:
@@ -2348,13 +2390,120 @@ else:
                     st.metric("XIRR vs Ставка ЦБ", f"{b_xirr:+.2f}%", f"ЦБ: {b_cbr:.0f}% (Отставание {b_xirr - b_cbr:+.1f}%)", delta_color="inverse")
 
         # ------------------------------------------
-        # 1. ТРЕХКОЛОНОЧНЫЙ КОМАНДНЫЙ ПУЛЬТ
+        # 1. СВЕТОФОР РЫНКА MOEX (ВЫНЕСЕН НАПЕРЁД ДЛЯ ОБЩЕГО МОНИТОРИНГА)
         # ------------------------------------------
+        st.markdown("### 🚥 Светофор рынка MOEX (Общий мониторинг и сравнение с портфелем)")
+        buys_cnt = int(df_ranked['Статус (Действие)'].str.contains("Buy|Наращивать", case=False, na=False).sum())
+        hold_cnt = int(df_ranked['Статус (Действие)'].str.contains("Дно|Держать|Наблюдение", case=False, na=False).sum())
+        risk_cnt = int(df_ranked['Статус (Действие)'].str.contains("продать|Карантин|Слабый|Сократить", case=False, na=False).sum())
+        if my_portfolio and not df_port.empty:
+            better_market_cnt = int(market_buys[~market_buys['ticker'].isin(set(df_port['ticker']))].shape[0])
+            st.caption(
+                f"В мониторинге **{len(df_ranked)}** бумаг MOEX: 🟢 **{buys_cnt}** покупать | "
+                f"🟡 **{hold_cnt}** держать/наблюдение | 🔴 **{risk_cnt}** слабость/риск │ "
+                f"Найдено **{better_market_cnt}** сильных идей с рынка вне вашего портфеля."
+            )
+            tl_filter_opts = [
+                "🌐 Весь рынок",
+                "🟢 Идеи на покупку",
+                "💼 Мой портфель",
+                "🚀 Лучше моих слабых позиций",
+                "⏸️ Дно цикла / Держать",
+                "🔴 Риск / Кандидаты на выход",
+            ]
+        else:
+            st.caption(
+                f"В мониторинге **{len(df_ranked)}** бумаг MOEX: 🟢 **{buys_cnt}** покупать | "
+                f"🟡 **{hold_cnt}** держать/наблюдение | 🔴 **{risk_cnt}** слабость/риск."
+            )
+            tl_filter_opts = [
+                "🌐 Весь рынок",
+                "🟢 Идеи на покупку",
+                "⏸️ Дно цикла / Держать",
+                "🔴 Риск / Кандидаты на выход",
+            ]
+
+        traffic_filter = st.radio(
+            "Фильтр таблицы:",
+            tl_filter_opts,
+            horizontal=True,
+        )
+
+        df_tl = df_ranked.copy()
+        if traffic_filter == "🟢 Идеи на покупку":
+            df_tl = df_tl[df_tl['Статус (Действие)'].str.contains("Buy|Наращивать", case=False, na=False)]
+        elif traffic_filter == "💼 Мой портфель":
+            df_tl = df_tl[df_tl['Лоты'] > 0]
+        elif traffic_filter == "🚀 Лучше моих слабых позиций":
+            weak_set = set(pd.concat([urgent_sells_df, overvalued_bl_df, weak_stocks_df])['ticker']) if my_portfolio else set()
+            cand_set = set(market_buys[~market_buys['ticker'].isin(set(df_port['ticker']))].head(10)['ticker']) if my_portfolio else set()
+            df_tl = df_tl[df_tl['ticker'].isin(weak_set | cand_set)]
+        elif traffic_filter == "⏸️ Дно цикла / Держать":
+            df_tl = df_tl[df_tl['Статус (Действие)'].str.contains("Дно|Держать|Наблюдение", case=False, na=False)]
+        elif traffic_filter == "🔴 Риск / Кандидаты на выход":
+            df_tl = df_tl[df_tl['Статус (Действие)'].str.contains("продать|Карантин|Слабый|Сократить", case=False, na=False)]
+
+        if my_portfolio:
+            tl_cols = [
+                "ticker", "Позиция", "Статус (Действие)", "Драйвер (Value & Income)",
+                "Price", "Чёрная Линия (₽)", "Margin of Safety (%)",
+                "Идеальная доля (%)", "PnL (%)", "Health_Score",
+                "Div_Yield_%", "FCF_Yield_%", "ROE_%", "Debt_EBITDA", "P_E", "Тренд", "Поток (OrderFlow)"
+            ]
+        else:
+            tl_cols = [
+                "ticker", "Статус (Действие)", "Драйвер (Value & Income)",
+                "Price", "Чёрная Линия (₽)", "Margin of Safety (%)",
+                "Идеальная доля (%)", "Health_Score",
+                "Div_Yield_%", "FCF_Yield_%", "ROE_%", "Debt_EBITDA", "P_E", "Тренд", "Поток (OrderFlow)"
+            ]
+
+        st.dataframe(
+            df_tl[[c for c in tl_cols if c in df_tl.columns]],
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "Price": st.column_config.NumberColumn(
+                    "Цена MOEX",
+                    format="%.2f ₽",
+                    help="Текущая котировка акции на МосБирже"
+                ),
+                "Чёрная Линия (₽)": st.column_config.NumberColumn(
+                    "Чёрная Линия (₽)",
+                    format="%.1f ₽",
+                    help="Справедливая внутренняя стоимость бизнеса из финансовых отчетов и мультипликаторов (Black Line)"
+                ),
+                "Margin of Safety (%)": st.column_config.NumberColumn(
+                    "Margin of Safety (%)",
+                    format="%+.1f%%",
+                    help="Запас прочности по Грэму: положительное значение — недооценка (зона покупок), отрицательное — переоценка"
+                ),
+                "Health_Score": st.column_config.NumberColumn(
+                    "Health_Score",
+                    help="Комплексный балл здоровья бизнеса (Value & Income + Income Reversion + FCF + Order Flow)."
+                ),
+                "Статус (Действие)": st.column_config.TextColumn(
+                    "Статус (Действие)",
+                    help="Сигнал алгоритма: 🟢 Strong Buy, 🔵 Наращивать, ⏸️ Дно цикла, 🟡 Держать, 🟠 Сократить, 🔴 Продать"
+                )
+            }
+        )
+
+        # ------------------------------------------
+        # 2. ТРЕХКОЛОНОЧНЫЙ КОМАНДНЫЙ ПУЛЬТ (ПОДСТРОЙКА ПОД ПОРТФЕЛЬ + ЛУЧШИЕ ВАРИАНТЫ С РЫНКА)
+        # ------------------------------------------
+        st.markdown("---")
+        st.markdown("### 🎯 Командный пульт решений")
+        if my_portfolio:
+            st.caption("Персонализировано под ваш загруженный портфель: что сократить и на какие лучшие бумаги со всего рынка MOEX переложиться.")
+        else:
+            st.caption("Режим общего мониторинга MOEX: лидеры рынка для входа и зоны повышенного риска (загрузите портфель слева для персональных рокировок).")
+
         c_sell, c_buy, c_swap = st.columns([1.0, 1.0, 1.25])
         
         with c_sell:
             st.markdown("#### 🛑 1. Что ПРОДАТЬ / СОКРАТИТЬ")
-            st.caption("Балласт портфеля: токсичный долг, слабый ROE и овервейт")
+            st.caption("Балласт портфеля: токсичный долг, слабый ROE и овервейт" if my_portfolio else "Зоны риска на рынке MOEX (дистресс, перегрев, структурный дисконт)")
             
             has_sell_signals = False
             
@@ -2394,9 +2543,9 @@ else:
                 for _, r in weak_stocks_df.iterrows():
                     with st.container(border=True):
                         st.markdown(f"**⚠️ {r['ticker']}** | Доля: **{r['Доля в портфеле (%)']:.1f}%** ({r['Текущая Стоимость']:,.0f} ₽)")
-                        st.warning(f"Health Score **{r['Health_Score']:.2f}x** уступает рынку. Бизнес не генерирует достаточной отдачи.")
-                        st.caption(f"ROE: **{r['ROE_%']:.1f}%** | P/E: **{r['P_E']:.1f}**")
-                        st.markdown("👉 **Действие: Сократить / Переложить в лидера**")
+                        st.warning(f"Health Score **{r['Health_Score']:.2f}x** уступает рынку. На рынке есть более сильные альтернативы.")
+                        st.caption(f"ROE: **{r['ROE_%']:.1f}%** | Дивы: **{r.get('Div_Yield_%', 0.0):.1f}%** | P/E: **{r['P_E']:.1f}**")
+                        st.markdown("👉 **Действие: Сократить / Переложить в лидера MOEX**")
 
             # 1.5 Дно цикла (удержание без продажи!)
             if not hold_cycle_df.empty:
@@ -2409,34 +2558,39 @@ else:
             if my_portfolio and not has_sell_signals:
                 st.success("🟢 **Портфель защищен!** В составе нет предбанкротных компаний или токсичного долга.")
             elif not my_portfolio:
-                with st.container(border=True):
-                    st.markdown("**🛑 Черный список рынка MOEX:**")
-                    st.error("Избегайте покупки закредитованных компаний и ловушек с нулевыми дивами (MTLR, SGZH, SMLT, EUTR, PIKK, AFKS)")
-                    st.caption(f"При ставке {key_rate_for_bl:.1f}% процентные платежи съедают всю операционную прибыль.")
-                    st.info("💡 Загрузите ваш портфель слева, чтобы увидеть персональный аудит бумаг.")
+                market_risks = df_ranked[
+                    (df_ranked['Health_Score'] < 0.70) | (df_ranked['Margin of Safety (%)'] <= -25.0)
+                ].head(4)
+                for _, r in market_risks.iterrows():
+                    with st.container(border=True):
+                        st.markdown(f"**{r['Статус (Действие)'].split()[0]} {r['ticker']}** | Цена: **{r['Price']:.1f} ₽** (ЧЛ: **{r['Чёрная Линия (₽)']:.1f} ₽**)")
+                        st.caption(f"`{r.get('Драйвер (Value & Income)', '')}` | Health: **{r['Health_Score']:.2f}x** | Дивы: **{r.get('Div_Yield_%', 0.0):.1f}%**")
+                if dropped_toxic_tickers:
+                    st.error(f"🛑 Карантин (предбанкротный/долговой риск): {', '.join(dropped_toxic_tickers[:8])}")
+                st.info("💡 Загрузите ваш портфель слева для персонального аудита позиций.")
 
         with c_buy:
             st.markdown("#### 🟢 2. Что КУПИТЬ / НАРАСТИТЬ")
-            st.caption("Ядро Value & Income и идеи Income Reversion (без ловушек с низким дивом)")
+            st.caption("Лучшие идеи со всего рынка MOEX (Value & Income + Income Reversion)")
             
             if not top_buys_df.empty:
                 for _, r in top_buys_df.iterrows():
                     t = r['ticker']
                     in_p = r.get('Лоты', 0) > 0
-                    share_str = f"В портфеле: {r['Доля в портфеле (%)']:.1f}%" if in_p else "Новая идея (нет в портфеле)"
+                    share_str = f"💼 В портфеле: {r['Доля в портфеле (%)']:.1f}%" if in_p else "🆕 Новая идея с рынка"
                     drv_badge = r.get('Драйвер (Value & Income)', '')
                     
                     driver = "Устойчивая отдача на капитал, низкий долг и реальный денежный поток."
-                    if t in ['SBER', 'SBERP', 'T', 'SVCB', 'BSPB']:
-                        driver = "Высокая рентабельность капитала (ROE > 20%), сильный запас капитала Н1.0 и стабильные дивиденды."
+                    if t in ['SBER', 'SBERP', 'T', 'VTBR', 'SVCB', 'BSPB']:
+                        driver = "Высокая рентабельность капитала, достаточность Н1.0 и сильная див. отдача."
                     elif t in ['TRNFP', 'NMTP']:
                         driver = "Тарифная монополия / портовая перевалка, высокий FCF и устойчивые дивиденды без долгового риска."
                     elif t in ['LKOH', 'ROSN', 'TATN']:
                         driver = "Value & Income / Income Reversion: мощный FCF при минимальном долге и дивидендная доходность."
                     elif t in ['MDMG', 'X5', 'FIVE']:
                         driver = "Защита от инфляции: рост выручки в потребсекторе/медицине, высокий ROE и регулярный кэш."
-                    elif t in ['HEAD', 'YNDX', 'YDEX', 'DIAS']:
-                        driver = "Высокие темпы роста выручки, низкая долговая нагрузка и высокая маржа."
+                    elif t in ['HEAD', 'YNDX', 'YDEX', 'DIAS', 'MOEX']:
+                        driver = "Сильная рыночная позиция, высокая маржинальность и генерация кэша/дивидендов."
                     
                     mos_val = r.get('Margin of Safety (%)', 0.0)
                     bl_val = r.get('Чёрная Линия (₽)', 0.0)
@@ -2456,7 +2610,7 @@ else:
 
         with c_swap:
             st.markdown("#### 🔄 3. ГОТОВАЯ РОКИРОВКА (СВОП)")
-            st.caption("Пошаговые торговые сценарии перекладки капитала")
+            st.caption("Перекладка слабых/переоцененных позиций в лидеров со всего рынка MOEX")
             
             if smart_swaps:
                 for idx, sw in enumerate(smart_swaps[:3], 1):
@@ -2477,13 +2631,13 @@ else:
                     st.code(cheat_text, language="text")
             else:
                 with st.container(border=True):
-                    st.markdown("##### 💡 Модельный портфель (Базовый сплит)")
-                    st.markdown("Ваш портфель сбалансирован, срочных рокировок не требуется.")
-                    st.info("Свежие притоки капитала направляйте в топ-3 бумаги по Health Score: " +
-                            ", ".join(f"`{t}`" for t in top_buys_df['ticker'].head(3)))
+                    st.markdown("##### 💡 Модельный сплит по рынку MOEX")
+                    st.markdown("Срочных рокировок не требуется или портфель не загружен." if my_portfolio else "Подключите портфель слева, чтобы увидеть конкретные перекладки в лотах.")
+                    st.info("Топ-идеи свежего капитала по Health Score: " +
+                            ", ".join(f"`{t}`" for t in top_buys_df['ticker'].head(4)))
 
         # ------------------------------------------
-        # 1.5 ГРАФИК КОТИРОВОК VS ЧЁРНАЯ ЛИНИЯ (BLACK LINE)
+        # 3. ГРАФИК КОТИРОВОК VS ЧЁРНАЯ ЛИНИЯ (BLACK LINE)
         # ------------------------------------------
         st.markdown("---")
         st.markdown("### 🖤 График котировок vs Чёрная Линия (Black Line / Fair Value)")
@@ -2520,76 +2674,16 @@ else:
                 default_show=True,
                 key_prefix="main_screen"
             )
-
-        # ------------------------------------------
-        # 2. СВЕТОФОР АКТИВОВ (TRAFFIC LIGHT MATRIX)
-        # ------------------------------------------
-        st.markdown("---")
-        st.markdown("### 🚥 Светофор активов (Traffic Light Market Matrix)")
-        st.caption("Комплексный статус каждой акции: мгновенное понимание, что докупать, что удерживать, а что сбрасывать.")
         
-        t_f1, t_f2 = st.columns([2, 1])
-        with t_f1:
-            traffic_filter = st.radio(
-                "Фильтр таблицы:",
-                ["Все активы", "🟢 Покупки (Buy)", "⏸️ Дно цикла / Держать", "🔴 Продажи / Риск", "💼 Мой портфель"],
-                horizontal=True
-            )
-        
-        df_tl = df_ranked.copy()
-        if traffic_filter == "🟢 Покупки (Buy)":
-            df_tl = df_tl[df_tl['Статус (Действие)'].str.contains("Buy|Наращивать", case=False, na=False)]
-        elif traffic_filter == "⏸️ Дно цикла / Держать":
-            df_tl = df_tl[df_tl['Статус (Действие)'].str.contains("Дно|Держать", case=False, na=False)]
-        elif traffic_filter == "🔴 Продажи / Риск":
-            df_tl = df_tl[df_tl['Статус (Действие)'].str.contains("продать|Карантин|Слабый|Сократить", case=False, na=False)]
-        elif traffic_filter == "💼 Мой портфель":
-            df_tl = df_tl[df_tl['Лоты'] > 0]
-            
-        tl_cols = [
-            "ticker", "Статус (Действие)", "Драйвер (Value & Income)", "Price", "Чёрная Линия (₽)", "Margin of Safety (%)",
-            "Доля в портфеле (%)", "Идеальная доля (%)",
-            "PnL (%)", "Health_Score", "Div_Yield_%", "FCF_Yield_%", "ROE_%", "Debt_EBITDA", "P_E", "Тренд", "Поток (OrderFlow)"
-        ]
-        if not my_portfolio:
-            tl_cols = [
-                "ticker", "Статус (Действие)", "Драйвер (Value & Income)", "Price", "Чёрная Линия (₽)", "Margin of Safety (%)",
-                "Идеальная доля (%)", "Health_Score", "Div_Yield_%", "FCF_Yield_%", "ROE_%", "Debt_EBITDA", "P_E", "Тренд", "Поток (OrderFlow)"
-            ]
-            
-        st.dataframe(
-            df_tl[[c for c in tl_cols if c in df_tl.columns]],
-            width="stretch",
-            hide_index=True,
-            column_config={
-                "Price": st.column_config.NumberColumn(
-                    "Цена MOEX",
-                    format="%.2f ₽",
-                    help="Текущая котировка акции на МосБирже"
-                ),
-                "Чёрная Линия (₽)": st.column_config.NumberColumn(
-                    "Чёрная Линия (₽)",
-                    format="%.1f ₽",
-                    help="Справедливая внутренняя стоимость бизнеса из финансовых отчетов и мультипликаторов (Black Line)"
-                ),
-                "Margin of Safety (%)": st.column_config.NumberColumn(
-                    "Margin of Safety (%)",
-                    format="%+.1f%%",
-                    help="Запас прочности по Грэму: положительное значение — недооценка (зона покупок), отрицательное — переоценка"
-                ),
-                "Health_Score": st.column_config.NumberColumn(
-                    "Health_Score",
-                    help="Комплексный балл здоровья бизнеса. База = 1.0. Умножается на коэффициенты за рентабельность, долг, дивиденды, Order Flow и тренд."
-                ),
-                "Статус (Действие)": st.column_config.TextColumn(
-                    "Статус (Действие)",
-                    help="Сигнал алгоритма: 🟢 Strong Buy, 🔵 Наращивать, ⏸️ Дно цикла, 🟡 Держать, 🟠 Сократить, 🔴 Продать"
-                )
-            }
-        )
-        
-        with st.expander("📊 График распределения Health Score по всем акциям", expanded=False):
+        with st.expander("📊 График распределения Health Score по всем акциям MOEX", expanded=False):
             st.bar_chart(data=df_ranked, x="ticker", y="Health_Score")
+
+        if dropped_toxic_tickers or dropped_weak_tickers:
+            with st.expander(f"🛡️ Отсеянные бумаги рынка ({len(dropped_toxic_tickers) + len(dropped_weak_tickers)})", expanded=False):
+                if dropped_toxic_tickers:
+                    st.error(f"🛑 Карантин (токсичные/предбанкроты): {', '.join(dropped_toxic_tickers)}")
+                if dropped_weak_tickers:
+                    st.warning(f"⚠️ Отсеяны по фильтрам ROE/Долг: {', '.join(dropped_weak_tickers)}")
             
         with st.expander("🌐 Макро-барометр сырья, ставок и инфляции", expanded=False):
             b_c1, b_c2, b_c3, b_c4 = st.columns(4)
