@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import re
 from datetime import datetime, timedelta
@@ -219,8 +220,90 @@ def _fetch_candles(asset, start_date, end_date):
     except Exception:
         return pd.DataFrame()
 
+_MOEX_UNIVERSE_CACHE_PATH = Path(os.path.abspath(__file__)).parent / "data" / "moex_universe_cache.json"
+
+
+@st.cache_data(ttl=90, show_spinner=False)
+def _is_moex_iss_reachable() -> bool:
+    """Быстрая проверка доступности MOEX ISS (предотвращает каскадные зависания по 30s+ при таймаутах)."""
+    try:
+        resp = requests.get(
+            "https://iss.moex.com/iss/index.json?iss.meta=off&iss.only=engines",
+            timeout=(4.0, 4.0),
+        )
+        return resp.status_code < 500
+    except Exception:
+        return False
+
+
+def _build_moex_universe_df(data: dict, min_turnover_rub: int, ignore_liquidity: bool, is_fallback: bool = False) -> pd.DataFrame:
+    """Формирует отсортированный DataFrame вселенной тикеров MOEX из ответа ISS API или кэша."""
+    turnover_by_ticker = {
+        row[0]: row[1] or 0
+        for row in data.get("marketdata", {}).get("data", [])
+        if row and row[0]
+    }
+    max_turnover = max(turnover_by_ticker.values()) if turnover_by_ticker else 0
+    market_is_open = max_turnover > min_turnover_rub
+
+    rows = []
+    for ticker, list_level in data.get("securities", {}).get("data", []):
+        if not ticker:
+            continue
+        if list_level not in (1, 2) and ticker not in PORTFOLIO_TICKERS:
+            continue
+        turnover_rub = turnover_by_ticker.get(ticker, 0)
+        if not ignore_liquidity and market_is_open and turnover_rub < min_turnover_rub and ticker not in PORTFOLIO_TICKERS:
+            continue
+        rows.append(
+            {
+                "ticker": ticker,
+                "list_level": list_level,
+                "turnover_rub": turnover_rub,
+                "turnover_mln": round(turnover_rub / 1_000_000, 1),
+            }
+        )
+
+    df = pd.DataFrame(rows, columns=["ticker", "list_level", "turnover_rub", "turnover_mln"])
+    if df.empty:
+        return _build_static_fallback_universe(is_fallback=True)
+    df = df.sort_values("turnover_rub", ascending=False).reset_index(drop=True)
+    df.attrs["is_fallback"] = is_fallback
+    return df
+
+
+def _build_static_fallback_universe(is_fallback: bool = True) -> pd.DataFrame:
+    """Формирует резервный список тикеров из fundamentals_cache.csv + PORTFOLIO_TICKERS без обращения к сети."""
+    tickers = list(PORTFOLIO_TICKERS)
+    cache_csv = Path(os.path.abspath(__file__)).parent / "fundamentals_cache.csv"
+    if cache_csv.exists():
+        try:
+            df_c = pd.read_csv(cache_csv)
+            for t in df_c["ticker"].dropna().astype(str).str.upper().unique():
+                if t not in tickers:
+                    tickers.append(t)
+        except Exception:
+            pass
+
+    rows = [
+        {
+            "ticker": t,
+            "list_level": 1,
+            "turnover_rub": 100_000_000 if t in PORTFOLIO_TICKERS else 60_000_000,
+            "turnover_mln": 100.0 if t in PORTFOLIO_TICKERS else 60.0,
+        }
+        for t in tickers
+    ]
+    df = pd.DataFrame(rows, columns=["ticker", "list_level", "turnover_rub", "turnover_mln"])
+    df.attrs["is_fallback"] = is_fallback
+    return df
+
+
 @st.cache_data(ttl=600)
 def fetch_live_prices(ticker_list):
+    if not ticker_list or not _is_moex_iss_reachable():
+        return pd.DataFrame()
+
     end_date = datetime.now().date()
     start_date = end_date - timedelta(days=120)
     price_series = {}
@@ -240,8 +323,7 @@ def fetch_live_prices(ticker_list):
             pass
         return t, None
 
-    from concurrent.futures import ThreadPoolExecutor
-    workers = min(10, max(1, len(ticker_list))) if ticker_list else 1
+    workers = min(10, max(1, len(ticker_list)))
     with ThreadPoolExecutor(max_workers=workers) as executor:
         results = list(executor.map(_fetch_single, ticker_list))
 
@@ -261,49 +343,42 @@ def normalize_returns(price_df):
         else series
     )
 
-@st.cache_data(ttl=600)
-def fetch_moex_universe(min_turnover_rub=MIN_DAILY_TURNOVER_RUB, ignore_liquidity=False):
+@st.cache_data(ttl=600, show_spinner=False)
+def _fetch_moex_universe_live(min_turnover_rub=MIN_DAILY_TURNOVER_RUB, ignore_liquidity=False):
     params = {
         "iss.meta": "off",
         "iss.only": "securities,marketdata",
         "securities.columns": "SECID,LISTLEVEL",
         "marketdata.columns": "SECID,VALTODAY",
     }
-    response = requests.get(MOEX_TQBR_URL, params=params, timeout=30)
+    response = requests.get(MOEX_TQBR_URL, params=params, timeout=(5.0, 12.0))
     response.raise_for_status()
     data = response.json()
+    try:
+        _MOEX_UNIVERSE_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _MOEX_UNIVERSE_CACHE_PATH.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+    return _build_moex_universe_df(data, min_turnover_rub, ignore_liquidity, is_fallback=False)
 
-    turnover_by_ticker = {
-        row[0]: row[1] or 0
-        for row in data["marketdata"]["data"]
-    }
-    
-    # Если максимальный оборот на всем рынке меньше порога, значит биржа закрыта или только открылась (выходной/утро)
-    max_turnover = max(turnover_by_ticker.values()) if turnover_by_ticker else 0
-    market_is_open = max_turnover > min_turnover_rub
 
-    rows = []
-    for ticker, list_level in data["securities"]["data"]:
-        if list_level not in (1, 2) and ticker not in PORTFOLIO_TICKERS:
-            continue
-            
-        turnover_rub = turnover_by_ticker.get(ticker, 0)
-        
-        # Если биржа открыта, жестко фильтруем по обороту. Иначе берем все акции 1-2 эшелона.
-        if not ignore_liquidity and market_is_open and turnover_rub < min_turnover_rub and ticker not in PORTFOLIO_TICKERS:
-            continue
-            
-        rows.append(
-            {
-                "ticker": ticker,
-                "list_level": list_level,
-                "turnover_rub": turnover_rub,
-                "turnover_mln": round(turnover_rub / 1_000_000, 1),
-            }
-        )
+def fetch_moex_universe(min_turnover_rub=MIN_DAILY_TURNOVER_RUB, ignore_liquidity=False):
+    if _is_moex_iss_reachable():
+        try:
+            df = _fetch_moex_universe_live(min_turnover_rub=min_turnover_rub, ignore_liquidity=ignore_liquidity)
+            if df is not None and not df.empty:
+                return df
+        except Exception:
+            pass
 
-    df = pd.DataFrame(rows, columns=["ticker", "list_level", "turnover_rub", "turnover_mln"])
-    return df.sort_values("turnover_rub", ascending=False).reset_index(drop=True)
+    if _MOEX_UNIVERSE_CACHE_PATH.exists():
+        try:
+            cached_data = json.loads(_MOEX_UNIVERSE_CACHE_PATH.read_text(encoding="utf-8"))
+            return _build_moex_universe_df(cached_data, min_turnover_rub, ignore_liquidity, is_fallback=True)
+        except Exception:
+            pass
+
+    return _build_static_fallback_universe(is_fallback=True)
 
 @st.cache_data(ttl=600)
 def fetch_moex_tickers(min_turnover_rub=MIN_DAILY_TURNOVER_RUB, ignore_liquidity=False):
@@ -312,9 +387,11 @@ def fetch_moex_tickers(min_turnover_rub=MIN_DAILY_TURNOVER_RUB, ignore_liquidity
 @st.cache_data(ttl=600)
 def fetch_market_context():
     context = {}
-    from concurrent.futures import ThreadPoolExecutor
+    moex_ok = _is_moex_iss_reachable()
 
     def _get_moex_symbol(symbol):
+        if not moex_ok:
+            return symbol, None
         try:
             asset = Ticker(symbol)
             candles_df = _fetch_candles(asset, datetime.now().date() - timedelta(days=30), datetime.now().date())
@@ -363,20 +440,14 @@ def fetch_market_context():
 
     def _get_commodity_yf():
         res = {"GOLD": None, "STEEL": None}
-        try:
-            gold_ticker = yf.Ticker("GC=F")
-            gold_df = gold_ticker.history(period="1d")
-            if not gold_df.empty:
-                res["GOLD"] = float(gold_df['Close'].iloc[-1])
-        except Exception:
-            pass
-        try:
-            steel_ticker = yf.Ticker("HRC=F")
-            steel_df = steel_ticker.history(period="1d")
-            if not steel_df.empty:
-                res["STEEL"] = float(steel_df['Close'].iloc[-1])
-        except Exception:
-            pass
+        # Используем period="5d", чтобы на выходных/праздниках не получать пустой ответ за 1d
+        for key, sym in [("GOLD", "GC=F"), ("STEEL", "HRC=F")]:
+            try:
+                hist = yf.Ticker(sym).history(period="5d")
+                if not hist.empty and "Close" in hist.columns:
+                    res[key] = float(hist["Close"].dropna().iloc[-1])
+            except Exception:
+                pass
         return res
 
     with ThreadPoolExecutor(max_workers=7) as executor:
@@ -399,6 +470,10 @@ def fetch_market_context():
 
 @st.cache_data(ttl=3600)
 def fetch_technical_indicators(tickers):
+    cols = ["ticker", "SMA_50", "SMA_200", "RSI", "Price"]
+    if not tickers or not _is_moex_iss_reachable():
+        return pd.DataFrame(columns=cols)
+
     def calculate_rsi(series, period=14):
         delta = series.diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
@@ -411,33 +486,35 @@ def fetch_technical_indicators(tickers):
         url = f"https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities/{ticker}/candles.json"
         params = {"interval": 24, "from": one_year_ago}
         try:
-            resp = requests.get(url, params=params, timeout=5)
+            resp = requests.get(url, params=params, timeout=(4.0, 6.0))
             data = resp.json()
             if 'candles' in data and data['candles']['data']:
                 df = pd.DataFrame(data['candles']['data'], columns=data['candles']['columns'])
-                if len(df) < 50:
+                close = pd.to_numeric(df['close'], errors='coerce').dropna()
+                if close.empty:
                     return {"ticker": ticker, "SMA_50": float('nan'), "SMA_200": float('nan'), "RSI": float('nan'), "Price": float('nan')}
-                close = df['close'].astype(float)
                 if ticker.upper() in ["BELU", "NOVA"] and 'begin' in df.columns:
-                    b_dates = pd.to_datetime(df['begin'])
+                    b_dates = pd.to_datetime(df.loc[close.index, 'begin'])
                     if hasattr(b_dates, "dt") and hasattr(b_dates.dt, "tz_localize") and b_dates.dt.tz is not None:
                         b_dates = b_dates.dt.tz_localize(None)
                     mask = b_dates < pd.to_datetime("2024-08-20")
                     if mask.any():
                         close = close.copy()
                         close.loc[mask] = (close.loc[mask] / 8.0).round(2)
+                price = float(close.iloc[-1])
+                if len(close) < 50:
+                    return {"ticker": ticker, "SMA_50": float('nan'), "SMA_200": float('nan'), "RSI": float('nan'), "Price": price}
                 sma_50 = close.rolling(50).mean().iloc[-1]
-                sma_200 = close.rolling(200).mean().iloc[-1] if len(df) >= 200 else float('nan')
+                sma_200 = close.rolling(200).mean().iloc[-1] if len(close) >= 200 else float('nan')
                 rsi = calculate_rsi(close).iloc[-1]
-                price = close.iloc[-1]
                 return {"ticker": ticker, "SMA_50": sma_50, "SMA_200": sma_200, "RSI": rsi, "Price": price}
         except Exception:
             pass
         return {"ticker": ticker, "SMA_50": float('nan'), "SMA_200": float('nan'), "RSI": float('nan'), "Price": float('nan')}
 
-    with ThreadPoolExecutor(max_workers=10) as ex:
+    with ThreadPoolExecutor(max_workers=12) as ex:
         results = list(ex.map(get_ticker_tech, tickers))
-    return pd.DataFrame(results)
+    return pd.DataFrame(results, columns=cols)
 
 @st.cache_data(ttl=600)
 def fetch_bond_prices_moex():
@@ -445,6 +522,8 @@ def fetch_bond_prices_moex():
     Одним запросом тянет текущие цены и номиналы всех облигаций с MOEX ISS.
     Возвращает dict: {SECID: {'price': float, 'facevalue': float, 'accrued': float}}
     """
+    if not _is_moex_iss_reachable():
+        return {}
     rates = {"SUR": 1.0, "RUB": 1.0, "USD": 90.0, "EUR": 100.0, "CNY": 12.0}
     try:
         url_rates = "https://iss.moex.com/iss/engines/currency/markets/selt/boards/CETS/securities.json"
@@ -772,6 +851,8 @@ with st.sidebar:
         st.success("Фильтр ликвидности: **ВКЛЮЧЕН**")
     moex_universe = fetch_moex_universe(ignore_liquidity=ignore_liquidity)
     moex_tickers = moex_universe["ticker"].tolist()
+    if moex_universe.attrs.get("is_fallback"):
+        st.caption("⚠️ MOEX ISS временно не отвечает — загружен резервный список тикеров.")
     st.caption(
         f"MOEX TQBR, 1–2 эшелон, оборот ≥ {MIN_DAILY_TURNOVER_RUB // 1_000_000} млн ₽: "
         f"{len(moex_tickers)} тикеров"
@@ -956,12 +1037,12 @@ with st.sidebar:
 
                 # ── Вариант A: Готовый лист "Портфель" (точнее отражает текущие остатки) ──
                 if "Портфель" in xl.sheet_names:
-                    df_upload = xl.parse("Портфель")
+                    df_upload = pd.read_excel(xl, sheet_name="Портфель")
                     _trades_parsed = False
 
                 # ── Вариант B: личный журнал сделок (лист «Сделки») ─────────────────
                 elif "Сделки" in xl.sheet_names:
-                    df_tr = xl.parse("Сделки")
+                    df_tr = pd.read_excel(xl, sheet_name="Сделки")
                     df_tr.columns = [str(c).strip() for c in df_tr.columns]
 
                     t_col  = next((c for c in df_tr.columns if c.lower() in ["тикер", "ticker", "symbol"]), None)
@@ -1686,8 +1767,31 @@ if not df_fund.empty:
         
     df_fund["Health_Score"] = df_fund.apply(apply_rfr_penalty, axis=1)
     
-    # Слияние с техническим анализом
+    # Слияние с техническим анализом и каскадный резерв котировок при таймауте MOEX ISS
     df_fund = pd.merge(df_fund, tech_data, on="ticker", how="left")
+    df_fund["Price"] = pd.to_numeric(df_fund.get("Price"), errors="coerce")
+    if "Current_Price" in df_fund.columns:
+        df_fund["Price"] = df_fund["Price"].fillna(pd.to_numeric(df_fund["Current_Price"], errors="coerce"))
+    if my_portfolio:
+        def _port_fallback_price(t):
+            item = my_portfolio.get(t, {})
+            p = item.get("price")
+            if p is not None and pd.notna(p) and float(p) > 0:
+                return float(p)
+            cnt = item.get("count", 0) or 0
+            val = item.get("val", 0) or 0
+            if cnt > 0 and val > 0:
+                return float(val) / float(cnt)
+            return float("nan")
+        df_fund["Price"] = df_fund["Price"].fillna(df_fund["ticker"].map(_port_fallback_price))
+    if isinstance(magellan_of, dict) and magellan_of:
+        df_fund["Price"] = df_fund["Price"].fillna(
+            df_fund["ticker"].map(
+                lambda t: float(magellan_of[t]["last_price"])
+                if isinstance(magellan_of.get(t), dict) and magellan_of[t].get("last_price")
+                else float("nan")
+            )
+        )
     
     def apply_div_multiplier(row):
         score = row['Health_Score']
@@ -1841,7 +1945,8 @@ else:
     # Обогащение фундаментальной оценкой "Чёрная Линия" (Black Line / Fair Value)
     key_rate_for_bl = float(market_context.get("KEY_RATE", 16.0)) if isinstance(market_context, dict) and market_context.get("KEY_RATE") else 16.0
     def calc_bl_metrics(row):
-        p = row.get('Price', 0.0)
+        raw_p = row.get('Price', 0.0)
+        p = float(raw_p) if pd.notna(raw_p) and math.isfinite(float(raw_p)) else 0.0
         res = calculate_black_line_valuation(
             ticker=row['ticker'],
             price=p,
@@ -1863,16 +1968,22 @@ else:
         def get_port_count(ticker): return my_portfolio.get(ticker, {}).get('count', 0)
         def get_port_invested(ticker): return my_portfolio.get(ticker, {}).get('invested', 0)
         
-        df_ranked['Лоты'] = df_ranked['ticker'].apply(get_port_count)
-        df_ranked['Вложено'] = df_ranked['ticker'].apply(get_port_invested)
-        df_ranked['Текущая Стоимость'] = df_ranked['Лоты'] * df_ranked['Price']
+        df_ranked['Лоты'] = pd.to_numeric(df_ranked['ticker'].apply(get_port_count), errors='coerce').fillna(0.0)
+        df_ranked['Вложено'] = pd.to_numeric(df_ranked['ticker'].apply(get_port_invested), errors='coerce').fillna(0.0)
+        price_num = pd.to_numeric(df_ranked['Price'], errors='coerce').fillna(0.0)
+        df_ranked['Текущая Стоимость'] = (df_ranked['Лоты'] * price_num).fillna(0.0)
+        missing_val_mask = (df_ranked['Лоты'] > 0) & (df_ranked['Текущая Стоимость'] <= 0)
+        if missing_val_mask.any():
+            df_ranked.loc[missing_val_mask, 'Текущая Стоимость'] = df_ranked.loc[missing_val_mask, 'ticker'].map(
+                lambda t: float(my_portfolio.get(t, {}).get('val', 0.0) or my_portfolio.get(t, {}).get('invested', 0.0) or 0.0)
+            ).fillna(0.0)
 
         port_mask = df_ranked['Лоты'] > 0
-        total_val = df_ranked.loc[port_mask, 'Текущая Стоимость'].sum()
-        total_inv = df_ranked.loc[port_mask, 'Вложено'].sum()
+        total_val = float(df_ranked.loc[port_mask, 'Текущая Стоимость'].sum())
+        total_inv = float(df_ranked.loc[port_mask, 'Вложено'].sum())
         pnl_rub = total_val - total_inv
         pnl_pct = (pnl_rub / total_inv * 100) if total_inv > 0 else 0.0
-        port_health = (df_ranked.loc[port_mask, 'Health_Score'] * df_ranked.loc[port_mask, 'Текущая Стоимость']).sum() / total_val if total_val > 0 else 0.0
+        port_health = float((df_ranked.loc[port_mask, 'Health_Score'] * df_ranked.loc[port_mask, 'Текущая Стоимость']).sum() / total_val) if total_val > 0 else 0.0
 
         df_ranked['Доля в портфеле (%)'] = (df_ranked['Текущая Стоимость'] / total_val * 100).fillna(0).round(1) if total_val > 0 else 0.0
         df_ranked['PnL (%)'] = ((df_ranked['Текущая Стоимость'] - df_ranked['Вложено']) / df_ranked['Вложено'].replace(0, 1) * 100).fillna(0).round(1)
@@ -1896,7 +2007,9 @@ else:
         df_ranked, rules["equity_target"],
         max_single=max_single_name, rest_cap=rest_cap, n_assets=n_assets
     )
-    position_df["target_value_rub"] = (position_df["weight"] * capital).astype(int)
+    position_df["target_value_rub"] = (
+        pd.to_numeric(position_df["weight"], errors="coerce").fillna(0.0) * float(capital or 0.0)
+    ).fillna(0.0).round(0).astype(int)
     target_weights_map = dict(zip(position_df["ticker"], position_df["weight"]))
     df_ranked["Идеальная доля (%)"] = df_ranked["ticker"].map(lambda t: round(target_weights_map.get(t, 0.0) * 100, 1))
 
@@ -1960,116 +2073,107 @@ else:
     else:
         top_buys_df = market_buys.head(4)
 
-    # Генерация сценариев рокировки (Smart Swaps)
+    # Генерация сценариев рокировки (Smart Swaps) без дублирования и с защитой от NaN
+    def _pick_buy_candidate(buys_df, exclude_ticker):
+        if buys_df is None or buys_df.empty:
+            return None
+        diff = buys_df[buys_df['ticker'] != exclude_ticker]
+        return diff.iloc[0] if not diff.empty else None
+
+    def _safe_float(val, default=0.0):
+        try:
+            f = float(val)
+            return f if math.isfinite(f) else default
+        except (TypeError, ValueError):
+            return default
+
+    def _append_smart_swap(swaps_list, buys_df, sell_ticker, sell_val, badge, sell_reason, buy_driver, effect):
+        s_val = _safe_float(sell_val, 0.0)
+        if s_val <= 0:
+            return
+        buy_cand = _pick_buy_candidate(buys_df, sell_ticker)
+        if buy_cand is None:
+            return
+        b_t = buy_cand['ticker']
+        b_p = _safe_float(buy_cand.get('Price'), 0.0)
+        if b_p <= 0:
+            return
+        lot_size = 10 if b_t in ['SBER', 'SBERP', 'VTBR'] else 1
+        shares_cnt = int(s_val // b_p)
+        lots_cnt = shares_cnt // lot_size if lot_size > 0 else shares_cnt
+        b_val = lots_cnt * lot_size * b_p
+        rem_cash = max(0.0, s_val - b_val)
+
+        swaps_list.append({
+            "badge": badge,
+            "sell_ticker": sell_ticker,
+            "sell_val": s_val,
+            "sell_reason": sell_reason,
+            "buy_ticker": b_t,
+            "buy_lots": lots_cnt,
+            "buy_val": b_val,
+            "rem_cash": rem_cash,
+            "buy_driver": buy_driver,
+            "effect": effect,
+        })
+
     smart_swaps = []
     if not urgent_sells_df.empty and not top_buys_df.empty:
         for _, sell_row in urgent_sells_df.head(2).iterrows():
             s_t = sell_row['ticker']
-            s_val = sell_row['Текущая Стоимость']
-            buy_cand = top_buys_df.iloc[0]
-            b_t = buy_cand['ticker']
-            b_p = buy_cand['Price'] if buy_cand['Price'] > 0 else 1.0
-            lot_size = 10 if b_t in ['SBER', 'SBERP', 'VTBR'] else 1
-            shares_cnt = int(s_val // b_p) if b_p > 0 else 0
-            lots_cnt = shares_cnt // lot_size if lot_size > 0 else shares_cnt
-            b_val = lots_cnt * lot_size * b_p
-            rem_cash = max(0.0, s_val - b_val)
-            
-            roe_diff = buy_cand['ROE_%'] - sell_row['ROE_%']
-            debt_diff = sell_row['Debt_EBITDA'] - buy_cand['Debt_EBITDA']
-            
-            smart_swaps.append({
-                "badge": "🔴 Срочный выход из токсичного долга",
-                "sell_ticker": s_t,
-                "sell_val": s_val,
-                "sell_reason": f"Долг/EBITDA {sell_row['Debt_EBITDA']:.1f}x при ставке 21% сжигает прибыль",
-                "buy_ticker": b_t,
-                "buy_lots": lots_cnt,
-                "buy_val": b_val,
-                "rem_cash": rem_cash,
-                "buy_driver": f"ROE {buy_cand['ROE_%']:.1f}%, P/E {buy_cand['P_E']:.1f}, Health Score {buy_cand['Health_Score']:.2f}x",
-                "effect": f"Рост отдачи на капитал: ROE {roe_diff:+.1f}%, снижение долговой нагрузки на {debt_diff:.1f}x"
-            })
+            buy_cand = _pick_buy_candidate(top_buys_df, s_t)
+            if buy_cand is None:
+                continue
+            roe_diff = _safe_float(buy_cand.get('ROE_%')) - _safe_float(sell_row.get('ROE_%'))
+            debt_diff = _safe_float(sell_row.get('Debt_EBITDA')) - _safe_float(buy_cand.get('Debt_EBITDA'))
+            _append_smart_swap(
+                smart_swaps, top_buys_df, s_t, sell_row.get('Текущая Стоимость'),
+                badge="🔴 Срочный выход из токсичного долга",
+                sell_reason=f"Долг/EBITDA {_safe_float(sell_row.get('Debt_EBITDA')):.1f}x при ставке 21% сжигает прибыль",
+                buy_driver=f"ROE {_safe_float(buy_cand.get('ROE_%')):.1f}%, P/E {_safe_float(buy_cand.get('P_E')):.1f}, Health Score {_safe_float(buy_cand.get('Health_Score')):.2f}x",
+                effect=f"Рост отдачи на капитал: ROE {roe_diff:+.1f}%, снижение долговой нагрузки на {debt_diff:.1f}x",
+            )
 
     if not overweight_df.empty and not top_buys_df.empty:
         for _, ow_row in overweight_df.head(1).iterrows():
             o_t = ow_row['ticker']
-            excess_pct = max(0.0, ow_row['Доля в портфеле (%)'] - target_max_pct)
+            excess_pct = max(0.0, _safe_float(ow_row.get('Доля в портфеле (%)')) - target_max_pct)
             excess_rub = total_val * (excess_pct / 100.0)
-            if excess_rub >= 10_000:
-                buy_cand = top_buys_df.iloc[1] if (len(top_buys_df) > 1 and top_buys_df.iloc[0]['ticker'] == o_t) else top_buys_df.iloc[0]
-                b_t = buy_cand['ticker']
-                b_p = buy_cand['Price'] if buy_cand['Price'] > 0 else 1.0
-                lot_size = 10 if b_t in ['SBER', 'SBERP', 'VTBR'] else 1
-                shares_cnt = int(excess_rub // b_p) if b_p > 0 else 0
-                lots_cnt = shares_cnt // lot_size if lot_size > 0 else shares_cnt
-                b_val = lots_cnt * lot_size * b_p
-                rem_cash = max(0.0, excess_rub - b_val)
-                
-                smart_swaps.append({
-                    "badge": "🟠 Ребалансировка (Снятие перевеса)",
-                    "sell_ticker": o_t,
-                    "sell_val": excess_rub,
-                    "sell_reason": f"Доля {ow_row['Доля в портфеле (%)']:.1f}% превышает лимит {target_max_pct:.0f}%",
-                    "buy_ticker": b_t,
-                    "buy_lots": lots_cnt,
-                    "buy_val": b_val,
-                    "rem_cash": rem_cash,
-                    "buy_driver": f"ROE {buy_cand['ROE_%']:.1f}%, Health Score {buy_cand['Health_Score']:.2f}x",
-                    "effect": "Снижение концентрации риска в одной бумаге, покупка фундаментального лидера"
-                })
+            buy_cand = _pick_buy_candidate(top_buys_df, o_t)
+            if excess_rub >= 10_000 and buy_cand is not None:
+                _append_smart_swap(
+                    smart_swaps, top_buys_df, o_t, excess_rub,
+                    badge="🟠 Ребалансировка (Снятие перевеса)",
+                    sell_reason=f"Доля {_safe_float(ow_row.get('Доля в портфеле (%)')):.1f}% превышает лимит {target_max_pct:.0f}%",
+                    buy_driver=f"ROE {_safe_float(buy_cand.get('ROE_%')):.1f}%, Health Score {_safe_float(buy_cand.get('Health_Score')):.2f}x",
+                    effect="Снижение концентрации риска в одной бумаге, покупка фундаментального лидера",
+                )
 
     if not weak_stocks_df.empty and not top_buys_df.empty and len(smart_swaps) < 3:
         for _, w_row in weak_stocks_df.head(1).iterrows():
             w_t = w_row['ticker']
-            w_val = w_row['Текущая Стоимость']
-            buy_cand = top_buys_df.iloc[0]
-            b_t = buy_cand['ticker']
-            b_p = buy_cand['Price'] if buy_cand['Price'] > 0 else 1.0
-            lot_size = 10 if b_t in ['SBER', 'SBERP', 'VTBR'] else 1
-            shares_cnt = int(w_val // b_p) if b_p > 0 else 0
-            lots_cnt = shares_cnt // lot_size if lot_size > 0 else shares_cnt
-            b_val = lots_cnt * lot_size * b_p
-            rem_cash = max(0.0, w_val - b_val)
-            
-            smart_swaps.append({
-                "badge": "⚠️ Замена отстающей позиции",
-                "sell_ticker": w_t,
-                "sell_val": w_val,
-                "sell_reason": f"Health Score {w_row['Health_Score']:.2f}x уступает среднерыночному",
-                "buy_ticker": b_t,
-                "buy_lots": lots_cnt,
-                "buy_val": b_val,
-                "rem_cash": rem_cash,
-                "buy_driver": f"ROE {buy_cand['ROE_%']:.1f}%, Health Score {buy_cand['Health_Score']:.2f}x",
-                "effect": "Перекладка в актив с восходящей динамикой прибыли"
-            })
+            buy_cand = _pick_buy_candidate(top_buys_df, w_t)
+            if buy_cand is not None:
+                _append_smart_swap(
+                    smart_swaps, top_buys_df, w_t, w_row.get('Текущая Стоимость'),
+                    badge="⚠️ Замена отстающей позиции",
+                    sell_reason=f"Health Score {_safe_float(w_row.get('Health_Score')):.2f}x уступает среднерыночному",
+                    buy_driver=f"ROE {_safe_float(buy_cand.get('ROE_%')):.1f}%, Health Score {_safe_float(buy_cand.get('Health_Score')):.2f}x",
+                    effect="Перекладка в актив с восходящей динамикой прибыли",
+                )
 
     if not overvalued_bl_df.empty and not top_buys_df.empty and len(smart_swaps) < 4:
         for _, ov_row in overvalued_bl_df.head(1).iterrows():
             ov_t = ov_row['ticker']
-            ov_val = ov_row['Текущая Стоимость']
-            buy_cand = top_buys_df.iloc[0]
-            b_t = buy_cand['ticker']
-            b_p = buy_cand['Price'] if buy_cand['Price'] > 0 else 1.0
-            lot_size = 10 if b_t in ['SBER', 'SBERP', 'VTBR'] else 1
-            shares_cnt = int(ov_val // b_p) if b_p > 0 else 0
-            lots_cnt = shares_cnt // lot_size if lot_size > 0 else shares_cnt
-            b_val = lots_cnt * lot_size * b_p
-            rem_cash = max(0.0, ov_val - b_val)
-            
-            smart_swaps.append({
-                "badge": "🔄 Рокировка: выход из переоценки по Чёрной Линии",
-                "sell_ticker": ov_t,
-                "sell_val": ov_val,
-                "sell_reason": f"Биржевая цена {ov_row['Price']:.1f} ₽ существенно выше Чёрной Линии {ov_row['Чёрная Линия (₽)']:.1f} ₽ ({ov_row['Margin of Safety (%)']:+.1f}%)",
-                "buy_ticker": b_t,
-                "buy_lots": lots_cnt,
-                "buy_val": b_val,
-                "rem_cash": rem_cash,
-                "buy_driver": f"Чёрная Линия {buy_cand.get('Чёрная Линия (₽)', 0):.1f} ₽ (Запас {buy_cand.get('Margin of Safety (%)', 0):+.1f}%), Health Score {buy_cand['Health_Score']:.2f}x",
-                "effect": "Фиксация переоцененного актива и перекладка в фундаментальный дисконт с запасом прочности"
-            })
+            buy_cand = _pick_buy_candidate(top_buys_df, ov_t)
+            if buy_cand is not None:
+                _append_smart_swap(
+                    smart_swaps, top_buys_df, ov_t, ov_row.get('Текущая Стоимость'),
+                    badge="🔄 Рокировка: выход из переоценки по Чёрной Линии",
+                    sell_reason=f"Биржевая цена {_safe_float(ov_row.get('Price')):.1f} ₽ существенно выше Чёрной Линии {_safe_float(ov_row.get('Чёрная Линия (₽)')):.1f} ₽ ({_safe_float(ov_row.get('Margin of Safety (%)')):+.1f}%)",
+                    buy_driver=f"Чёрная Линия {_safe_float(buy_cand.get('Чёрная Линия (₽)')):.1f} ₽ (Запас {_safe_float(buy_cand.get('Margin of Safety (%)')):+.1f}%), Health Score {_safe_float(buy_cand.get('Health_Score')):.2f}x",
+                    effect="Фиксация переоцененного актива и перекладка в фундаментальный дисконт с запасом прочности",
+                )
 
     # Назначение статуса действия для таблицы Светофор
     def assign_action_badge(row):
@@ -2845,7 +2949,7 @@ else:
                 with f_col1:
                     avail_tickers = [t for t in selected_tickers if t in moex_tickers] if selected_tickers else moex_tickers
                     if not avail_tickers:
-                        avail_tickers = moex_tickers
+                        avail_tickers = moex_tickers or list(PORTFOLIO_TICKERS)
                     def_idx = 0
                     if "SBER" in avail_tickers:
                         def_idx = avail_tickers.index("SBER")

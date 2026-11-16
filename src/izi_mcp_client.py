@@ -333,6 +333,7 @@ def get_portfolio_model(portfolio_id: int) -> Dict[str, Any]:
                 "count": cnt,
                 "invested": invested,
                 "avg_price": avg_price,
+                "price": price,
                 "val": summa,
                 "name": it.get("name", ticker)
             }
