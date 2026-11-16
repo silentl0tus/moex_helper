@@ -13,7 +13,10 @@ Debt/EBITDA, Темп роста выручки, Ключевая ставка �
 from __future__ import annotations
 
 import datetime
+import os
 from typing import Any, Dict, Optional, Tuple
+
+_LOADED_FILE_MTIME = os.path.getmtime(__file__)
 
 import altair as alt
 import numpy as np
