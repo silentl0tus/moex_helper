@@ -10,6 +10,7 @@
 7. Быстрый перенос структуры портфеля в модуль стресс-тестирования и бэктеста.
 """
 
+import importlib
 import io
 import os
 from datetime import datetime
@@ -17,6 +18,23 @@ import altair as alt
 import numpy as np
 import pandas as pd
 import streamlit as st
+
+
+def _ensure_fresh_module(mod_name: str):
+    """Перезагружает подмодуль из src/, если файл на диске обновился (hot-reload Streamlit Cloud)."""
+    mod = importlib.import_module(mod_name)
+    mod_file = getattr(mod, "__file__", None)
+    if mod_file and os.path.exists(mod_file):
+        disk_mtime = os.path.getmtime(mod_file)
+        if getattr(mod, "_LOADED_FILE_MTIME", None) != disk_mtime:
+            mod = importlib.reload(mod)
+            setattr(mod, "_LOADED_FILE_MTIME", disk_mtime)
+    return mod
+
+
+_ensure_fresh_module("src.izi_mcp_client")
+_ensure_fresh_module("src.portfolio_importer")
+_ensure_fresh_module("src.black_line")
 
 from src.portfolio_importer import (
     calculate_mirror_benchmark_timeline,
@@ -672,7 +690,11 @@ with tab_trades:
         if selected_op != "Все":
             filtered_trades = filtered_trades[filtered_trades["Операция"] == selected_op]
         if search_query:
-            filtered_trades = filtered_trades[filtered_trades["Название"].astype(str).str.contains(search_query, case=False, na=False)]
+            q_match = (
+                filtered_trades["Название"].astype(str).str.contains(search_query, case=False, na=False)
+                | filtered_trades["Тикер"].astype(str).str.contains(search_query, case=False, na=False)
+            )
+            filtered_trades = filtered_trades[q_match]
 
         st.markdown(f"Найдено записей: **{len(filtered_trades)}** из **{len(df_trades)}**")
 
@@ -805,18 +827,14 @@ with tab_passive:
         with p_c1:
             st.markdown("##### 📜 Реестр дивидендных выплат")
             if not df_div.empty:
-                st.dataframe(
-                    df_div[["Дата", "Тикер", "Название", "Кол.", "Дивиденд", "Сумма \nпосле налога"]].head(25),
-                    width="stretch",
-                    hide_index=True
-                )
+                div_view = df_div[["Дата", "Тикер", "Название", "Кол.", "Дивиденд", "Сумма \nпосле налога"]].head(50).copy()
+                div_view["Дата"] = pd.to_datetime(div_view["Дата"], errors="coerce").dt.strftime("%Y-%m-%d")
+                st.dataframe(div_view, width="stretch", hide_index=True)
         with p_c2:
             st.markdown("##### 📜 Реестр купонных выплат")
             if not df_coup.empty:
-                st.dataframe(
-                    df_coup[["Дата", "Тикер", "Название", "Номинал", "Купон", "Сумма \nпосле налога"]].head(25),
-                    width="stretch",
-                    hide_index=True
-                )
+                coup_view = df_coup[["Дата", "Тикер", "Название", "Номинал", "Купон", "Сумма \nпосле налога"]].head(50).copy()
+                coup_view["Дата"] = pd.to_datetime(coup_view["Дата"], errors="coerce").dt.strftime("%Y-%m-%d")
+                st.dataframe(coup_view, width="stretch", hide_index=True)
     else:
         st.info("Нет данных о выплатах дивидендов или купонов.")

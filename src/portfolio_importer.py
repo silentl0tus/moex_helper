@@ -12,10 +12,13 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import re
 from datetime import datetime, date
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
+
+_LOADED_FILE_MTIME = os.path.getmtime(__file__)
 
 import numpy as np
 import pandas as pd
@@ -373,7 +376,7 @@ def fetch_izi_mcp_portfolio(portfolio_id: Optional[int] = None) -> Dict[str, Any
     странице 'Реальный Портфель и Сделки' и на экранах Решений / Ребалансировки.
     """
     try:
-        from src.izi_mcp_client import get_portfolio_model, get_user_portfolios
+        from src.izi_mcp_client import get_portfolio_ledger_model, get_portfolio_model, get_user_portfolios
     except ImportError:
         raise ImportError("Модуль src.izi_mcp_client не найден.")
 
@@ -395,6 +398,7 @@ def fetch_izi_mcp_portfolio(portfolio_id: Optional[int] = None) -> Dict[str, Any
     analysis = model.get("analysis", {})
     chart_df = model.get("chart_df", pd.DataFrame())
     structure = model.get("structure", {})
+    port_name = model.get("portfolio_name", f"Портфель #{portfolio_id}")
 
     total_val = summary_raw.get("total_val", 0.0)
     total_inv = summary_raw.get("total_inv", 0.0)
@@ -404,36 +408,45 @@ def fetch_izi_mcp_portfolio(portfolio_id: Optional[int] = None) -> Dict[str, Any
     div_total = summary_raw.get("divs_received", 0.0)
     coup_total = summary_raw.get("coupons_received", 0.0)
 
-    # Синтезируем журнал сделок trades_df для совместимости с функциями аналитики
-    trades_rows = []
+    # Загружаем реальный журнал сделок, закрытые FIFO-позиции и события дивидендов/купонов из MCP
+    ledger = get_portfolio_ledger_model(int(portfolio_id), port_name) or {}
+    trades_df = ledger.get("trades_df", pd.DataFrame())
+    fifo_df = ledger.get("fifo_df", pd.DataFrame())
+    dividends_df = ledger.get("dividends_df", pd.DataFrame())
+    coupons_df = ledger.get("coupons_df", pd.DataFrame())
+
     money_in = analysis.get("summary", {}).get("money", {}).get("in", total_inv)
     money_out = abs(analysis.get("summary", {}).get("money", {}).get("out", 0.0))
-    start_dt = pd.to_datetime(summary_raw.get("start_date", "2021-12-27"))
 
-    if money_in > 0:
-        trades_rows.append({
-            "Дата": start_dt,
-            "Операция": "input",
-            "Тикер": "CASH",
-            "Количество": 1.0,
-            "Цена": money_in,
-            "Сумма": money_in,
-            "Валюта": "RUB"
-        })
-    if money_out > 0:
-        trades_rows.append({
-            "Дата": pd.to_datetime(datetime.now()),
-            "Операция": "output",
-            "Тикер": "CASH",
-            "Количество": 1.0,
-            "Цена": money_out,
-            "Сумма": -money_out,
-            "Валюта": "RUB"
-        })
+    # Защитный fallback только если сервер не отдал журнал операций
+    if trades_df.empty:
+        trades_rows = []
+        start_dt = pd.to_datetime(summary_raw.get("start_date", "2021-12-27"))
+        if money_in > 0:
+            trades_rows.append({
+                "Дата": start_dt, "Операция": "input", "Тикер": "CASH",
+                "Название": "Пополнение счёта", "Количество": 1.0,
+                "Цена": money_in, "Сумма": money_in, "Комиссия, ₽": 0.0,
+                "Валюта": "RUB", "Портфель": port_name,
+            })
+        if money_out > 0:
+            trades_rows.append({
+                "Дата": pd.to_datetime(datetime.now()), "Операция": "output", "Тикер": "CASH",
+                "Название": "Вывод средств", "Количество": 1.0,
+                "Цена": money_out, "Сумма": -money_out, "Комиссия, ₽": 0.0,
+                "Валюта": "RUB", "Портфель": port_name,
+            })
+        trades_df = pd.DataFrame(trades_rows)
 
-    trades_df = pd.DataFrame(trades_rows)
+    xirr_rows = []
+    if not trades_df.empty and "Операция" in trades_df.columns:
+        for _, r_in in trades_df[trades_df["Операция"].isin(["input", "output"])].iterrows():
+            xirr_rows.append((r_in["Дата"], -float(r_in.get("Сумма", 0.0) or 0.0)))
+        if total_val > 0:
+            xirr_rows.append((pd.to_datetime(datetime.now()), float(total_val)))
+    xirr_flows_df = pd.DataFrame(xirr_rows, columns=["Дата", "Сумма"]) if xirr_rows else pd.DataFrame()
 
-    # Формируем timeline_df
+    # Формируем timeline_df (реальные пополнения/выводы из trades_df + историческая кривая)
     timeline_df, bench_ret = calculate_mirror_benchmark_timeline(
         trades_df=trades_df,
         current_portfolio_value=total_val,
@@ -441,7 +454,10 @@ def fetch_izi_mcp_portfolio(portfolio_id: Optional[int] = None) -> Dict[str, Any
         portfolio_timeline=chart_df
     )
 
-    port_name = model.get("portfolio_name", f"Портфель #{portfolio_id}")
+    if div_total <= 0 and not dividends_df.empty and "Сумма \nпосле налога" in dividends_df.columns:
+        div_total = float(dividends_df["Сумма \nпосле налога"].sum())
+    if coup_total <= 0 and not coupons_df.empty and "Сумма \nпосле налога" in coupons_df.columns:
+        coup_total = float(coupons_df["Сумма \nпосле налога"].sum())
 
     return {
         "source": "izi_mcp",
@@ -460,19 +476,19 @@ def fetch_izi_mcp_portfolio(portfolio_id: Optional[int] = None) -> Dict[str, Any
             "total_passive_income": round(div_total + coup_total, 2),
             "open_positions_count": len(pos_df),
             "total_trades_count": len(trades_df),
-            "closed_deals_count": 0,
+            "closed_deals_count": len(fifo_df),
         },
         "positions": pos_df,
         "raw_positions": pos_df,
         "adj_positions": pos_df,
         "trades": trades_df,
-        "fifo": pd.DataFrame(),
-        "raw_fifo": pd.DataFrame(),
-        "adj_fifo": pd.DataFrame(),
+        "fifo": fifo_df,
+        "raw_fifo": fifo_df,
+        "adj_fifo": fifo_df,
         "transfers": [],
-        "dividends": pd.DataFrame(),
-        "coupons": pd.DataFrame(),
-        "xirr_flows": pd.DataFrame(),
+        "dividends": dividends_df,
+        "coupons": coupons_df,
+        "xirr_flows": xirr_flows_df,
         "timeline": timeline_df,
         "portfolio_timeline": chart_df,
         "chart_df": chart_df,
