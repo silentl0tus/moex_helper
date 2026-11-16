@@ -16,6 +16,19 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+from src.hot_reload import ensure_fresh_module
+
+for _mod in ("src.black_line", "src.market_snapshot", "src.magellan_gateway"):
+    ensure_fresh_module(_mod)
+
+from src.black_line import enrich_with_black_line, render_black_line_widget
+from src.market_snapshot import (
+    fetch_bond_stress,
+    fetch_fx_debt_issuers,
+    fetch_macro_snapshot,
+    fetch_moex_last_prices,
+)
+
 # =====================================================================
 # СТИЛИЗАЦИЯ ИНТЕРФЕЙСА
 # =====================================================================
@@ -176,17 +189,13 @@ def get_sector(ticker: str) -> str:
 # ИНИЦИАЛИЗАЦИЯ СОСТОЯНИЯ (SESSION STATE)
 # =====================================================================
 if "wizard_basket" not in st.session_state:
-    st.session_state["wizard_basket"] = ["SBER", "LKOH", "BELU"]
+    st.session_state["wizard_basket"] = []
 
 if "wizard_sentiment_flags" not in st.session_state:
-    st.session_state["wizard_sentiment_flags"] = {"SBER": True, "LKOH": True, "BELU": True}
+    st.session_state["wizard_sentiment_flags"] = {}
 
 if "wizard_notes" not in st.session_state:
-    st.session_state["wizard_notes"] = {
-        "SBER": "Стабильный дивидендный кэшфлоу, ROE > 22%, чистая прибыль рекордная",
-        "LKOH": "Отрицательный чистый долг, защита от девальвации, байбэк",
-        "BELU": "Высокая отдача на капитал ROE > 23%, дивиденды 3 раза в год"
-    }
+    st.session_state["wizard_notes"] = {}
 
 if "wizard_capital" not in st.session_state:
     st.session_state["wizard_capital"] = 100000
@@ -345,6 +354,55 @@ def load_screener_data(cache_version: str = "v3_value_income"):
 
 screener_df = load_screener_data()
 
+# Живой макро-контекст и оценка по Чёрной линии теми же функциями, что и на главном экране.
+# Здесь «Health_Score» — только фундаментальное ядро (без Order Flow, сентимента, техники и макро-часов),
+# поэтому в интерфейсе он называется «Фунд. скор» и может отличаться от Health Score главного экрана.
+macro_ctx = fetch_macro_snapshot()
+KEY_RATE = float(macro_ctx["key_rate"])
+USD_RATE = macro_ctx.get("usd_rate")
+moex_prices = fetch_moex_last_prices()
+if not screener_df.empty:
+    screener_df = enrich_with_black_line(
+        screener_df, moex_prices, KEY_RATE, USD_RATE, fetch_bond_stress(), fetch_fx_debt_issuers()
+    )
+
+
+def pick_top_candidates(df: pd.DataFrame, n: int) -> list:
+    """Топ-n по фундаментальному скору без токсичных бумаг.
+
+    Если цена известна, берём только бумаги с положительным запасом прочности и согласованной моделью
+    (расхождения Чёрной линии и скора не попадают в автоподбор). Без цены оценка недоступна — бумага не отсекается.
+    """
+    if df.empty:
+        return []
+    cand = df[(~df["Токсичный"]) & (df["Health_Score"] > 0)]
+    has_val = cand["Margin of Safety (%)"].notna()
+    ok_val = (cand["Margin of Safety (%)"] > 0) & cand["Доверие модели"].str.startswith("✅")
+    cand = cand[~has_val | ok_val]
+    return cand.sort_values("Health_Score", ascending=False)["ticker"].head(n).tolist()
+
+
+def basket_warnings(df: pd.DataFrame, basket: list) -> list:
+    """Предупреждения по бумагам корзины: карантин, убыток, переоценка, расхождение модели."""
+    warns = []
+    for t in basket:
+        row = df[df["ticker"] == t]
+        if row.empty:
+            continue
+        r = row.iloc[0]
+        if bool(r.get("Токсичный", False)):
+            warns.append(f"🛑 {t}: в карантине (предбанкротный/токсичный эмитент)")
+            continue
+        if float(r.get("Health_Score", 0) or 0) <= 0:
+            warns.append(f"🚨 {t}: нулевой фундаментальный скор (убыток или отрицательный капитал)")
+        mos = r.get("Margin of Safety (%)")
+        if pd.notna(mos) and mos <= -25.0:
+            warns.append(f"🔴 {t}: цена выше Чёрной линии на {abs(mos):.0f}% (переоценка)")
+        if str(r.get("Доверие модели", "")).startswith("⚠️"):
+            warns.append(f"⚠️ {t}: {str(r['Доверие модели']).replace('⚠️ ', '')}")
+    return warns
+
+
 # =====================================================================
 # ШАПКА СТРАНИЦЫ И ПОСТОЯННЫЙ ТРЕКЕР (BASKET HUD)
 # =====================================================================
@@ -381,9 +439,9 @@ with st.container(border=True):
         st.write("")
         c_reset1, c_reset2 = st.columns(2)
         with c_reset1:
-            if st.button("🔄 Топ-3", help="Загрузить проверенную сбалансированную корзину (Сбер, Лукойл, НоваБев)"):
-                st.session_state["wizard_basket"] = ["SBER", "LKOH", "BELU"]
-                st.session_state["wizard_sentiment_flags"] = {"SBER": True, "LKOH": True, "BELU": True}
+            if st.button("🔄 Топ-3", help="Топ-3 по фундаментальному скору среди бумаг с положительным запасом прочности и согласованной моделью (токсичные исключены). Аудит рисков на Шаге 3 всё равно нужно пройти вручную."):
+                st.session_state["wizard_basket"] = pick_top_candidates(screener_df, 3)
+                st.session_state["wizard_sentiment_flags"] = {}
                 st.rerun()
         with c_reset2:
             if st.button("🗑️ Сброс", help="Очистить корзину для создания нового набора"):
@@ -420,22 +478,32 @@ with tab1:
 
     m_col1, m_col2 = st.columns([1.8, 1.2])
 
+    # Режим по умолчанию определяется по живой ключевой ставке (только по уровню; направление цикла ставка не показывает)
+    auto_phase_idx = 0 if KEY_RATE >= 16.0 else (1 if KEY_RATE >= 11.0 else 2)
+
     with m_col1:
+        rate_c1, rate_c2, rate_c3 = st.columns(3)
+        rate_c1.metric("Ключевая ставка ЦБ", f"{KEY_RATE:.1f}%", macro_ctx["source"])
+        rate_c2.metric("USD/RUB", f"{USD_RATE:.2f}" if USD_RATE else "Н/Д")
+        rate_c3.metric("Режим по ставке", ["Жёсткая ДКП", "Смягчение ДКП", "Низкая ставка"][auto_phase_idx])
+        if not macro_ctx["is_live"]:
+            st.warning("Ключевая ставка не получена из источников — использовано значение по умолчанию 16%. Проверьте режим вручную.")
+
         macro_phase = st.radio(
-            "Выберите текущий режим экономики РФ:",
+            "Выберите текущий режим экономики РФ (по умолчанию подобран по ключевой ставке):",
             [
-                "🧊 1. Стагфляция / Жесткая ДКП (Высокая ставка 16–21%+, инфляция) [АКТУАЛЬНО СЕЙЧАС]",
+                "🧊 1. Стагфляция / Жесткая ДКП (Высокая ставка 16–21%+, инфляция)",
                 "📉 2. Рецессия / Смягчение ДКП (Цикл снижения ключевой ставки ЦБ)",
                 "🚀 3. Восстановление и Перегрев (Низкая ставка, бурный рост кредитования)"
             ],
-            index=0
+            index=auto_phase_idx
         )
 
         if "1. Стагфляция" in macro_phase:
             st.info("""
             **🎯 Рекомендации алгоритма для текущей фазы:**
             * **Кого отбираем:** Компании с отрицательным чистым долгом (кубышкой), высокой эффективностью капитала (`ROE > 18%`) и устойчивым кэшфлоу.
-            * **Сектора-фавориты:** Банки с запасом капитала по нормативу Н1.0 (`SBER`, `T`), экспортеры без валютных долгов (`LKOH`, `SNGSP`), потребительский сектор первой необходимости (`MGNT`, `BELU`).
+            * **Сектора-фавориты:** Банки с запасом капитала по нормативу Н1.0, экспортеры без валютных долгов, потребительский сектор первой необходимости с положительной прибылью.
             * **Кого исключаем:** Закредитованных девелоперов, компании с плавающим кредитным долгом выше 2.0x EBITDA.
             """)
             rec_roe = 15
@@ -443,19 +511,29 @@ with tab1:
         elif "2. Рецессия" in macro_phase:
             st.info("""
             **🎯 Рекомендации алгоритма:**
-            * **Кого отбираем:** Длинные ОФЗ (фиксация рекордной доходности), акции роста IT и финтеха (`YNDX`, `ASTR`, `HEAD`).
+            * **Кого отбираем:** Дивидендное ядро с устойчивым свободным потоком (Value & Income) и акции роста IT и финтеха.
             * **Сектора-фавориты:** IT-сектор, телекомы, дивидендные аристократы.
+            * **Облигации:** длинные рублёвые ОФЗ не берём (инфляционный риск) — защитная часть портфеля это валютный/золотой резерв по подходу «Штанга».
             """)
             rec_roe = 12
             rec_debt = 2.2
         else:
             st.info("""
             **🎯 Рекомендации алгоритма:**
-            * **Кого отбираем:** Цикличные сырьевые гиганты, металлургия, строители.
-            * **Сектора-фавориты:** `CHMF`, `NLMK`, `MAGN`, `PIKK`, `SMLT`.
+            * **Кого отбираем:** Цикличные сырьевые гиганты и металлургия с низким долгом.
+            * **Сектора-фавориты:** металлурги и сырьевые экспортёры; закредитованных застройщиков из карантина не берём.
             """)
             rec_roe = 10
             rec_debt = 2.5
+
+        _passing = screener_df[
+            (~screener_df["Токсичный"])
+            & (screener_df["Health_Score"] > 0)
+            & (screener_df["ROE_%"] >= rec_roe)
+            & (screener_df["Debt_EBITDA_eff"] <= rec_debt)
+        ].sort_values("Health_Score", ascending=False)["ticker"].head(5).tolist() if not screener_df.empty else []
+        if _passing:
+            st.caption("Сейчас проходят фильтр фазы (по данным кэша, не рекомендация к покупке): " + ", ".join(f"`{t}`" for t in _passing))
 
     with m_col2:
         with st.container(border=True):
@@ -481,9 +559,9 @@ with tab2:
     st.markdown("""
     <div class="step-card">
         <span class="step-badge badge-green">ЭТАП 2: ФУНДАМЕНТАЛЬНЫЙ СКРИНИНГ</span>
-        <h3 style="margin-top:0;">📊 Отбор надежных компаний по рейтингу Health Score</h3>
+        <h3 style="margin-top:0;">📊 Отбор надежных компаний по фундаментальному скору и запасу прочности</h3>
         <p style="margin-bottom:0; color:#CBD5E1;">
-            Отфильтруйте более 60 акций Мосбиржи по финансовой устойчивости. Рейтинг Health Score объединяет рентабельность ROE, дешевизну P/E, штраф за долг и премию за рост выручки.
+            Отфильтруйте более 60 акций Мосбиржи по финансовой устойчивости. «Фунд. скор» объединяет рентабельность ROE, дешевизну P/E, штраф за долг и премию за рост выручки; рядом показаны Чёрная линия, запас прочности, доверие к модели и характер долга. Это только фундаментальное ядро: Order Flow, сентимент, тренд и макро-часы учитываются лишь на главном экране (Health Score), поэтому цифры могут отличаться.
         </p>
     </div>
     """, unsafe_allow_html=True)
@@ -506,6 +584,17 @@ with tab2:
             st.write("")
             flt_toxic = st.checkbox("Без токсичных", value=True, help="Отсекает предбанкротов и токсичные бумаги (PIKK, SMLT, EUTR, CBOM и др.)")
 
+        q_col1, q_col2, q_col3 = st.columns([1.6, 1.6, 2.4])
+        with q_col1:
+            flt_mos = st.checkbox("Только с запасом прочности (MoS > 0)", value=False, help="Оставляет бумаги, у которых цена ниже Чёрной линии. Бумаги без цены отсекаются.")
+        with q_col2:
+            flt_trust = st.checkbox("Скрыть расхождения модели", value=False, help="Убирает бумаги, где фундаментальный скор и Чёрная линия противоречат друг другу или апсайд неправдоподобен (> +100%).")
+        with q_col3:
+            if not moex_prices:
+                st.warning("Цены MOEX недоступны: Чёрная линия и запас прочности не рассчитаны.")
+            else:
+                st.caption(f"Ключевая ставка {KEY_RATE:.1f}% ({macro_ctx['source']}), USD/RUB {USD_RATE:.1f}" if USD_RATE else f"Ключевая ставка {KEY_RATE:.1f}% ({macro_ctx['source']})")
+
         # Применение фильтров
         filtered = screener_df.copy()
         filtered = filtered[filtered['ROE_%'] >= flt_roe]
@@ -517,6 +606,10 @@ with tab2:
             filtered = filtered[filtered['Сектор'].isin(flt_sectors)]
         if flt_toxic:
             filtered = filtered[~filtered['Токсичный']]
+        if flt_mos:
+            filtered = filtered[filtered['Margin of Safety (%)'] > 0]
+        if flt_trust:
+            filtered = filtered[~filtered['Доверие модели'].str.startswith("⚠️")]
 
         filtered = filtered.sort_values(by="Health_Score", ascending=False).reset_index(drop=True)
 
@@ -566,6 +659,7 @@ with tab2:
         # Таблица результатов с расширенными мультипликаторами и отраслевой подсветкой
         cols_to_extract = [
             'ticker', 'Компания', 'Сектор', 'Статус', 'Health_Score',
+            'Price', 'Чёрная Линия (₽)', 'Margin of Safety (%)', 'Доверие модели', 'Долг и Валюта',
             'P_E', 'P_BV', 'ROE_%', 'Debt_EBITDA', 'FCF_Yield_%', 'Rev_Growth_%', 'H1_0_%', 'Div_RUB'
         ]
         for col_name in cols_to_extract:
@@ -574,7 +668,8 @@ with tab2:
 
         display_df = filtered[cols_to_extract].copy()
         display_df.columns = [
-            'Тикер', 'Компания', 'Сектор', 'Статус', 'Health Score',
+            'Тикер', 'Компания', 'Сектор', 'Статус', 'Фунд. скор',
+            'Цена ₽', 'Чёрная линия ₽', 'MoS %', 'Доверие модели', 'Долг и Валюта',
             'P/E', 'P/B (P on B)', 'ROE %', 'Debt/EBITDA', 'FCF Yield %', 'Рост выручки %', 'Н1.0 (ЦБ) %', 'Дивиденд ₽'
         ]
 
@@ -626,7 +721,12 @@ with tab2:
                 "Компания": st.column_config.TextColumn("Эмитент", width="medium"),
                 "Сектор": st.column_config.TextColumn("Сектор"),
                 "Статус": st.column_config.TextColumn("Статус", help="Фундаментальный статус надежности эмитента"),
-                "Health Score": st.column_config.NumberColumn("Health Score", format="%.2f", help="Комплексный балл здоровья эмитента (чем выше, тем надежнее)"),
+                "Фунд. скор": st.column_config.NumberColumn("Фунд. скор", format="%.2f", help="Фундаментальное ядро: ROE, P/E, долг, рост, дивиденды, FCF. Без Order Flow, сентимента и техники — на главном экране итоговый Health Score может отличаться."),
+                "Цена ₽": st.column_config.NumberColumn("Цена ₽", format="%.2f", help="Последняя цена MOEX (TQBR)"),
+                "Чёрная линия ₽": st.column_config.NumberColumn("Чёрная линия ₽", format="%.1f", help="Справедливая цена с учётом ключевой ставки, льготного и валютного долга"),
+                "MoS %": st.column_config.NumberColumn("MoS %", format="%+.1f%%", help="Запас прочности: плюс — цена ниже Чёрной линии"),
+                "Доверие модели": st.column_config.TextColumn("Доверие модели", help="⚠️ — скор и Чёрная линия противоречат друг другу или апсайд > +100%: проверьте вручную"),
+                "Долг и Валюта": st.column_config.TextColumn("Долг и Валюта", help="Льготный/дорогой долг и валютный риск при девальвации"),
                 "P/E": st.column_config.NumberColumn("P/E", format="%.1f", help="Цена / Прибыль (срок окупаемости в годах)"),
                 "P/B (P on B)": st.column_config.NumberColumn("P/B (P on B)", format="%.2f", help="P on B (Price to Book Value) — Цена / Балансовая стоимость чистых активов. Ключевой для Банков и Холдингов, норма < 1.0"),
                 "ROE %": st.column_config.NumberColumn("ROE %", format="%.1f%%", help="Рентабельность капитала (Ключевой для Банков и Ритейла, норма >= 18-20%)"),
@@ -663,19 +763,22 @@ with tab2:
 
         with c_pick2:
             st.write("")
-            top_3 = filtered['ticker'].head(3).tolist()
-            if st.button(f"⚡ Взять Топ-3 ({', '.join(top_3)})", width="stretch"):
+            top_3 = pick_top_candidates(filtered, 3)
+            if st.button(f"⚡ Взять Топ-3 ({', '.join(top_3)})", width="stretch", disabled=not top_3,
+                         help="Из отфильтрованных: без токсичных, с положительным запасом прочности и согласованной моделью. Аудит рисков на Шаге 3 нужно пройти вручную."):
                 st.session_state["wizard_basket"] = top_3
-                for t in top_3:
-                    st.session_state["wizard_sentiment_flags"][t] = True
+                st.session_state["wizard_sentiment_flags"] = {}
                 st.rerun()
 
-            top_5 = filtered['ticker'].head(5).tolist()
-            if st.button(f"⚡ Взять Топ-5", width="stretch"):
+            top_5 = pick_top_candidates(filtered, 5)
+            if st.button("⚡ Взять Топ-5", width="stretch", disabled=not top_5):
                 st.session_state["wizard_basket"] = top_5
-                for t in top_5:
-                    st.session_state["wizard_sentiment_flags"][t] = True
+                st.session_state["wizard_sentiment_flags"] = {}
                 st.rerun()
+
+        _basket_warns = basket_warnings(screener_df, st.session_state["wizard_basket"])
+        if _basket_warns:
+            st.warning("**Проверьте бумаги в корзине:**\n\n" + "\n".join(f"- {w}" for w in _basket_warns))
 
         st.divider()
 
@@ -702,15 +805,17 @@ with tab2:
             row_wb = screener_df[screener_df['ticker'] == wiz_bl_ticker]
             wb_fund = row_wb.iloc[0] if not row_wb.empty else None
             wb_price = wb_fund.get('Price', 0.0) if wb_fund is not None else 0.0
-            
-            from src.black_line import render_black_line_widget
+            if wb_price is None or pd.isna(wb_price):
+                wb_price = 0.0
+
             render_black_line_widget(
                 ticker=wiz_bl_ticker,
                 current_price=wb_price,
                 fund_row=wb_fund,
-                key_rate=16.0,
+                key_rate=KEY_RATE,
                 default_show=True,
-                key_prefix="wiz_screen"
+                key_prefix="wiz_screen",
+                usd_rate=USD_RATE,
             )
 
         st.divider()
@@ -734,7 +839,7 @@ with tab2:
             "3. ROE (Рентабельность)",
             "4. P/B / P on B (Капитал)",
             "5. Рост выручки",
-            "6. Health Score"
+            "6. Фунд. скор (Health Score)"
         ])
 
         with m_tab1:
@@ -775,7 +880,7 @@ with tab2:
             * **Смысл:** Главный индикатор эффективности менеджмента: сколько копеек чистой прибыли генерирует каждый 1 рубль денег акционеров, вложенных в компанию.
             
             #### 🎯 Критерии ROE в эпоху жесткой ДКП:
-            * **При ключевой ставке 16–21% эффективный бизнес обязан иметь $ROE \\ge 18–22\\%$.**
+            * **ROE должен быть выше ключевой ставки ЦБ** (она показана на вкладке «1. Макро-фильтр»); при ставке 16–21% эффективный бизнес обязан иметь $ROE \\ge 18–22\\%$.
             * Если ROE компании составляет всего 7–10%, то акционерам выгоднее закрыть предприятие, продать активы и положить деньги на безрисковый депозит в банк под 18–20% годовых.
             * Лидеры по ROE на Мосбирже: `SBER` (ROE ~23–25%), `T` (~28–30%), `BELU` (~22–26%), `ASTR` (~45%+).
             
@@ -808,7 +913,8 @@ with tab2:
 
         with m_tab6:
             st.markdown("""
-            ### 📌 Health Score (Интегральный индекс финансового здоровья MOEX Helper)
+            ### 📌 Фундаментальный скор (ядро Health Score MOEX Helper)
+            > Здесь считается только фундаментальное ядро. На главном экране итоговый Health Score дополнительно учитывает Order Flow, сентимент, тренд, облигационный стресс и макро-часы, поэтому значения могут отличаться. Рядом показаны Чёрная линия, запас прочности и «Доверие модели»: ⚠️ значит, что скор и оценка противоречат друг другу, и бумагу нужно проверить вручную.
             * **Архитектурная формула:**
               $$\\text{Health Score} = \\left( \\frac{\\text{ROE}_{\\text{norm}}}{\\text{P/E}_{\\text{safe}}} \\times \\frac{1}{1 + \\text{Debt}_{\\text{safe}}} \\right) \\times (1 + \\text{Growth\\,Bonus})$$
             
@@ -963,7 +1069,7 @@ with tab4:
 
             weight_mode = st.radio(
                 "Алгоритм распределения весов:",
-                ["Взвешивание по Health Score (больше надежным)", "Равными долями (Equal Weight)"]
+                ["Взвешивание по фундаментальному скору (больше надежным)", "Равными долями (Equal Weight)"]
             )
 
         with p_col2:
@@ -977,7 +1083,7 @@ with tab4:
             df_weights = pd.DataFrame(basket_data)
             n_items = len(df_weights)
 
-            if "Health Score" in weight_mode:
+            if "скору" in weight_mode:
                 total_score = df_weights['score'].sum()
                 raw_weights = (df_weights['score'] / total_score) * 100.0
             else:
@@ -1103,6 +1209,10 @@ st.divider()
 # =====================================================================
 st.subheader("🏁 Итоговая готовность сделки к исполнению (Deal Readiness)")
 
+_final_warns = basket_warnings(screener_df, current_basket)
+if _final_warns:
+    st.warning("**Перед исполнением проверьте:**\n\n" + "\n".join(f"- {w}" for w in _final_warns))
+
 chk_macro = True
 chk_assets = len(current_basket) >= 2
 chk_sentiment = (checked_cnt == len(current_basket)) and (len(current_basket) > 0)
@@ -1111,7 +1221,7 @@ chk_dca = len(current_basket) > 0
 
 checklist_items = [
     ("1. Макро-фаза выбрана и учтена", chk_macro),
-    ("2. Отобрано от 2 до 8 бумаг с высоким Health Score", chk_assets),
+    ("2. Отобрано от 2 до 8 бумаг с высоким фундаментальным скором", chk_assets),
     ("3. Сентимент всех отобранных бумаг проверен (без красных флагов)", chk_sentiment),
     ("4. Соблюден лимит риска (≤12-15% на акцию)", chk_limit),
     ("5. Рассчитан 3-траншевый план входа лесенкой (DCA)", chk_dca)

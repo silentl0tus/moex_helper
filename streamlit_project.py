@@ -138,16 +138,7 @@ from src.foundry_client import (
     get_company_fundamental_profile,
     fetch_moex_market_snapshot,
 )
-def _ensure_fresh_module(mod_name: str):
-    """Перезагружает подмодуль из src/, если файл на диске обновился (hot-reload Streamlit Cloud)."""
-    mod = importlib.import_module(mod_name)
-    mod_file = getattr(mod, "__file__", None)
-    if mod_file and os.path.exists(mod_file):
-        disk_mtime = os.path.getmtime(mod_file)
-        if getattr(mod, "_LOADED_FILE_MTIME", None) != disk_mtime:
-            mod = importlib.reload(mod)
-            setattr(mod, "_LOADED_FILE_MTIME", disk_mtime)
-    return mod
+from src.hot_reload import ensure_fresh_module as _ensure_fresh_module
 
 
 _ensure_fresh_module("src.black_line")
@@ -159,6 +150,7 @@ from src.black_line import (
     UPSIDE_SANITY_CAP_PCT,
     assess_model_consistency,
     calculate_black_line_valuation,
+    classify_debt_fx_badge,
     render_black_line_widget,
     fetch_stock_candles,
 )
@@ -1823,33 +1815,13 @@ if not df_fund.empty:
     key_rate_val = market_context.get("KEY_RATE", 16.0)
     usd_rate_eff = float(usd_rate) if usd_rate else 82.0
 
-    def _classify_debt_fx_badge(row):
-        t = row['ticker']
-        d = float(row.get('Debt_EBITDA', 0.0) or 0.0)
-        roe = float(row.get('ROE_%', 0.0) or 0.0)
-        fcf = row.get('FCF_Yield_%')
-        ytm = row.get('_bond_max_ytm')
-        fx_currs = row.get('_fx_debt_currencies') or []
-        is_exp = t in (OIL_TICKERS + GOLD_TICKERS + CYCLICAL_TICKERS + ['PHOR', 'FLOT', 'GMKN'])
-        if d <= 0:
-            return "💎 Чистый кэш (FX)" if (fx_currs and is_exp) else "💎 Чистый кэш"
-        if ytm is not None and ytm >= 28.0:
-            return f"🚨 Дорогой долг (YTM {ytm:.0f}%)"
-        has_sub = d > 1.2 and (
-            (roe >= key_rate_val and (pd.isna(fcf) or float(fcf) >= 0.0))
-            or (ytm is not None and float(ytm) <= key_rate_val + 1.5)
-        )
-        if has_sub:
-            return f"🟢 Льготный/Дешёвый ({'/'.join(fx_currs)})" if fx_currs else "🟢 Льготный/Фикс. долг"
-        if fx_currs and not is_exp and t not in BANK_TICKERS:
-            return f"💱 FX-долг ({'/'.join(fx_currs)} риск)"
-        if fx_currs and is_exp:
-            return f"🛡️ FX-долг (Хедж экспортом)"
-        if d > 1.5 and (roe < key_rate_val or (pd.notna(fcf) and float(fcf) < 3.0)):
-            return "⚠️ Тяжёлый долг (RUB)"
-        return "⚪ Умеренный долг (RUB)"
-
-    df_fund['Долг и Валюта'] = df_fund.apply(_classify_debt_fx_badge, axis=1)
+    df_fund['Долг и Валюта'] = df_fund.apply(
+        lambda r: classify_debt_fx_badge(
+            r['ticker'], r.get('Debt_EBITDA'), r.get('ROE_%'), r.get('FCF_Yield_%'),
+            r.get('_bond_max_ytm'), r.get('_fx_debt_currencies'), key_rate_val,
+        ),
+        axis=1,
+    )
 
     # Учет институциональной поддержки БПИФ
     def get_fund_flow_multiplier(ticker):

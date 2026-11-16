@@ -274,6 +274,96 @@ def assess_model_consistency(health_score: Optional[float], mos_pct: Optional[fl
     return {"code": "OK", "label": "✅ Согласовано"}
 
 
+def classify_debt_fx_badge(
+    ticker: str,
+    debt_ebitda: Optional[float],
+    roe: Optional[float],
+    fcf_yield: Optional[float],
+    bond_ytm: Optional[float],
+    fx_debt_currencies: Optional[list],
+    key_rate: float,
+) -> str:
+    """Короткая метка характера долга и валютного риска для таблиц (общая для главного экрана и Мастера)."""
+    debt = _clean_metric(debt_ebitda, 0.0)
+    roe_v = _clean_metric(roe, 0.0)
+    fcf = _clean_metric(fcf_yield, None)
+    ytm = _clean_metric(bond_ytm, None)
+    fx_list = [str(c) for c in (fx_debt_currencies or []) if c]
+    is_exporter = ticker in FX_REVENUE_EXPORTERS
+
+    if debt <= 0:
+        return "💎 Чистый кэш (FX)" if (fx_list and is_exporter) else "💎 Чистый кэш"
+    if ytm is not None and ytm >= 28.0:
+        return f"🚨 Дорогой долг (YTM {ytm:.0f}%)"
+    has_subsidized = debt > 1.2 and (
+        (roe_v >= key_rate and (fcf is None or fcf >= 0.0)) or (ytm is not None and ytm <= key_rate + 1.5)
+    )
+    if has_subsidized:
+        return f"🟢 Льготный/Дешёвый ({'/'.join(fx_list)})" if fx_list else "🟢 Льготный/Фикс. долг"
+    if fx_list and not is_exporter and ticker not in BANK_TICKERS:
+        return f"💱 FX-долг ({'/'.join(fx_list)} риск)"
+    if fx_list and is_exporter:
+        return "🛡️ FX-долг (Хедж экспортом)"
+    if debt > 1.5 and (roe_v < key_rate or (fcf is not None and fcf < 3.0)):
+        return "⚠️ Тяжёлый долг (RUB)"
+    return "⚪ Умеренный долг (RUB)"
+
+
+def enrich_with_black_line(
+    df: pd.DataFrame,
+    prices: Dict[str, float],
+    key_rate: float,
+    usd_rate: Optional[float],
+    bonds: Optional[Dict[str, Dict[str, Any]]] = None,
+    fx_issuers: Optional[Dict[str, list]] = None,
+) -> pd.DataFrame:
+    """Добавляет к таблице фундаментала цену, Чёрную линию, запас прочности, «Доверие модели» и «Долг и Валюта».
+
+    Нужны колонки: ticker, P_E, P_BV, ROE_%, Debt_EBITDA, Rev_Growth_%, Div_RUB, FCF_Yield_%, Health_Score.
+    Если цены бумаги нет, Чёрная линия не считается (NaN) — подставлять выдуманную цену нельзя.
+    """
+    out = df.copy()
+    bonds = bonds or {}
+    fair_prices, mos_values, trust, debt_fx, ytms, fx_lists, price_col = [], [], [], [], [], [], []
+
+    for _, row in out.iterrows():
+        tk = str(row["ticker"]).upper()
+        price = _clean_metric(prices.get(tk), None)
+        ytm = (bonds.get(tk) or {}).get("max_ytm")
+        fx_list = list(fx_issuers.get(tk, [])) if fx_issuers else None
+        price_col.append(price if price and price > 0 else float("nan"))
+        ytms.append(ytm)
+        fx_lists.append(fx_list if fx_list is not None else [])
+
+        if price and price > 0:
+            res = calculate_black_line_valuation(
+                ticker=tk, price=price,
+                pe=row.get("P_E"), pb=row.get("P_BV"), roe=row.get("ROE_%"),
+                debt_ebitda=row.get("Debt_EBITDA"), rev_growth=row.get("Rev_Growth_%"),
+                div_rub=row.get("Div_RUB"), key_rate=key_rate, use_mcp=False,
+                fcf_yield=row.get("FCF_Yield_%"), usd_rate=usd_rate,
+                bond_ytm=ytm, fx_debt_currencies=fx_list,
+            )
+            fair_prices.append(res["fair_price"])
+            mos_values.append(res["upside_pct"])
+        else:
+            fair_prices.append(float("nan"))
+            mos_values.append(float("nan"))
+
+        trust.append(assess_model_consistency(row.get("Health_Score"), mos_values[-1])["label"])
+        debt_fx.append(classify_debt_fx_badge(
+            tk, row.get("Debt_EBITDA"), row.get("ROE_%"), row.get("FCF_Yield_%"), ytm, fx_list, key_rate))
+
+    out["Price"] = price_col
+    out["Чёрная Линия (₽)"] = fair_prices
+    out["Margin of Safety (%)"] = mos_values
+    out["Доверие модели"] = trust
+    out["Долг и Валюта"] = debt_fx
+    out["_bond_max_ytm"] = ytms
+    out["_fx_debt_currencies"] = fx_lists
+    return out
+
+
 def _assess_debt_and_currency_profile(
     ticker_clean: str,
     debt_val: float,

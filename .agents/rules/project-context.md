@@ -1,4 +1,4 @@
-# moex_helper — Карта проекта и контекст (as of `520cd63`)
+# moex_helper — Карта проекта и контекст
 
 > Компактный справочник для быстрого входа в разработку без повторного чтения всей кодовой базы. Рабочая ветка: `main` (`origin/main` → автодеплой на `moexelperdash.streamlit.app`).
 
@@ -8,12 +8,14 @@
 
 | Файл | Назначение |
 | --- | --- |
-| [streamlit_project.py](file:///mnt/new_volume/VS_code_base/moex_helper/streamlit_project.py) | Главный экран: общий мониторинг MOEX по умолчанию, **Светофор рынка** на 1-м экране, Командный пульт (`Продать / Купить / Рокировки`), виджет Чёрной линии, `Health_Score`, разведка рынков. |
-| [1_🎯_Мастер_подбора.py](file:///mnt/new_volume/VS_code_base/moex_helper/pages/1_%F0%9F%8E%AF_%D0%9C%D0%B0%D1%81%D1%82%D0%B5%D1%80_%D0%BF%D0%BE%D0%B4%D0%B1%D0%BE%D1%80%D0%B0.py) | Скринер бумаг по `fundamentals_cache.csv` (`load_screener_data(cache_version="v3_value_income")`) с едиными правилами для структурного дисконта и `Income Reversion`. |
+| [streamlit_project.py](file:///mnt/new_volume/VS_code_base/moex_helper/streamlit_project.py) | Главный экран: общий мониторинг MOEX по умолчанию, **Светофор рынка** на 1-м экране, Командный пульт (`Продать / Купить / Рокировки`), виджет Чёрной линии, `Health_Score`, «Доверие модели», разведка рынков. |
+| [1_🎯_Мастер_подбора.py](file:///mnt/new_volume/VS_code_base/moex_helper/pages/1_%F0%9F%8E%AF_%D0%9C%D0%B0%D1%81%D1%82%D0%B5%D1%80_%D0%BF%D0%BE%D0%B4%D0%B1%D0%BE%D1%80%D0%B0.py) | Скринер и 5-шаговый пайплайн отбора: использует общие `fetch_macro_snapshot` / `fetch_moex_last_prices` + `enrich_with_black_line` (живая ставка ЦБ, USD/RUB, Чёрная линия, MoS, «Доверие модели», «Долг и Валюта»). **Отличие:** для банков при `P_BV` равном `NaN`/`0`/`1.0` пересчитывает `P_BV = round(P_E * ROE_% / 100, 2)` (на Главной — `fillna(1.0)`), и показывает фундаментальное ядро (`Фунд. скор`). |
 | [2_💬_Сентимент_и_Пульс.py](file:///mnt/new_volume/VS_code_base/moex_helper/pages/2_%F0%9F%92%AC_%D0%A1%D0%B5%D0%BD%D1%82%D0%B8%D0%BC%D0%B5%D0%BD%D1%82_%D0%B8_%D0%9F%D1%83%D0%BB%D1%8C%D1%81.py) | Настроения и сентимент (данные из `sentiment.json`). |
 | [3_⏳_Бэктест_Стратегии.py](file:///mnt/new_volume/VS_code_base/moex_helper/pages/3_%E2%8F%B3_%D0%91%D1%8D%D0%BA%D1%82%D0%B5%D1%81%D1%82_%D0%A1%D1%82%D1%80%D0%B0%D1%82%D0%B5%D0%B3%D0%B8%D0%B8.py) | Исторический бэктест стратегии. |
 | [4_💼_Реальный_Портфель_и_Сделки.py](file:///mnt/new_volume/VS_code_base/moex_helper/pages/4_%F0%9F%92%BC_%D0%A0%D0%B5%D0%B0%D0%BB%D1%8C%D0%BD%D1%8B%D0%B9_%D0%9F%D0%BE%D1%80%D1%82%D1%84%D0%B5%D0%BB%D1%8C_%D0%B8_%D0%A1%D0%B4%D0%B5%D0%BB%D0%BA%D0%B8.py) | Реальный портфель (MCP / Excel / ссылка): открытые позиции, зеркальный бенчмарк `MCFTRR` vs `IMOEX`, журнал всех операций (`trades`), закрытые сделки `FIFO` (`closed`), дивиденды и купоны (`events`). |
-| [src/black_line.py](file:///mnt/new_volume/VS_code_base/moex_helper/src/black_line.py) | Расчёт справедливой цены (`calculate_black_line_valuation`) и интерактивный график Altair (`render_black_line_widget`). |
+| [src/black_line.py](file:///mnt/new_volume/VS_code_base/moex_helper/src/black_line.py) | Единое ядро оценки: `calculate_black_line_valuation`, `enrich_with_black_line`, `classify_debt_fx_badge`, `assess_model_consistency`, `render_black_line_widget`. |
+| [src/market_snapshot.py](file:///mnt/new_volume/VS_code_base/moex_helper/src/market_snapshot.py) | Живые рыночные снимки для подстраниц: `fetch_macro_snapshot` (`izi-invest MCP` → `cbr.ru` → `16.0`), `fetch_moex_last_prices` (MOEX ISS `TQBR`), `fetch_bond_stress`, `fetch_fx_debt_issuers`. |
+| [src/hot_reload.py](file:///mnt/new_volume/VS_code_base/moex_helper/src/hot_reload.py) | Общий `ensure_fresh_module` для hot-reload модулей `src/*` на Streamlit Cloud (сверяет `_LOADED_FILE_MTIME`). |
 | [src/izi_mcp_client.py](file:///mnt/new_volume/VS_code_base/moex_helper/src/izi_mcp_client.py) | JSON-RPC клиент `izi-invest.ru/mcp`: портфели, позиции, аналитика (`get_analysis`), журнал/FIFO/дивиденды/купоны (`fetch_portfolio_ledger`), рыночный контекст (`get_market_context`). |
 | [src/portfolio_importer.py](file:///mnt/new_volume/VS_code_base/moex_helper/src/portfolio_importer.py) | Импорт через `fetch_izi_mcp_portfolio`, парсинг Excel/CSV отчётов брокеров, учёт сплитов (`TRNFP`, `VTBR`, `BELU`, `NOVA`), `calculate_mirror_benchmark_timeline`, `calculate_xirr`, сквозные переносы. |
 | [src/foundry_client.py](file:///mnt/new_volume/VS_code_base/moex_helper/src/foundry_client.py) | Подключение к `Data Foundry MCP` (`mcp.vrednyj-investor.ru/mcp`) для МСФО/РСБУ рядов внутри виджета Чёрной линии и вкладки разведки. |
@@ -65,13 +67,13 @@
 ## 4. Важные правила эксплуатации и проверки
 
 > [!IMPORTANT]
-> **Streamlit Cloud Hot-Reload:** При `git pull` в запущенном процессе Cloud обновляет только главный файл страницы, оставляя `src/*` в `sys.modules`. Поэтому в начале [streamlit_project.py](file:///mnt/new_volume/VS_code_base/moex_helper/streamlit_project.py) и [4_💼_Реальный_Портфель_и_Сделки.py](file:///mnt/new_volume/VS_code_base/moex_helper/pages/4_%F0%9F%92%BC_%D0%A0%D0%B5%D0%B0%D0%BB%D1%8C%D0%BD%D1%8B%D0%B9_%D0%9F%D0%BE%D1%80%D1%82%D1%84%D0%B5%D0%BB%D1%8C_%D0%B8_%D0%A1%D0%B4%D0%B5%D0%BB%D0%BA%D0%B8.py) стоит `_ensure_fresh_module(...)` (сверяет `_LOADED_FILE_MTIME` модуля с диском). При добавлении новых параметров в функции `src/*` обязательно добавлять `_LOADED_FILE_MTIME = os.path.getmtime(__file__)` в модуль и вызов `_ensure_fresh_module`.
+> **Streamlit Cloud Hot-Reload:** При `git pull` в запущенном процессе Cloud обновляет только главный файл страницы, оставляя `src/*` в `sys.modules`. Поэтому в начале [streamlit_project.py](file:///mnt/new_volume/VS_code_base/moex_helper/streamlit_project.py), [1_🎯_Мастер_подбора.py](file:///mnt/new_volume/VS_code_base/moex_helper/pages/1_%F0%9F%8E%AF_%D0%9C%D0%B0%D1%81%D1%82%D0%B5%D1%80_%D0%BF%D0%BE%D0%B4%D0%B1%D0%BE%D1%80%D0%B0.py) и [4_💼_Реальный_Портфель_и_Сделки.py](file:///mnt/new_volume/VS_code_base/moex_helper/pages/4_%F0%9F%92%BC_%D0%A0%D0%B5%D0%B0%D0%BB%D1%8C%D0%BD%D1%8B%D0%B9_%D0%9F%D0%BE%D1%80%D1%82%D1%84%D0%B5%D0%BB%D1%8C_%D0%B8_%D0%A1%D0%B4%D0%B5%D0%BB%D0%BA%D0%B8.py) вызывается `ensure_fresh_module(...)` из [src/hot_reload.py](file:///mnt/new_volume/VS_code_base/moex_helper/src/hot_reload.py) (сверяет `_LOADED_FILE_MTIME` модуля с диском). При добавлении новых параметров в функции `src/*` обязательно добавлять `_LOADED_FILE_MTIME = os.path.getmtime(__file__)` в модуль и вызов `ensure_fresh_module`.
 
 > [!WARNING]
 > **Python и Git:** Запускать тесты только через `.venv/bin/python` (в системном `python3` нет `yfinance`/`streamlit`). В `.gitignore` заблокированы `*.json`, `*.csv`, `*.xlsx` (кроме whitelist-файлов), чтобы персональный дисковый кэш MCP и отчёты портфеля случайно не утекли в GitHub.
 
 ### Быстрая команда верификации перед коммитом
-Сначала золотой тест Чёрной линии (замороженные входные данные, стандартный `unittest`, без зависимостей). Если он упал — формулы сдвинулись; при намеренной правке пересчитайте `GOLDEN` в [tests/test_black_line_golden.py](file:///mnt/new_volume/VS_code_base/moex_helper/tests/test_black_line_golden.py) и опишите в коммите, какие тикеры сдвинулись.
+Юнит-тесты в `tests/` ([test_black_line_golden.py](file:///mnt/new_volume/VS_code_base/moex_helper/tests/test_black_line_golden.py) — золотые снимки Чёрной линии на замороженных данных, [test_market_enrichment.py](file:///mnt/new_volume/VS_code_base/moex_helper/tests/test_market_enrichment.py) — бейджи долга/FX и `enrich_with_black_line`). Если золотой тест упал — формулы сдвинулись; при намеренной правке пересчитайте `GOLDEN` и опишите в коммите, какие тикеры сдвинулись.
 ```bash
 .venv/bin/python -m unittest discover -s tests -v
 ```
